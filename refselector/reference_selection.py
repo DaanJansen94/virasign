@@ -3346,6 +3346,13 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             # Only curated_stats_dedup gets updated with re-mapped stats (for curated_descriptions.json)
         else:
             logger.warning("Could not extract final selected references. Skipping re-mapping.")
+    else:
+        logger.warning("No curated references meeting thresholds after deduplication. Skipping re-mapping.")
+        # Clean up initial SAM file even if no curated references
+        initial_sam = sample_dir / f"{sample_name}.sam"
+        if initial_sam.exists():
+            initial_sam.unlink()
+            logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (no curated references)")
     
     # Save curated descriptions JSON (simplified for easy review)
     # Filter by identity, coverage_depth, and coverage_breadth thresholds
@@ -3479,6 +3486,18 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 if selected_refs_index.exists():
                     selected_refs_index.unlink()
                     logger.info(f"Removed {selected_refs_index.name}")
+            else:
+                # Remapping didn't complete - clean up initial SAM file anyway
+                initial_sam = sample_dir / f"{sample_name}.sam"
+                if initial_sam.exists():
+                    initial_sam.unlink()
+                    logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (remapping files not found)")
+    else:
+        # No curated descriptions - clean up initial SAM file
+        initial_sam = sample_dir / f"{sample_name}.sam"
+        if initial_sam.exists():
+            initial_sam.unlink()
+            logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (no curated references meeting thresholds)")
     
     # Note: best_reference.fasta is not created - use selected_references.fasta instead
     # The JSON file identifies which reference is the best (highest mapped_reads)
@@ -3651,6 +3670,12 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         with open(json_file, 'w') as f:
             json.dump(results, f, indent=2)
         logger.info(f"Saved unfiltered results to {json_file}")
+    
+    # Final safety check: Ensure initial SAM file is always cleaned up
+    initial_sam = sample_dir / f"{sample_name}.sam"
+    if initial_sam.exists():
+        initial_sam.unlink()
+        logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (final cleanup)")
     
     # Print summary
     if best_ref and best_stats:
