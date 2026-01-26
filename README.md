@@ -20,6 +20,7 @@ conda install -c bioconda -c conda-forge minimap2 seqtk curl samtools -y
 
 ```bash
 git clone https://github.com/DaanJansen94/refselector.git
+cd refselector
 pip install .
 ```
 
