@@ -1,6 +1,6 @@
 # RefSelector
 
-A Python pipeline for selecting optimal viral reference sequences from databases (RVDB, RefSeq, or custom). Maps reads using minimap2, calculates coverage metrics, filters by identity thresholds, and generates comprehensive interactive HTML reports with filterable tables, charts, and heatmaps.
+A pipeline for selecting optimal viral reference sequences from databases (RVDB, RefSeq, or custom accession). Maps reads using minimap2, calculates coverage metrics, filters by identity thresholds, and generates comprehensive interactive HTML reports with filterable tables, charts, and heatmaps.
 
 ## Installation
 
