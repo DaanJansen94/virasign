@@ -4238,15 +4238,33 @@ def generate_html_visualization(output_dir: Path):
             background: #f8f9fa;
             padding: 10px;
             display: grid;
-            grid-template-columns: 1.2fr 1.5fr 1.5fr 0.8fr 1fr 1fr 1fr 1fr;
+            grid-template-columns: 1.2fr 1.5fr 1.5fr 0.8fr 1fr 1fr 1fr 1fr auto;
             gap: 10px;
             border-bottom: 1px solid #dee2e6;
+            align-items: center;
         }}
-        .filter-row input {{
+        .filter-row input[type="text"] {{
             padding: 5px;
             border: 1px solid #ddd;
             border-radius: 4px;
             font-size: 0.9em;
+        }}
+        .filter-row .checkbox-container {{
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }}
+        .filter-row .checkbox-container input[type="checkbox"] {{
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }}
+        .filter-row .checkbox-container label {{
+            font-size: 0.9em;
+            color: #495057;
+            cursor: pointer;
+            user-select: none;
         }}
         table {{
             width: 100%;
@@ -4474,14 +4492,18 @@ def generate_html_visualization(output_dir: Path):
                         <button onclick="downloadTableAsCSV('{sample_name}')">📥 Download Table (CSV)</button>
                     </div>
                     <div class="filter-row" id="filters-{sample_name}">
-                        <input type="text" placeholder="Filter Accession" onkeyup="filterTable('{sample_name}', 0, this.value)">
-                        <input type="text" placeholder="Filter Organism" onkeyup="filterTable('{sample_name}', 1, this.value)">
-                        <input type="text" placeholder="Filter Species" onkeyup="filterTable('{sample_name}', 2, this.value)">
-                        <input type="text" placeholder="Filter Segment" onkeyup="filterTable('{sample_name}', 3, this.value)">
-                        <input type="text" placeholder="Minimum Reads" onkeyup="filterTable('{sample_name}', 4, this.value)">
-                        <input type="text" placeholder="Minimum Identity" onkeyup="filterTable('{sample_name}', 5, this.value)">
-                        <input type="text" placeholder="Minimum Depth" onkeyup="filterTable('{sample_name}', 6, this.value)">
-                        <input type="text" placeholder="Minimum Breadth" onkeyup="filterTable('{sample_name}', 7, this.value)">
+                        <input type="text" placeholder="Filter Accession" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Filter Organism" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Minimum Reads" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Minimum Depth" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Minimum Breadth" onkeyup="applyAllFilters('{sample_name}')">
+                        <div class="checkbox-container">
+                            <input type="checkbox" id="excludeUnknown-{sample_name}" onchange="applyAllFilters('{sample_name}')">
+                            <label for="excludeUnknown-{sample_name}">Exclude Unknown</label>
+                        </div>
                     </div>
                     <table id="table-{sample_name}">
                         <thead>
@@ -4652,92 +4674,106 @@ def generate_html_visualization(output_dir: Path):
             initSorting(sampleName);
         }}
         
-        // Filter table
-        function filterTable(sampleName, colIndex, filterValue) {{
+        // Apply all filters (including exclude Unknown checkbox)
+        function applyAllFilters(sampleName) {{
+            const filterRow = document.getElementById(`filters-${{sampleName}}`);
+            if (!filterRow) return;
+            
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
             const rows = tbody.querySelectorAll('tr');
-            const filterLower = filterValue.toLowerCase().trim();
-            const filterTrimmed = filterValue.trim();
+            const inputs = filterRow.querySelectorAll('input[type="text"]');
+            const excludeUnknownCheckbox = document.getElementById(`excludeUnknown-${{sampleName}}`);
+            const excludeUnknown = excludeUnknownCheckbox && excludeUnknownCheckbox.checked;
             
-            // Columns 4-7 are numeric (reads, identity, depth, breadth)
-            const isNumericColumn = colIndex >= 4 && colIndex <= 7;
-            let minValue = null;
-            if (isNumericColumn && filterTrimmed !== '') {{
-                minValue = parseFloat(filterTrimmed);
-                if (isNaN(minValue)) {{
-                    // Invalid number - don't filter (show all)
-                    minValue = null;
-                }}
-            }}
+            // Get all filter values
+            const filterValues = Array.from(inputs).map(input => input.value.trim());
             
             rows.forEach(row => {{
                 const cells = row.querySelectorAll('td');
-                if (cells.length > colIndex) {{
-                    let shouldShow = false;
+                let shouldShow = true;
+                
+                // Apply each column filter
+                for (let colIndex = 0; colIndex < filterValues.length && colIndex < cells.length; colIndex++) {{
+                    const filterValue = filterValues[colIndex];
+                    const filterLower = filterValue.toLowerCase();
+                    const filterTrimmed = filterValue;
+                    
+                    // Columns 4-7 are numeric (reads, identity, depth, breadth)
+                    const isNumericColumn = colIndex >= 4 && colIndex <= 7;
                     
                     if (isNumericColumn) {{
-                        if (filterTrimmed === '') {{
-                            // Empty filter - show all
-                            shouldShow = true;
-                        }} else if (minValue !== null) {{
-                            // Valid numeric filter - compare values
-                            let cellValue = null;
-                            if (colIndex === 4) {{
-                                // Mapped Reads - get from data attribute first
-                                const dataReads = row.getAttribute('data-reads');
-                                if (dataReads !== null && dataReads !== '' && !isNaN(parseFloat(dataReads))) {{
-                                    cellValue = parseFloat(dataReads);
-                                }} else {{
-                                    // Fallback: parse from cell text (remove commas and any non-numeric chars)
-                                    const cellText = cells[colIndex].textContent.replace(/[,\s]/g, '').trim();
-                                    cellValue = parseFloat(cellText);
-                                    // If still NaN, try to get from the row's data attribute again
-                                    if (isNaN(cellValue)) {{
-                                        const altReads = row.dataset.reads;
-                                        if (altReads) {{
-                                            cellValue = parseFloat(altReads);
+                        if (filterTrimmed !== '') {{
+                            const minValue = parseFloat(filterTrimmed);
+                            if (!isNaN(minValue)) {{
+                                let cellValue = null;
+                                if (colIndex === 4) {{
+                                    // Mapped Reads
+                                    const dataReads = row.getAttribute('data-reads');
+                                    if (dataReads !== null && dataReads !== '' && !isNaN(parseFloat(dataReads))) {{
+                                        cellValue = parseFloat(dataReads);
+                                    }} else {{
+                                        const cellText = cells[colIndex].textContent.replace(/[,\s]/g, '').trim();
+                                        cellValue = parseFloat(cellText);
+                                        if (isNaN(cellValue)) {{
+                                            const altReads = row.dataset.reads;
+                                            if (altReads) {{
+                                                cellValue = parseFloat(altReads);
+                                            }}
                                         }}
                                     }}
+                                }} else if (colIndex === 5) {{
+                                    // Identity
+                                    cellValue = parseFloat(row.getAttribute('data-identity') || 0);
+                                }} else if (colIndex === 6) {{
+                                    // Depth
+                                    cellValue = parseFloat(row.getAttribute('data-depth') || 0);
+                                }} else if (colIndex === 7) {{
+                                    // Breadth
+                                    cellValue = parseFloat(row.getAttribute('data-breadth') || 0) * 100;
                                 }}
-                            }} else if (colIndex === 5) {{
-                                // Identity
-                                cellValue = parseFloat(row.getAttribute('data-identity') || 0);
-                            }} else if (colIndex === 6) {{
-                                // Depth
-                                cellValue = parseFloat(row.getAttribute('data-depth') || 0);
-                            }} else if (colIndex === 7) {{
-                                // Breadth
-                                cellValue = parseFloat(row.getAttribute('data-breadth') || 0) * 100; // Convert to percentage
+                                if (cellValue === null || isNaN(cellValue) || cellValue < minValue) {{
+                                    shouldShow = false;
+                                    break;
+                                }}
                             }}
-                            shouldShow = cellValue !== null && !isNaN(cellValue) && cellValue >= minValue;
-                        }} else {{
-                            // Invalid number entered - show all rows
-                            shouldShow = true;
                         }}
                     }} else {{
                         // Text matching for other columns
-                        const cellText = cells[colIndex].textContent.toLowerCase();
-                        if (filterLower === '') {{
-                            shouldShow = true;
-                        }} else {{
-                            shouldShow = cellText.includes(filterLower);
+                        if (filterLower !== '') {{
+                            const cellText = cells[colIndex].textContent.toLowerCase();
+                            if (!cellText.includes(filterLower)) {{
+                                shouldShow = false;
+                                break;
+                            }}
                         }}
                     }}
-                    
-                    if (shouldShow) {{
-                        row.style.display = '';
-                    }} else {{
-                        row.style.display = 'none';
+                }}
+                
+                // Apply "Exclude Unknown" filter if checkbox is checked
+                if (shouldShow && excludeUnknown && cells.length > 2) {{
+                    const speciesCell = cells[2];
+                    if (speciesCell) {{
+                        const speciesText = speciesCell.textContent.trim().toLowerCase();
+                        if (speciesText === 'unknown') {{
+                            shouldShow = false;
+                        }}
                     }}
                 }}
+                
+                row.style.display = shouldShow ? '' : 'none';
             }});
             
             // Update charts immediately after filtering
             if (charts[sampleName]) {{
                 updateCharts(sampleName);
             }}
+        }}
+        
+        // Filter table (kept for backward compatibility, but now calls applyAllFilters)
+        function filterTable(sampleName, colIndex, filterValue) {{
+            applyAllFilters(sampleName);
         }}
         
         // Initialize sorting
