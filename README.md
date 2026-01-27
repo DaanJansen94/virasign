@@ -1,6 +1,6 @@
 # Virasign
 
-Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or custom) and generates comprehensive interactive HTML reports with filterable tables, charts, and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data.
+Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or custom) and generates comprehensive interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data.
 
 ## Installation
 
@@ -53,10 +53,7 @@ virasign -i <input_dir> -o <output_dir> [options]
 # Basic usage with default RVDB database
 virasign -i samples/ -o results/
 
-# Use RefSeq with custom identity threshold
-virasign -i samples/ -d RefSeq -o results/ --min_identity 97
-
-# Use both databases with custom accessions
+# Use both databases with custom accessions and 16 threads
 virasign -i samples/ -d RVDB,RefSeq -o results/ -a PX852146.1,NC_123456.1 -t 16
 
 # Use a single accession as the database
@@ -65,15 +62,6 @@ virasign -i samples/ -d OZ254622.1 -o results/
 # Use text file with accessions as database
 virasign -i samples/ -d my_accessions.txt -o results/
 # (my_accessions.txt contains one accession per line)
-
-# Use accession as database and merge with additional accessions
-virasign -i samples/ -d OZ254622.1 -a NC_123456.1,AY123456.1 -o results/
-
-# Use text file with accessions and merge with additional accessions
-virasign -i samples/ -d my_accessions.txt -a PX852146.1 -o results/
-
-# Use custom database with accessions from file
-virasign -i samples/ -d /path/to/database.fasta -o results/ -a my_accessions.txt
 ```
 
 ## Output Structure
