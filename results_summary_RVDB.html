@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Virasign Results Summary - RVDB</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        @media (min-width: 1840px) {
+            .container {
+                width: 1800px;
+            }
+        }
+        .content {
+            width: 100%;
+            box-sizing: border-box;
+            max-width: 100%;
+            overflow-x: hidden;
+            padding: 30px;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        .table-section {
+            width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
+            box-sizing: border-box;
+        }
+        .sample-selector {
+            background: #f8f9fa;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .sample-selector label {
+            font-size: 1.2em;
+            font-weight: 600;
+            color: #333;
+            margin-right: 15px;
+        }
+        .sample-selector select {
+            font-size: 1.1em;
+            padding: 10px 20px;
+            border: 2px solid #667eea;
+            border-radius: 6px;
+            background: white;
+            color: #333;
+            cursor: pointer;
+            min-width: 300px;
+        }
+        .summary {
+            background: #f8f9fa;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .summary h2 {
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .stat-box {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .stat-box .number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .stat-box .label {
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        .sample-section {
+            display: none;
+            margin-bottom: 40px;
+        }
+        .sample-section.active {
+            display: block;
+        }
+        .metadata-section {
+            background: #f8f9fa;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-radius: 8px;
+            border-left: 4px solid #28a745;
+        }
+        .metadata-section h3 {
+            margin-bottom: 15px;
+            color: #333;
+            font-size: 1.3em;
+        }
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        .metadata-item {
+            background: white;
+            padding: 15px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .metadata-item .label {
+            font-weight: 600;
+            color: #6c757d;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+        }
+        .metadata-item .value {
+            font-size: 1.1em;
+            color: #333;
+            font-family: 'Courier New', monospace;
+        }
+        .table-section {
+            margin: 20px 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .table-header {
+            background: #f8f9fa;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .table-header h3 {
+            margin: 0;
+            color: #333;
+        }
+        .filter-row {
+            background: #f8f9fa;
+            padding: 10px;
+            display: grid;
+            grid-template-columns: 1.2fr 1.5fr 1.5fr 0.8fr 1fr 1fr 1fr 1fr auto;
+            gap: 10px;
+            border-bottom: 1px solid #dee2e6;
+            align-items: center;
+        }
+        .filter-row input[type="text"] {
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .filter-row .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+        .filter-row .checkbox-container input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        .filter-row .checkbox-container label {
+            font-size: 0.9em;
+            color: #495057;
+            cursor: pointer;
+            user-select: none;
+        }
+        table {
+            width: 100%;
+            max-width: 100%;
+            border-collapse: collapse;
+            background: white;
+            table-layout: auto;
+        }
+        th {
+            background: #f8f9fa;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #495057;
+            border-bottom: 2px solid #dee2e6;
+            position: sticky;
+            top: 0;
+        }
+        th.sortable {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 25px;
+        }
+        th.sortable:hover {
+            background: #e9ecef;
+        }
+        th.sortable::after {
+            content: ' ↕';
+            position: absolute;
+            right: 8px;
+            opacity: 0.5;
+            font-size: 0.8em;
+        }
+        th.sortable.asc::after {
+            content: ' ↑';
+            opacity: 1;
+        }
+        th.sortable.desc::after {
+            content: ' ↓';
+            opacity: 1;
+        }
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #e9ecef;
+        }
+        tr:hover {
+            background: #f8f9fa;
+        }
+        .accession {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            color: #1976d2;
+        }
+        .stats {
+            text-align: right;
+        }
+        .charts-section {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 15px;
+            margin: 30px 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .chart-container {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            min-width: 0;
+            max-width: 100%;
+            overflow: hidden;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .chart-container canvas {
+            max-width: 100% !important;
+            height: auto !important;
+            width: 100% !important;
+        }
+        .chart-container > div {
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box;
+        }
+        @media (max-width: 900px) {
+            .charts-section {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        @media (max-width: 600px) {
+            .charts-section {
+                grid-template-columns: 1fr;
+            }
+        }
+        .chart-container h3 {
+            margin-bottom: 15px;
+            color: #333;
+            text-align: center;
+        }
+        .heatmap-section {
+            background: white;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .heatmap-section h2 {
+            margin-bottom: 20px;
+            color: #333;
+        }
+        .heatmap-container {
+            overflow-x: auto;
+        }
+        .heatmap-table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        .heatmap-table th {
+            background: #667eea;
+            color: white;
+            padding: 10px;
+            text-align: center;
+            border: 1px solid #555;
+        }
+        .heatmap-table td {
+            padding: 10px;
+            text-align: center;
+            border: 1px solid #ddd;
+        }
+        .heatmap-cell {
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .heatmap-present {
+            background: #28a745;
+            color: white;
+            font-weight: bold;
+        }
+        .heatmap-absent {
+            background: #f8f9fa;
+            color: #999;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+        }
+        button:hover {
+            background: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔬 Virasign Results Summary - RVDB</h1>
+            <p>Viral Read ASSIGNment from nanopore sequencing</p>
+        </div>
+        <div class="content">
+            <div class="sample-selector">
+                <label for="sampleSelect">Select Sample:</label>
+                <select id="sampleSelect" onchange="showSample(this.value)">
+                    <option value="">-- Select a sample --</option>
+                    <option value="sample1">sample1 </option>
+                    <option value="sample2">sample2 </option>
+                </select>
+            </div>
+            
+            <div class="summary">
+                <h2>Summary - RVDB Database</h2>
+                <div class="summary-stats">
+                    <div class="stat-box">
+                        <div class="number">2</div>
+                        <div class="label">Sample(s)</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="number">RVDB</div>
+                        <div class="label">Database</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sample-section active" id="sample-sample1">
+                <div class="metadata-section">
+                    <h3>📋 Pipeline Configuration</h3>
+                    <div class="metadata-grid" id="metadata-sample1">
+                        <!-- Metadata will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <div class="table-section">
+                    <div class="table-header">
+                        <h3>Viral References</h3>
+                        <button onclick="downloadTableAsCSV('sample1')">📥 Download Table (CSV)</button>
+                    </div>
+                    <div class="filter-row" id="filters-sample1">
+                        <input type="text" placeholder="Filter Accession" onkeyup="applyAllFilters('sample1')">
+                        <input type="text" placeholder="Filter Organism" onkeyup="applyAllFilters('sample1')">
+                        <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('sample1')">
+                        <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('sample1')">
+                        <input type="text" placeholder="Minimum Reads" onkeyup="applyAllFilters('sample1')">
+                        <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('sample1')">
+                        <input type="text" placeholder="Minimum Depth" onkeyup="applyAllFilters('sample1')">
+                        <input type="text" placeholder="Minimum Breadth" onkeyup="applyAllFilters('sample1')">
+                        <div class="checkbox-container">
+                            <input type="checkbox" id="excludeUnknown-sample1" onchange="applyAllFilters('sample1')">
+                            <label for="excludeUnknown-sample1">Exclude Unknown</label>
+                        </div>
+                    </div>
+                    <table id="table-sample1">
+                        <thead>
+                            <tr>
+                                <th>Accession</th>
+                                <th>Organism</th>
+                                <th>Viral Species</th>
+                                <th>Segment</th>
+                                <th class="stats sortable" data-sort="mapped_reads">Mapped Reads</th>
+                                <th class="stats sortable" data-sort="identity">Identity (%)</th>
+                                <th class="stats sortable" data-sort="depth">Coverage Depth</th>
+                                <th class="stats sortable" data-sort="breadth">Coverage Breadth</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-sample1">
+                            <!-- Rows will be populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="charts-section" id="charts-sample1">
+                    <!-- Charts will be populated by JavaScript -->
+                </div>
+            </div>
+
+            <div class="sample-section" id="sample-sample2">
+                <div class="metadata-section">
+                    <h3>📋 Pipeline Configuration</h3>
+                    <div class="metadata-grid" id="metadata-sample2">
+                        <!-- Metadata will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <div class="table-section">
+                    <div class="table-header">
+                        <h3>Viral References</h3>
+                        <button onclick="downloadTableAsCSV('sample2')">📥 Download Table (CSV)</button>
+                    </div>
+                    <div class="filter-row" id="filters-sample2">
+                        <input type="text" placeholder="Filter Accession" onkeyup="applyAllFilters('sample2')">
+                        <input type="text" placeholder="Filter Organism" onkeyup="applyAllFilters('sample2')">
+                        <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('sample2')">
+                        <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('sample2')">
+                        <input type="text" placeholder="Minimum Reads" onkeyup="applyAllFilters('sample2')">
+                        <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('sample2')">
+                        <input type="text" placeholder="Minimum Depth" onkeyup="applyAllFilters('sample2')">
+                        <input type="text" placeholder="Minimum Breadth" onkeyup="applyAllFilters('sample2')">
+                        <div class="checkbox-container">
+                            <input type="checkbox" id="excludeUnknown-sample2" onchange="applyAllFilters('sample2')">
+                            <label for="excludeUnknown-sample2">Exclude Unknown</label>
+                        </div>
+                    </div>
+                    <table id="table-sample2">
+                        <thead>
+                            <tr>
+                                <th>Accession</th>
+                                <th>Organism</th>
+                                <th>Viral Species</th>
+                                <th>Segment</th>
+                                <th class="stats sortable" data-sort="mapped_reads">Mapped Reads</th>
+                                <th class="stats sortable" data-sort="identity">Identity (%)</th>
+                                <th class="stats sortable" data-sort="depth">Coverage Depth</th>
+                                <th class="stats sortable" data-sort="breadth">Coverage Breadth</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbody-sample2">
+                            <!-- Rows will be populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="charts-section" id="charts-sample2">
+                    <!-- Charts will be populated by JavaScript -->
+                </div>
+            </div>
+
+            
+            <!-- Heatmap Section (All Samples) - At Bottom -->
+            <div class="heatmap-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>Viral Species Heatmap (All Samples)</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="downloadHeatmapAsPNG()">📥 Download PNG</button>
+                    </div>
+                </div>
+                <div class="heatmap-container" id="heatmap-container">
+                    <!-- Heatmap will be generated by JavaScript -->
+                </div>
+            </div>
+
+        </div>
+    </div>
+    <script>
+        const samplesData = {"sample1": {"RVDB": {"references": [{"accession": "PP446317.1", "description": "acc|NEIGHBOR|PP446317.1|Measles virus genotype B3 strain MVs/Rome.ITA/43.22[B3], complete genome|Measles virus genotype B3|VRL|14-APR-2025", "organism": "Measles virus genotype B3", "viral_species": "Morbillivirus hominis", "mapped_reads": 274500, "avg_identity": 95.5410648384079, "coverage_depth": 5768.032583246618, "coverage_breadth": 0.9989594172736732, "segment": null, "database_source": "RVDB"}, {"accession": "NC_001501.1", "description": "acc|REFSEQ|NC_001501.1|Moloney murine leukemia virus, complete genome", "organism": "Moloney murine leukemia virus", "viral_species": "Gammaretrovirus murleu", "mapped_reads": 120347, "avg_identity": 97.07920432875177, "coverage_depth": 3592.675468074892, "coverage_breadth": 0.24459913586173787, "segment": null, "database_source": "RVDB"}, {"accession": "MZ822077.1", "description": "acc|GENBANK|MZ822077.1|MAG: Varroa picorna-like virus isolate No11-Mi016-HLJ2018, complete genome|Varroa picorna-like virus|ENV|28-OCT-2021", "organism": "Varroa picorna-like virus", "viral_species": "Varroa picorna-like virus", "mapped_reads": 187, "avg_identity": 89.1080573133093, "coverage_depth": 7.311775088250126, "coverage_breadth": 0.5255925365607665, "segment": null, "database_source": "RVDB"}, {"accession": "OQ749608.1", "description": "acc|GENBANK|OQ749608.1|Armillaria borealis mitovirus 1 isolate AbMV1/RH498, complete genome|Armillaria borealis mitovirus 1|VRL|28-JAN-2024", "organism": "Armillaria borealis mitovirus 1", "viral_species": "Armillaria borealis mitovirus 1", "mapped_reads": 355, "avg_identity": 85.27090517740181, "coverage_depth": 27.25134027120782, "coverage_breadth": 0.16493219804478082, "segment": null, "database_source": "RVDB"}], "metadata": {"database_source": "RVDB", "filtering_criteria": {"min_identity": 80.0, "min_mapped_reads": 100, "coverage_depth_threshold": 1.0, "coverage_breadth_threshold": 0.1}}}}, "sample2": {"RVDB": {"references": [{"accession": "GQ161822.1", "description": "acc|GENBANK|GQ161822.1|Hepatitis B virus isolate GU1086, complete genome|Hepatitis B virus|VRL|24-JUL-2016", "organism": "Hepatitis B virus", "viral_species": "Orthohepadnavirus hominoidei", "mapped_reads": 24992, "avg_identity": 91.81120004806466, "coverage_depth": 2295.7579575596815, "coverage_breadth": 0.7437002652519894, "segment": null, "database_source": "RVDB"}, {"accession": "AY628205.1", "description": "acc|NEIGHBOR|AY628205.1|Lassa virus strain Z148 segment S, complete sequence|Mammarenavirus lassaense|VRL|18-AUG-2004", "organism": "Mammarenavirus lassaense", "viral_species": "Mammarenavirus lassaense", "mapped_reads": 15867, "avg_identity": 87.78064736708873, "coverage_depth": 1569.217608951708, "coverage_breadth": 0.5103062426383981, "segment": "S-segment", "database_source": "RVDB"}, {"accession": "MN893225.1", "description": "acc|NEIGHBOR|MN893225.1|Measles virus genotype B3 strain MVs/Tours.FRA/49.18[B3] (MIBE), complete genome|Measles virus genotype B3|VRL|01-JUL-2020", "organism": "Measles virus genotype B3", "viral_species": "Morbillivirus hominis", "mapped_reads": 28941, "avg_identity": 95.24841659092009, "coverage_depth": 579.7306748852129, "coverage_breadth": 0.9916975910434619, "segment": null, "database_source": "RVDB"}, {"accession": "NC_001501.1", "description": "acc|REFSEQ|NC_001501.1|Moloney murine leukemia virus, complete genome", "organism": "Moloney murine leukemia virus", "viral_species": "Gammaretrovirus murleu", "mapped_reads": 10821, "avg_identity": 96.671650448526, "coverage_depth": 417.3402544407105, "coverage_breadth": 0.19047047527604416, "segment": null, "database_source": "RVDB"}, {"accession": "OQ749608.1", "description": "acc|GENBANK|OQ749608.1|Armillaria borealis mitovirus 1 isolate AbMV1/RH498, complete genome|Armillaria borealis mitovirus 1|VRL|28-JAN-2024", "organism": "Armillaria borealis mitovirus 1", "viral_species": "Armillaria borealis mitovirus 1", "mapped_reads": 170, "avg_identity": 87.45620888676059, "coverage_depth": 12.512456638284453, "coverage_breadth": 0.1665089877010407, "segment": null, "database_source": "RVDB"}, {"accession": "OM735983.1", "description": "acc|NEIGHBOR|OM735983.1|Mammarenavirus lassaense strain M.natalensis-wt/SLE/2019/Bafodia-00188 segment L, complete sequence|Mammarenavirus lassaense|VRL|22-NOV-2023", "organism": "Mammarenavirus lassaense", "viral_species": "Mammarenavirus lassaense", "mapped_reads": 1592, "avg_identity": 83.6497911617215, "coverage_depth": 72.85153949129852, "coverage_breadth": 0.10856760374832664, "segment": "L-segment", "database_source": "RVDB"}], "metadata": {"database_source": "RVDB", "filtering_criteria": {"min_identity": 80.0, "min_mapped_reads": 100, "coverage_depth_threshold": 1.0, "coverage_breadth_threshold": 0.1}}}}};
+        const heatmapData = {"Morbillivirus hominis": {"sample1": true, "sample2": true}, "Gammaretrovirus murleu": {"sample1": true, "sample2": true}, "Varroa picorna-like virus": {"sample1": true}, "Armillaria borealis mitovirus 1": {"sample1": true, "sample2": true}, "Orthohepadnavirus hominoidei": {"sample2": true}, "Mammarenavirus lassaense": {"sample2": true}};
+        const allSamples = ["sample1", "sample2"];
+        let charts = {};
+        let currentSortOrder = {};
+        
+        // Show sample function
+        function showSample(sampleName) {
+            document.querySelectorAll('.sample-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            
+            if (!sampleName) return;
+            
+            const sampleSection = document.getElementById(`sample-${sampleName}`);
+            if (sampleSection) {
+                sampleSection.classList.add('active');
+                populateMetadata(sampleName);
+                populateTable(sampleName);
+                if (!charts[sampleName]) {
+                    createCharts(sampleName);
+                    charts[sampleName] = true;
+                }
+            }
+        }
+        
+        // Populate metadata
+        function populateMetadata(sampleName) {
+            const container = document.getElementById(`metadata-${sampleName}`);
+            if (!container || !samplesData[sampleName]) return;
+            
+            let html = '';
+            const databases = Object.keys(samplesData[sampleName]);
+            
+            for (let db of databases) {
+                const meta = samplesData[sampleName][db].metadata;
+                const criteria = meta.filtering_criteria || {};
+                
+                // Use actual values, or defaults if missing/zero
+                const dbSource = meta.database_source || db;
+                const isRefSeq = dbSource.toLowerCase().includes('refseq');
+                const minId = (criteria.min_identity && criteria.min_identity > 0) ? criteria.min_identity : (isRefSeq ? 95 : 80);
+                const minReads = (criteria.min_mapped_reads && criteria.min_mapped_reads > 0) ? criteria.min_mapped_reads : 100;
+                const depthThresh = (criteria.coverage_depth_threshold && criteria.coverage_depth_threshold > 0) ? criteria.coverage_depth_threshold : 1.0;
+                const breadthThresh = (criteria.coverage_breadth_threshold && criteria.coverage_breadth_threshold > 0) ? criteria.coverage_breadth_threshold : 0.1;
+                
+                html += `
+                    <div class="metadata-item">
+                        <div class="label">Database Source</div>
+                        <div class="value">${dbSource}</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="label">Min Identity</div>
+                        <div class="value">${minId}%</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="label">Min Mapped Reads</div>
+                        <div class="value">${minReads}</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="label">Coverage Depth Threshold</div>
+                        <div class="value">${depthThresh}x</div>
+                    </div>
+                    <div class="metadata-item">
+                        <div class="label">Coverage Breadth Threshold</div>
+                        <div class="value">${(breadthThresh * 100).toFixed(1)}%</div>
+                    </div>
+                `;
+            }
+            
+            container.innerHTML = html;
+        }
+        
+        // Populate table
+        function populateTable(sampleName) {
+            const tbody = document.getElementById(`tbody-${sampleName}`);
+            if (!tbody || !samplesData[sampleName]) return;
+            
+            let allRefs = [];
+            Object.keys(samplesData[sampleName]).forEach(db => {
+                if (samplesData[sampleName][db].references) {
+                    allRefs = allRefs.concat(samplesData[sampleName][db].references);
+                }
+            });
+            
+            // Sort by coverage breadth (default)
+            allRefs.sort((a, b) => (b.coverage_breadth || 0) - (a.coverage_breadth || 0));
+            
+            let html = '';
+            allRefs.forEach(ref => {
+                const accession = ref.accession || 'N/A';
+                const organism = ref.organism || 'Unknown';
+                const species = ref.viral_species || organism || 'N/A';
+                const description = ref.description || 'N/A';
+                const segment = ref.segment || '';
+                const reads = ref.mapped_reads || 0;
+                const identity = ref.avg_identity || 0;
+                const depth = ref.coverage_depth || 0;
+                const breadth = ref.coverage_breadth || 0;
+                
+                html += `
+                    <tr data-accession="${accession}" data-organism="${organism}" data-species="${species}" 
+                        data-segment="${segment}"
+                        data-reads="${reads}" data-identity="${identity}" data-depth="${depth}" data-breadth="${breadth}">
+                        <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${accession}" target="_blank">${accession}</a></td>
+                        <td>${organism}</td>
+                        <td>${species}</td>
+                        <td>${segment || '—'}</td>
+                        <td class="stats">${reads.toLocaleString()}</td>
+                        <td class="stats">${identity.toFixed(2)}%</td>
+                        <td class="stats">${depth.toFixed(2)}x</td>
+                        <td class="stats">${(breadth * 100).toFixed(1)}%</td>
+                    </tr>
+                `;
+            });
+            
+            tbody.innerHTML = html;
+            
+            // Initialize sorting
+            initSorting(sampleName);
+        }
+        
+        // Apply all filters (including exclude Unknown checkbox)
+        function applyAllFilters(sampleName) {
+            const filterRow = document.getElementById(`filters-${sampleName}`);
+            if (!filterRow) return;
+            
+            const tbody = document.getElementById(`tbody-${sampleName}`);
+            if (!tbody) return;
+            
+            const rows = tbody.querySelectorAll('tr');
+            const inputs = filterRow.querySelectorAll('input[type="text"]');
+            const excludeUnknownCheckbox = document.getElementById(`excludeUnknown-${sampleName}`);
+            const excludeUnknown = excludeUnknownCheckbox && excludeUnknownCheckbox.checked;
+            
+            // Get all filter values
+            const filterValues = Array.from(inputs).map(input => input.value.trim());
+            
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                let shouldShow = true;
+                
+                // Apply each column filter
+                for (let colIndex = 0; colIndex < filterValues.length && colIndex < cells.length; colIndex++) {
+                    const filterValue = filterValues[colIndex];
+                    const filterLower = filterValue.toLowerCase();
+                    const filterTrimmed = filterValue;
+                    
+                    // Columns 4-7 are numeric (reads, identity, depth, breadth)
+                    const isNumericColumn = colIndex >= 4 && colIndex <= 7;
+                    
+                    if (isNumericColumn) {
+                        if (filterTrimmed !== '') {
+                            const minValue = parseFloat(filterTrimmed);
+                            if (!isNaN(minValue)) {
+                                let cellValue = null;
+                                if (colIndex === 4) {
+                                    // Mapped Reads
+                                    const dataReads = row.getAttribute('data-reads');
+                                    if (dataReads !== null && dataReads !== '' && !isNaN(parseFloat(dataReads))) {
+                                        cellValue = parseFloat(dataReads);
+                                    } else {
+                                        const cellText = cells[colIndex].textContent.replace(/[,\s]/g, '').trim();
+                                        cellValue = parseFloat(cellText);
+                                        if (isNaN(cellValue)) {
+                                            const altReads = row.dataset.reads;
+                                            if (altReads) {
+                                                cellValue = parseFloat(altReads);
+                                            }
+                                        }
+                                    }
+                                } else if (colIndex === 5) {
+                                    // Identity
+                                    cellValue = parseFloat(row.getAttribute('data-identity') || 0);
+                                } else if (colIndex === 6) {
+                                    // Depth
+                                    cellValue = parseFloat(row.getAttribute('data-depth') || 0);
+                                } else if (colIndex === 7) {
+                                    // Breadth
+                                    cellValue = parseFloat(row.getAttribute('data-breadth') || 0) * 100;
+                                }
+                                if (cellValue === null || isNaN(cellValue) || cellValue < minValue) {
+                                    shouldShow = false;
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // Text matching for other columns
+                        if (filterLower !== '') {
+                            const cellText = cells[colIndex].textContent.toLowerCase();
+                            if (!cellText.includes(filterLower)) {
+                                shouldShow = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Apply "Exclude Unknown" filter if checkbox is checked
+                if (shouldShow && excludeUnknown && cells.length > 2) {
+                    const speciesCell = cells[2];
+                    if (speciesCell) {
+                        const speciesText = speciesCell.textContent.trim().toLowerCase();
+                        if (speciesText === 'unknown') {
+                            shouldShow = false;
+                        }
+                    }
+                }
+                
+                row.style.display = shouldShow ? '' : 'none';
+            });
+            
+            // Update charts immediately after filtering
+            if (charts[sampleName]) {
+                updateCharts(sampleName);
+            }
+        }
+        
+        // Filter table (kept for backward compatibility, but now calls applyAllFilters)
+        function filterTable(sampleName, colIndex, filterValue) {
+            applyAllFilters(sampleName);
+        }
+        
+        // Initialize sorting
+        function initSorting(sampleName) {
+            const table = document.getElementById(`table-${sampleName}`);
+            if (!table) return;
+            
+            const sortableHeaders = table.querySelectorAll('th.sortable');
+            sortableHeaders.forEach(header => {
+                // Remove any existing event listeners by cloning
+                const newHeader = header.cloneNode(true);
+                header.parentNode.replaceChild(newHeader, header);
+                
+                newHeader.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const sortType = this.getAttribute('data-sort');
+                    const isAsc = this.classList.contains('asc');
+                    const isDesc = this.classList.contains('desc');
+                    
+                    // Get current sort state for this column
+                    const currentSortType = currentSortOrder[sampleName]?.type;
+                    
+                    // Remove all sort classes from all sortable headers in this table
+                    const allHeaders = table.querySelectorAll('th.sortable');
+                    allHeaders.forEach(th => th.classList.remove('asc', 'desc'));
+                    
+                    // Determine new sort order
+                    let newOrder;
+                    if (sortType === currentSortType) {
+                        // Same column: toggle between asc and desc
+                        if (isAsc) {
+                            newOrder = 'desc';
+                        } else if (isDesc) {
+                            newOrder = 'asc';
+                        } else {
+                            newOrder = 'asc';
+                        }
+                    } else {
+                        // Different column: always start with ascending
+                        newOrder = 'asc';
+                    }
+                    
+                    this.classList.add(newOrder);
+                    
+                    // Store current sort state
+                    currentSortOrder[sampleName] = {
+                        type: sortType,
+                        order: newOrder
+                    };
+                    
+                    // Sort table
+                    sortTable(sampleName, sortType, newOrder);
+                });
+            });
+        }
+        
+        // Sort table
+        function sortTable(sampleName, sortType, order) {
+            const tbody = document.getElementById(`tbody-${sampleName}`);
+            if (!tbody) return;
+            
+            const rows = Array.from(tbody.querySelectorAll('tr:not([style*="display: none"])'));
+            
+            rows.sort((a, b) => {
+                let aVal, bVal;
+                if (sortType === 'mapped_reads') {
+                    aVal = parseFloat(a.getAttribute('data-reads') || 0);
+                    bVal = parseFloat(b.getAttribute('data-reads') || 0);
+                } else if (sortType === 'identity') {
+                    aVal = parseFloat(a.getAttribute('data-identity') || 0);
+                    bVal = parseFloat(b.getAttribute('data-identity') || 0);
+                } else if (sortType === 'depth') {
+                    aVal = parseFloat(a.getAttribute('data-depth') || 0);
+                    bVal = parseFloat(b.getAttribute('data-depth') || 0);
+                } else if (sortType === 'breadth') {
+                    aVal = parseFloat(a.getAttribute('data-breadth') || 0);
+                    bVal = parseFloat(b.getAttribute('data-breadth') || 0);
+                } else {
+                    return 0;
+                }
+                
+                return order === 'asc' ? aVal - bVal : bVal - aVal;
+            });
+            
+            rows.forEach(row => tbody.appendChild(row));
+            
+            // Update charts
+            updateCharts(sampleName);
+        }
+        
+        // Create charts
+        function createCharts(sampleName) {
+            const container = document.getElementById(`charts-${sampleName}`);
+            if (!container || !samplesData[sampleName]) return;
+            
+            let allRefs = [];
+            Object.keys(samplesData[sampleName]).forEach(db => {
+                if (samplesData[sampleName][db].references) {
+                    allRefs = allRefs.concat(samplesData[sampleName][db].references);
+                }
+            });
+            
+            if (allRefs.length === 0) return;
+            
+            // Get current table order
+            const tbody = document.getElementById(`tbody-${sampleName}`);
+            const rows = tbody ? Array.from(tbody.querySelectorAll('tr:not([style*="display: none"])')) : [];
+            
+            let labels = [];
+            let reads = [];
+            let identities = [];
+            let depths = [];
+            let breadths = [];
+            
+            if (rows.length > 0) {
+                rows.forEach(row => {
+                    labels.push(row.getAttribute('data-species') || 'N/A');
+                    reads.push(parseFloat(row.getAttribute('data-reads') || 0));
+                    identities.push(parseFloat(row.getAttribute('data-identity') || 0));
+                    depths.push(parseFloat(row.getAttribute('data-depth') || 0));
+                    breadths.push(parseFloat(row.getAttribute('data-breadth') || 0) * 100);
+                });
+            } else {
+                allRefs.sort((a, b) => (b.coverage_breadth || 0) - (a.coverage_breadth || 0));
+                allRefs.forEach(ref => {
+                    labels.push(ref.viral_species || ref.organism || ref.accession || 'N/A');
+                    reads.push(ref.mapped_reads || 0);
+                    identities.push(ref.avg_identity || 0);
+                    depths.push(ref.coverage_depth || 0);
+                    breadths.push((ref.coverage_breadth || 0) * 100);
+                });
+            }
+            
+            container.innerHTML = `
+                <div class="chart-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h3>Mapped Reads</h3>
+                        <div>
+                            <button onclick="downloadChart('${sampleName}', 'reads', 'png')">📥 Download PNG</button>
+                        </div>
+                    </div>
+                    <div style="position: relative; width: 100%; height: 250px;">
+                        <canvas id="chart-reads-${sampleName}"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h3>Identity (%)</h3>
+                        <div>
+                            <button onclick="downloadChart('${sampleName}', 'identity', 'png')">📥 Download PNG</button>
+                        </div>
+                    </div>
+                    <div style="position: relative; width: 100%; height: 250px;">
+                        <canvas id="chart-identity-${sampleName}"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h3>Coverage Depth</h3>
+                        <div>
+                            <button onclick="downloadChart('${sampleName}', 'depth', 'png')">📥 Download PNG</button>
+                        </div>
+                    </div>
+                    <div style="position: relative; width: 100%; height: 250px;">
+                        <canvas id="chart-depth-${sampleName}"></canvas>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h3>Coverage Breadth (%)</h3>
+                        <div>
+                            <button onclick="downloadChart('${sampleName}', 'breadth', 'png')">📥 Download PNG</button>
+                        </div>
+                    </div>
+                    <div style="position: relative; width: 100%; height: 250px;">
+                        <canvas id="chart-breadth-${sampleName}"></canvas>
+                    </div>
+                </div>
+            `;
+            
+            // Create charts
+            createChart(`chart-reads-${sampleName}`, labels, reads, 'Mapped Reads', '#667eea');
+            createChart(`chart-identity-${sampleName}`, labels, identities, 'Identity (%)', '#28a745', 100);
+            createChart(`chart-depth-${sampleName}`, labels, depths, 'Coverage Depth', '#ffc107');
+            createChart(`chart-breadth-${sampleName}`, labels, breadths, 'Coverage Breadth (%)', '#dc3545', 100);
+        }
+        
+        // Create single chart
+        function createChart(canvasId, labels, data, title, color, maxY = null) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            
+            new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        data: data,
+                        backgroundColor: color,
+                        borderColor: color,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    aspectRatio: 1.5,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: {
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45,
+                                font: { size: 10 },
+                                callback: function(value, index, ticks) {
+                                    const label = this.getLabelForValue(value);
+                                    if (label && label.length > 20) {
+                                        return label.substring(0, 17) + '...';
+                                    }
+                                    return label;
+                                }
+                            },
+                            afterFit: function(scale) {
+                                scale.height = Math.max(scale.height, 80);
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            max: maxY,
+                            ticks: {
+                                callback: function(value) {
+                                    return maxY === 100 ? value + '%' : value.toLocaleString();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Update charts when table is sorted
+        function updateCharts(sampleName) {
+            if (!charts[sampleName]) return;
+            
+            const tbody = document.getElementById(`tbody-${sampleName}`);
+            const rows = Array.from(tbody.querySelectorAll('tr:not([style*="display: none"])'));
+            
+            let labels = [];
+            let reads = [];
+            let identities = [];
+            let depths = [];
+            let breadths = [];
+            
+            rows.forEach(row => {
+                labels.push(row.getAttribute('data-species') || 'N/A');
+                reads.push(parseFloat(row.getAttribute('data-reads') || 0));
+                identities.push(parseFloat(row.getAttribute('data-identity') || 0));
+                depths.push(parseFloat(row.getAttribute('data-depth') || 0));
+                breadths.push(parseFloat(row.getAttribute('data-breadth') || 0) * 100);
+            });
+            
+            const chartReads = Chart.getChart(document.getElementById(`chart-reads-${sampleName}`));
+            const chartIdentity = Chart.getChart(document.getElementById(`chart-identity-${sampleName}`));
+            const chartDepth = Chart.getChart(document.getElementById(`chart-depth-${sampleName}`));
+            const chartBreadth = Chart.getChart(document.getElementById(`chart-breadth-${sampleName}`));
+            
+            if (chartReads) {
+                chartReads.data.labels = labels;
+                chartReads.data.datasets[0].data = reads;
+                chartReads.update();
+            }
+            if (chartIdentity) {
+                chartIdentity.data.labels = labels;
+                chartIdentity.data.datasets[0].data = identities;
+                chartIdentity.update();
+            }
+            if (chartDepth) {
+                chartDepth.data.labels = labels;
+                chartDepth.data.datasets[0].data = depths;
+                chartDepth.update();
+            }
+            if (chartBreadth) {
+                chartBreadth.data.labels = labels;
+                chartBreadth.data.datasets[0].data = breadths;
+                chartBreadth.update();
+            }
+        }
+        
+        // Download functions
+        function downloadTableAsCSV(sampleName) {
+            const tbody = document.getElementById(`tbody-${sampleName}`);
+            if (!tbody) return;
+            
+            let csv = 'Accession,Organism,Viral Species,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\n';
+            const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
+            
+            rows.forEach(row => {
+                const cells = row.querySelectorAll('td');
+                const rowData = [];
+                cells.forEach(cell => {
+                    let text = cell.textContent.trim();
+                    if (text.includes(',') || text.includes('"')) {
+                        text = '"' + text.replace(/"/g, '""') + '"';
+                    }
+                    rowData.push(text);
+                });
+                csv += rowData.join(',') + '\n';
+            });
+            
+            const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `${sampleName}_results.csv`;
+            link.click();
+        }
+        
+        function downloadChart(sampleName, chartType, format) {
+            const canvas = document.getElementById(`chart-${chartType}-${sampleName}`);
+            if (!canvas) return;
+            
+            const chart = Chart.getChart(canvas);
+            if (!chart) return;
+            
+            if (format === 'png') {
+                // High quality PNG: temporarily increase canvas resolution
+                const originalWidth = canvas.width;
+                const originalHeight = canvas.height;
+                const scale = 3; // 3x resolution for high quality
+                
+                // Temporarily resize canvas for high-res export
+                canvas.width = originalWidth * scale;
+                canvas.height = originalHeight * scale;
+                chart.resize();
+                
+                // Export at high resolution
+                const url = chart.toBase64Image('image/png', 1.0);
+                
+                // Restore original canvas size
+                canvas.width = originalWidth;
+                canvas.height = originalHeight;
+                chart.resize();
+                
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${sampleName}_${chartType}.png`;
+                link.click();
+            }
+        }
+        
+        // Create heatmap
+        function createHeatmap() {
+            const container = document.getElementById('heatmap-container');
+            if (!container) return;
+            
+            const speciesList = Object.keys(heatmapData).sort();
+            
+            let html = '<table class="heatmap-table"><thead><tr><th>Viral Species</th>';
+            allSamples.forEach(sample => {
+                html += `<th>${sample}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+            
+            speciesList.forEach(species => {
+                html += `<tr><th>${species}</th>`;
+                allSamples.forEach(sample => {
+                    const present = heatmapData[species][sample] || false;
+                    html += `<td class="heatmap-cell ${present ? 'heatmap-present' : 'heatmap-absent'}">${present ? '✓' : '—'}</td>`;
+                });
+                html += '</tr>';
+            });
+            
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+        
+        function downloadHeatmapAsPNG() {
+            const container = document.getElementById('heatmap-container');
+            if (!container) return;
+            
+            // High quality PNG: use higher scale
+            const scale = 3; // 3x resolution for high quality
+            html2canvas(container, {
+                scale: scale,
+                useCORS: true,
+                logging: false,
+                backgroundColor: '#ffffff'
+            }).then(canvas => {
+                const url = canvas.toDataURL('image/png', 1.0);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'heatmap_all_samples.png';
+                link.click();
+            });
+        }
+        
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            createHeatmap();
+            const firstSample = allSamples[0];
+            if (firstSample) {
+                const select = document.getElementById('sampleSelect');
+                if (select) select.value = firstSample;
+                showSample(firstSample);
+            }
+        });
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</body>
+</html>
