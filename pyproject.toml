@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "refselector"
 version = "1.0.0"
-description = "Reference sequence selection tool for viral genomics"
+description = "Virasign: Viral Read ASSIGNment from nanopore sequencing"
 readme = "README.md"
 requires-python = ">=3.7"
 authors = [
-    {name = "RefSelector Team"}
+    {name = "Virasign Team"}
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
