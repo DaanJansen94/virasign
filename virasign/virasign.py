@@ -2378,7 +2378,6 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                         "aligned_bases": 0,
                         "matches": 0,
                         "covered_positions": set(),  # Track covered positions for breadth calculation
-                        "unique_reads": set(),  # Track unique read names to avoid double-counting when reads map to multiple references
                     }
                 
                 # Parse CIGAR
@@ -2404,8 +2403,7 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                 # For RefSeq: only reads with >= 97% identity are counted
                 # For RVDB: only reads with >= 80% identity are counted
                 if alignment_identity >= min_identity:
-                    # Track unique reads (a read can map to multiple references)
-                    stats_by_ref[sam_header]["unique_reads"].add(read_name)
+                    stats_by_ref[sam_header]["mapped_reads"] += 1
                     # Use aligned_m (query length) for aligned_bases to match how matches is calculated
                     # This ensures identity = matches/aligned_bases <= 100% (matches <= aligned_m)
                     stats_by_ref[sam_header]["aligned_bases"] += aligned_m
@@ -2419,14 +2417,9 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                 # This read alignment is NOT counted in mapped_reads, matches, etc.
     
     # Convert covered_positions set to count for each reference
-    # Count unique reads (not total alignments) to avoid double-counting when reads map to multiple references
     for sam_header in stats_by_ref:
         covered_set = stats_by_ref[sam_header]["covered_positions"]
         stats_by_ref[sam_header]["covered_positions"] = len(covered_set)
-        # Count unique reads instead of total alignments
-        stats_by_ref[sam_header]["mapped_reads"] = len(stats_by_ref[sam_header]["unique_reads"])
-        # Remove the set to save memory (we only need the count)
-        del stats_by_ref[sam_header]["unique_reads"]
     
     return stats_by_ref, ref_lengths, ref_headers
 
@@ -2556,11 +2549,12 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     is_refseq = "refseq" in selected_refs_path_str
     
     # Build minimap2 command with stricter parameters for RefSeq
-    # Allow multiple alignments per read for re-mapping as well (consistent with initial mapping)
+    # Use primary alignments only (-N 1) to reduce false positives
     minimap_cmd = [
         "minimap2",
         "-ax", "map-ont",
-        # Removed -N 1 to allow multiple alignments per read
+        "-N", "1",  # Only report 1 alignment per read (primary alignment only)
+        "--secondary=no",  # No secondary alignments
         "-p", str(minimap_p),  # Minimum matching proportion (filters during alignment, like metamaps --pi)
         "-f", "0.0002",
         "-I", "8G",
@@ -2876,11 +2870,12 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         logger.info(f"Using minimap2 -p {minimap_p:.2f} (user-specified)")
 
     # Build minimap2 command
-    # Allow multiple alignments per read to capture reads that map to multiple references of same species
+    # Use primary alignments only (-N 1) to reduce false positives
     minimap_cmd = [
         "minimap2",
         "-ax", "map-ont",
-        # Removed -N 1 to allow multiple alignments per read (helps when reads map to multiple references of same species)
+        "-N", "1",  # Only report 1 alignment per read (primary alignment only)
+        "--secondary=no",  # No secondary alignments
         "-p", str(minimap_p),  # Minimum matching proportion (filters during alignment, like metamaps --pi)
         "-f", "0.0002",  # Filter top 0.02% frequent minimizers (faster, minimal sensitivity loss)
         "-I", "8G",  # Batch size for better memory efficiency
