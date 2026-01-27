@@ -73,9 +73,9 @@ virasign -i input_dir -d my_accessions.txt -o output_dir
   - **{accession}.bam**: BAM alignment file (indexed with {accession}.bam.bai)
   - **{accession}_mapped_reads.fastq**: Reads that mapped to that specific reference
 
-## Output example of the html
+## HTML Output example
 
-![HTML Output Example](html_output_example.png)
+Example HTML output for one sample: [html_output_example.html](html_output_example.html)
 
 ## Citation
 
