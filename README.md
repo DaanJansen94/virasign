@@ -27,7 +27,7 @@ pip install .
 ### Basic Usage
 
 ```bash
-virasign -i <input_dir> -o <output_dir> [options]
+virasign -i input_dir -o output_dir [options]
 ```
 
 **Note**: The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified.
@@ -51,16 +51,16 @@ virasign -i <input_dir> -o <output_dir> [options]
 
 ```bash
 # Basic usage with default RVDB database
-virasign -i samples/ -o results/
+virasign -i input_dir -o output_dir
 
 # Use both databases with custom accessions and 16 threads
-virasign -i samples/ -d RVDB,RefSeq -o results/ -a PX852146.1,NC_123456.1 -t 16
+virasign -i input_dir -d RVDB,RefSeq -o output_dir -a PX852146.1,NC_123456.1 -t 16
 
 # Use a single accession as the database
-virasign -i samples/ -d OZ254622.1 -o results/
+virasign -i input_dir -d OZ254622.1 -o output_dir
 
 # Use text file with accessions as database
-virasign -i samples/ -d my_accessions.txt -o results/
+virasign -i input_dir -d my_accessions.txt -o output_dir
 # (my_accessions.txt contains one accession per line)
 ```
 
