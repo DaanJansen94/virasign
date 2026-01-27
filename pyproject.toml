@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 [project.scripts]
-virasign = "virasign.reference_selection:main"
+virasign = "virasign.virasign:main"
 
 [tool.setuptools]
 packages = ["virasign"]

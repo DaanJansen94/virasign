@@ -15,7 +15,7 @@ setup(
     install_requires=[],
     entry_points={
         "console_scripts": [
-            "virasign=virasign.reference_selection:main",
+            "virasign=virasign.virasign:main",
         ],
     },
     classifiers=[
