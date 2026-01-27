@@ -11,7 +11,7 @@ Create a new conda environment with all required tools:
 ```bash
 conda create -n virasign python=3.9 -y
 conda activate virasign
-conda install -c bioconda -c conda-forge minimap2 seqtk curl samtools -y
+conda install -c bioconda -c conda-forge minimap2=2.24 seqtk=1.3 curl=7.88 samtools=1.17 -y
 ```
 
 ### 2. Install Virasign
