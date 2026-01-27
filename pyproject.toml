@@ -3,7 +3,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "refselector"
+name = "virasign"
 version = "1.0.0"
 description = "Virasign: Viral Read ASSIGNment from nanopore sequencing"
 readme = "README.md"
@@ -18,7 +18,7 @@ classifiers = [
 ]
 
 [project.scripts]
-refselector = "refselector.reference_selection:main"
+virasign = "virasign.reference_selection:main"
 
 [tool.setuptools]
-packages = ["refselector"]
+packages = ["virasign"]

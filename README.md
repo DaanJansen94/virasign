@@ -9,8 +9,8 @@ Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral classif
 Create a new conda environment with all required tools:
 
 ```bash
-conda create -n refselector python=3.9 -y
-conda activate refselector
+conda create -n virasign python=3.9 -y
+conda activate virasign
 conda install -c bioconda -c conda-forge minimap2 seqtk curl samtools -y
 ```
 
@@ -19,8 +19,8 @@ conda install -c bioconda -c conda-forge minimap2 seqtk curl samtools -y
 ### 2. Install Virasign
 
 ```bash
-git clone https://github.com/DaanJansen94/refselector.git
-cd refselector
+git clone https://github.com/DaanJansen94/virasign.git
+cd virasign
 pip install .
 ```
 
@@ -29,7 +29,7 @@ pip install .
 ### Basic Usage
 
 ```bash
-refselector -i <input_dir> -o <output_dir> [options]
+virasign -i <input_dir> -o <output_dir> [options]
 ```
 
 **Note**: The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified.
@@ -38,7 +38,7 @@ refselector -i <input_dir> -o <output_dir> [options]
 
 #### Required Arguments
 - `-i, --input`: Input directory containing FASTQ files
-- `-o, --output`: Output directory for results (use `.` to create `Refselector_output/` in current directory)
+- `-o, --output`: Output directory for results (use `.` to create `Virasign_output/` in current directory)
 
 #### Optional Arguments
 - `-d, --database`: Database name, accession number, text file with accessions, or path to FASTA file (default: `RVDB`)
@@ -50,32 +50,32 @@ refselector -i <input_dir> -o <output_dir> [options]
   - Examples:
     ```bash
     # Use default RVDB database (no -d needed)
-    refselector -i input/ -o output/
+    virasign -i input/ -o output/
     
     # Use RefSeq database
-    refselector -i input/ -d RefSeq -o output/
+    virasign -i input/ -d RefSeq -o output/
     
     # Use both RVDB and RefSeq (separate outputs for each)
-    refselector -i input/ -d RVDB,RefSeq -o output/
+    virasign -i input/ -d RVDB,RefSeq -o output/
     
     # Use a single accession as database
-    refselector -i input/ -d OZ254622.1 -o output/
+    virasign -i input/ -d OZ254622.1 -o output/
     
     # Use text file with accessions as database
-    refselector -i input/ -d accessions.txt -o output/
+    virasign -i input/ -d accessions.txt -o output/
     # (accessions.txt contains one accession per line, e.g.:
     #  OZ254622.1
     #  NC_123456.1
     #  AY123456.1)
     
     # Use accession as database and merge with additional accessions
-    refselector -i input/ -d OZ254622.1 -a NC_123456.1,AY123456.1 -o output/
+    virasign -i input/ -d OZ254622.1 -a NC_123456.1,AY123456.1 -o output/
     
     # Use text file with accessions and merge with additional accessions
-    refselector -i input/ -d accessions.txt -a PX852146.1 -o output/
+    virasign -i input/ -d accessions.txt -a PX852146.1 -o output/
     
     # Use custom database file
-    refselector -i input/ -d /path/to/database.fasta -o output/
+    virasign -i input/ -d /path/to/database.fasta -o output/
     ```
 
 - `-a, --accession`: NCBI accession number(s) to download and merge with database
@@ -84,10 +84,10 @@ refselector -i <input_dir> -o <output_dir> [options]
   - Examples:
     ```bash
     # Comma-separated list
-    refselector -i input/ -d RVDB -o output/ -a PX852146.1,NC_123456.1
+    virasign -i input/ -d RVDB -o output/ -a PX852146.1,NC_123456.1
     
     # Text file
-    refselector -i input/ -d RVDB -o output/ -a accessions.txt
+    virasign -i input/ -d RVDB -o output/ -a accessions.txt
     ```
 
 - `--min_identity`: Minimum average identity percentage
@@ -102,29 +102,29 @@ refselector -i <input_dir> -o <output_dir> [options]
 
 ```bash
 # Basic usage with default RVDB database
-refselector -i samples/ -o results/
+virasign -i samples/ -o results/
 
 # Use RefSeq with custom identity threshold
-refselector -i samples/ -d RefSeq -o results/ --min_identity 97
+virasign -i samples/ -d RefSeq -o results/ --min_identity 97
 
 # Use both databases with custom accessions
-refselector -i samples/ -d RVDB,RefSeq -o results/ -a PX852146.1,NC_123456.1 -t 16
+virasign -i samples/ -d RVDB,RefSeq -o results/ -a PX852146.1,NC_123456.1 -t 16
 
 # Use a single accession as the database
-refselector -i samples/ -d OZ254622.1 -o results/
+virasign -i samples/ -d OZ254622.1 -o results/
 
 # Use text file with accessions as database
-refselector -i samples/ -d my_accessions.txt -o results/
+virasign -i samples/ -d my_accessions.txt -o results/
 # (my_accessions.txt contains one accession per line)
 
 # Use accession as database and merge with additional accessions
-refselector -i samples/ -d OZ254622.1 -a NC_123456.1,AY123456.1 -o results/
+virasign -i samples/ -d OZ254622.1 -a NC_123456.1,AY123456.1 -o results/
 
 # Use text file with accessions and merge with additional accessions
-refselector -i samples/ -d my_accessions.txt -a PX852146.1 -o results/
+virasign -i samples/ -d my_accessions.txt -a PX852146.1 -o results/
 
 # Use custom database with accessions from file
-refselector -i samples/ -d /path/to/database.fasta -o results/ -a my_accessions.txt
+virasign -i samples/ -d /path/to/database.fasta -o results/ -a my_accessions.txt
 ```
 
 ## Output Structure
@@ -132,7 +132,7 @@ refselector -i samples/ -d /path/to/database.fasta -o results/ -a my_accessions.
 When using a single database:
 ```
 output/
-├── refselector.log
+├── virasign.log
 ├── results_summary_RefSeq.html  (or results_summary_RVDB.html)
 └── sample_name/
     ├── sample_name_final_selected_references.json
@@ -146,7 +146,7 @@ output/
 When using multiple databases (e.g., `RVDB,RefSeq`):
 ```
 output/
-├── refselector.log
+├── virasign.log
 ├── results_summary_RefSeq.html
 ├── results_summary_RVDB.html
 └── sample_name/

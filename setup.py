@@ -4,7 +4,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="refselector",
+    name="virasign",
     version="1.0.0",
     author="Virasign Team",
     description="Virasign: Viral Read ASSIGNment from nanopore sequencing",
@@ -15,7 +15,7 @@ setup(
     install_requires=[],
     entry_points={
         "console_scripts": [
-            "refselector=refselector.reference_selection:main",
+            "virasign=virasign.reference_selection:main",
         ],
     },
     classifiers=[
