@@ -2728,20 +2728,43 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             
             logger.info(f"  Created {ref_sam.name} ({len(sam_lines)} alignments)")
             
-            # 3. Convert SAM to BAM
+            # 3. Convert SAM to coordinate-sorted BAM (+ index) for easy visualization
+            # Note: `samtools index` requires coordinate-sorted BAM.
             ref_bam = acc_dir / f"{accession}.bam"
+            ref_bai = acc_dir / f"{accession}.bam.bai"
             try:
                 # Check if samtools is available
                 subprocess.run(['samtools', '--version'], check=True, capture_output=True)
-                
-                # Convert SAM to BAM
-                cmd = ['samtools', 'view', '-bS', str(ref_sam), '-o', str(ref_bam)]
-                subprocess.run(cmd, check=True, capture_output=True)
-                
-                # Index BAM
+
+                # Create coordinate-sorted BAM:
+                # samtools view -bS ref.sam | samtools sort -o ref.bam -
+                view_cmd = ['samtools', 'view', '-bS', str(ref_sam)]
+                sort_cmd = ['samtools', 'sort', '-o', str(ref_bam), '-']
+
+                view_p = subprocess.Popen(view_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                try:
+                    sort_p = subprocess.Popen(sort_cmd, stdin=view_p.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                finally:
+                    # Allow view_p to receive SIGPIPE if sort exits early
+                    if view_p.stdout:
+                        view_p.stdout.close()
+
+                _, view_err = view_p.communicate()
+                _, sort_err = sort_p.communicate()
+
+                if view_p.returncode != 0:
+                    raise subprocess.CalledProcessError(view_p.returncode, view_cmd, output=None, stderr=view_err)
+                if sort_p.returncode != 0:
+                    raise subprocess.CalledProcessError(sort_p.returncode, sort_cmd, output=None, stderr=sort_err)
+
+                # Index BAM (creates .bai next to the BAM)
                 subprocess.run(['samtools', 'index', str(ref_bam)], check=True, capture_output=True)
-                
-                logger.info(f"  Created {ref_bam.name} (and index)")
+
+                if ref_bai.exists():
+                    logger.info(f"  Created {ref_bam.name} and {ref_bai.name}")
+                else:
+                    # Some samtools versions might name differently or write elsewhere; still log success.
+                    logger.info(f"  Created {ref_bam.name} and indexed it")
                 # Remove SAM file since we have BAM
                 ref_sam.unlink()
                 logger.info(f"  Removed {ref_sam.name} (BAM file available)")
