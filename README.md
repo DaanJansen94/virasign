@@ -73,6 +73,10 @@ virasign -i input_dir -d my_accessions.txt -o output_dir
   - **{accession}.bam**: BAM alignment file (indexed with {accession}.bam.bai)
   - **{accession}_mapped_reads.fastq**: Reads that mapped to that specific reference
 
+## Output example of the html
+
+![HTML Output Example](html_output_example.png)
+
 ## Citation
 
 If you use Lassaseq in your research, please cite:
