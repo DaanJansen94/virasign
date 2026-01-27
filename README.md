@@ -109,5 +109,5 @@ output/
 - ***_final_selected_references.json**: Final curated references
 - **Per-reference folders**: Each curated reference gets its own folder with:
   - **{accession}.fasta**: Reference sequence
-  - **{accession}.bam**: BAM alignment file (indexed)
+  - **{accession}.bam**: BAM alignment file (indexed with {accession}.bam.bai)
   - **{accession}_mapped_reads.fastq**: Reads that mapped to that specific reference
