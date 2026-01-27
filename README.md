@@ -64,45 +64,6 @@ virasign -i input_dir -d my_accessions.txt -o output_dir
 # (my_accessions.txt contains one accession per line)
 ```
 
-## Output Structure
-
-When using a single database:
-```
-output/
-├── virasign.log
-├── results_summary_RefSeq.html  (or results_summary_RVDB.html)
-└── sample_name/
-    ├── sample_name_final_selected_references.json
-    ├── sample_name_unfiltered_all_references.json
-    └── PP826286.1/  (per-reference folder)
-        ├── PP826286.1.fasta
-        ├── PP826286.1.bam
-        └── PP826286.1_mapped_reads.fastq
-```
-
-When using multiple databases (e.g., `RVDB,RefSeq`):
-```
-output/
-├── virasign.log
-├── results_summary_RefSeq.html
-├── results_summary_RVDB.html
-└── sample_name/
-    ├── RVDB/
-    │   ├── sample_name_final_selected_references.json
-    │   ├── sample_name_unfiltered_all_references.json
-    │   └── PP826286.1/  (per-reference folder)
-    │       ├── PP826286.1.fasta
-    │       ├── PP826286.1.bam
-    │       └── PP826286.1_mapped_reads.fastq
-    └── RefSeq/
-        ├── sample_name_final_selected_references.json
-        ├── sample_name_unfiltered_all_references.json
-        └── NC_123456.1/  (per-reference folder)
-            ├── NC_123456.1.fasta
-            ├── NC_123456.1.bam
-            └── NC_123456.1_mapped_reads.fastq
-```
-
 ## Output Files
 
 - **results_summary_*.html**: Interactive HTML reports (one per database)
