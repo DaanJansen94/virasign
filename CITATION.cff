@@ -7,7 +7,7 @@ authors:
   - family-names: Vercauteren
     given-names: Koen
     orcid: https://orcid.org/0000-0003-1472-9938
-doi: "10.5281/zenodo.14936276"
+doi: "10.5281/zenodo.18387008"
 title: "Virasign: Viral Read ASSIGNment from nanopore sequencing."
 version: v0.0.1
 url: github.com/DaanJansen94/virasign
