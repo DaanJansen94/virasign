@@ -82,7 +82,7 @@ Example HTML output for one sample: [html_output_example.html](html_output_examp
 If you use Lassaseq in your research, please cite:
 
 ```
-Jansen, D., Laumen, J., Siebenmann, E., & Vercauteren, K. (2025). LassaSeq: A Command-Line Tool for Downloading, Processing and Analyzing Lassa Virus Sequences for Phylogenetic Analysis (v0.1.2). Zenodo. https://doi.org/10.5281/zenodo.14936276
+Jansen, D., Vercauteren, K. (2025). Virasign is a viral classification tool designed for nanopore sequencing data (v1.0.0). Zenodo. https://doi.org/10.5281/zenodo.14936276
 ```
 
 ## License
