@@ -19,10 +19,8 @@ conda install -c bioconda -c conda-forge minimap2=2.24 seqtk=1.3 curl=7.88 samto
 ```bash
 git clone https://github.com/DaanJansen94/virasign.git
 cd virasign
-pip install . 2>&1 | grep -v "DEPRECATION"
+pip install .
 ```
-
-**Note**: The deprecation warning is harmless and can be ignored. To suppress it, use the command above or simply `pip install . --quiet`.
 
 ## Usage
 
