@@ -2913,7 +2913,6 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
 
     # Calculate identity for all references and filter by minimum identity threshold
     all_stats = []
-    filtered_stats_by_ref = {}
     
     for sam_header, s in stats_by_ref.items():
         aligned_i = s["aligned_bases"]
@@ -3037,10 +3036,6 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     logger.info(f"Aggregated {len(all_stats)} references -> {len(aggregated_all_stats)} organisms/species")
     # Replace all_stats with aggregated version
     all_stats = aggregated_all_stats
-        
-        # Filter by both minimum identity and minimum mapped reads thresholds
-        if identity >= min_identity and s["mapped_reads"] >= min_mapped_reads:
-            filtered_stats_by_ref[sam_header] = s
     
     # Apply both filters: identity >= min_identity AND mapped_reads >= min_mapped_reads
     filtered_all_stats = [s for s in all_stats if s["avg_identity"] >= min_identity and s["mapped_reads"] >= min_mapped_reads]
@@ -3053,7 +3048,6 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             logger.info(f"Best available: identity={best_identity:.2f}%, mapped_reads={best_reads}")
         # Return the best from all stats even if below threshold (with warning)
         filtered_all_stats = all_stats
-        filtered_stats_by_ref = stats_by_ref
     
     # Create curated JSON with hardcoded thresholds: 50% identity and 100 mapped reads
     curated_stats = [s for s in all_stats if s["avg_identity"] >= 50.0 and s["mapped_reads"] >= 100]
@@ -3084,7 +3078,6 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             logger.info(f"Best available: identity={best_identity:.2f}%, mapped_reads={best_reads}")
         # Return the best from all stats even if below threshold (with warning)
         filtered_all_stats = all_stats
-        filtered_stats_by_ref = stats_by_ref
     else:
         logger.info(f"Filtered to {len(filtered_all_stats)} references (identity >= {min_identity:.1f}% AND mapped_reads >= {min_mapped_reads}) out of {len(all_stats)} total")
     
@@ -3095,29 +3088,25 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         logger.info(f"Curated JSON: 0 references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {coverage_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= 100) out of {len(all_stats)} total")
         logger.warning("No references meet curated criteria - results may be limited")
     
-    # Choose best by mapped read count from filtered results
-    if filtered_stats_by_ref:
-        best_header = max(filtered_stats_by_ref.items(), key=lambda kv: kv[1]["mapped_reads"])[0]
+    # Choose best by mapped read count from filtered results (now working with aggregated stats)
+    if filtered_all_stats:
+        best_stat = max(filtered_all_stats, key=lambda s: s["mapped_reads"])
+    elif all_stats:
+        best_stat = max(all_stats, key=lambda s: s["mapped_reads"])
     else:
-        best_header = max(stats_by_ref.items(), key=lambda kv: kv[1]["mapped_reads"])[0]
+        # Fallback: return None if no stats available
+        return None, None, [], [], []
     
-    best = stats_by_ref[best_header]
-    best_acc = extract_accession_from_header(best_header)
-    # Look up full header from FASTA using accession (SAM header might be truncated)
-    best_desc = header_map.get(best_acc, ref_headers.get(best_header, best_header))
-
-    aligned = best["aligned_bases"]
-    matches = best["matches"]
-    # Calculate coverage as fraction (0.0 to 1.0)
-    ref_len = ref_lengths.get(best_header)
-    if ref_len and ref_len > 0:
-        coverage = aligned / ref_len
-    else:
-        coverage = 0.0
+    best_acc = best_stat["accession"]
+    best_desc = best_stat["description"]
+    
+    # Calculate best stats from aggregated entry
     best_stats = {
-        "mapped_reads": best["mapped_reads"],
-        "coverage": coverage,  # Fraction: 0.0 to 1.0
-        "avg_identity": (matches / aligned * 100) if aligned > 0 else 0,
+        "mapped_reads": best_stat["mapped_reads"],
+        "coverage": best_stat["coverage_depth"],  # Already calculated in aggregated stats
+        "avg_identity": best_stat["avg_identity"],
+        "coverage_depth": best_stat["coverage_depth"],
+        "coverage_breadth": best_stat["coverage_breadth"],
     }
 
     best_ref = {"accession": best_acc, "description": best_desc, "sequence": None}
