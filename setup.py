@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="virasign",
-    version="1.0.0",
+    version="0.0.1",
     author="Virasign Team",
     description="Virasign: Viral Read ASSIGNment from nanopore sequencing",
     long_description=long_description,
