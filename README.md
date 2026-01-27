@@ -72,3 +72,23 @@ virasign -i input_dir -d my_accessions.txt -o output_dir
   - **{accession}.fasta**: Reference sequence
   - **{accession}.bam**: BAM alignment file (indexed with {accession}.bam.bai)
   - **{accession}_mapped_reads.fastq**: Reads that mapped to that specific reference
+
+## Citation
+
+If you use Lassaseq in your research, please cite:
+
+```
+Jansen, D., Laumen, J., Siebenmann, E., & Vercauteren, K. (2025). LassaSeq: A Command-Line Tool for Downloading, Processing and Analyzing Lassa Virus Sequences for Phylogenetic Analysis (v0.1.2). Zenodo. https://doi.org/10.5281/zenodo.14936276
+```
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - see the [LICENSE](LICENSE) file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Support
+
+If you encounter any problems or have questions, please open an issue on GitHub.
