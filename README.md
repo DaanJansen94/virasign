@@ -103,47 +103,11 @@ output/
             └── NC_123456.1_mapped_reads.fastq
 ```
 
-## Features
-
-- **Automatic Database Download**: Downloads RVDB and RefSeq databases automatically to `Databases/` directory
-- **NCBI Accession Support**: Download and merge custom accessions from NCBI
-- **Database-Specific Thresholds**: Automatically uses appropriate identity thresholds (95% for RefSeq, 80% for RVDB)
-- **Segmented Virus Support**: Handles segmented viruses (e.g., Lassa, Influenza) by keeping best reference for each segment
-- **Maps reads** to reference database using minimap2
-- **Calculates coverage depth and breadth** for each reference
-- **Filters and curates references** based on identity and coverage thresholds
-- **Re-maps reads** to selected references for accurate read counts
-- **Automatically indexes databases** for faster mapping
-- **Downloads and uses NCBI taxonomy database** for organism identification
-- **Deduplicates references** by organism (preferring RefSeq over GenBank)
-- **Interactive HTML Reports**: Generates comprehensive, interactive HTML visualization reports with:
-  - Filterable and sortable tables per sample
-  - Interactive charts (bar plots) for mapped reads, identity, coverage depth, and breadth
-  - Heatmap showing viral species across all samples
-  - Download functionality (CSV for tables, PNG for charts and heatmap)
-  - Pipeline configuration display
-  - Separate HTML files for each database (e.g., `results_summary_RefSeq.html`, `results_summary_RVDB.html`)
-
 ## Output Files
 
 - **`results_summary_*.html`**: Interactive HTML visualization reports (one per database)
-  - Filterable and sortable tables with viral reference statistics
-  - Interactive bar charts for mapped reads, identity, coverage depth, and breadth
-  - Heatmap visualization showing viral species presence across samples
-  - Download options: CSV export for tables, PNG export for charts and heatmap
-  - Sample selector to view results per sample
 - **`*_final_selected_references.json`**: Final curated references after re-mapping (with accurate stats)
-- **`*_unfiltered_all_references.json`**: All references found during initial mapping (with original stats)
 - **Per-reference folders**: Each curated reference gets its own folder with:
   - `{accession}.fasta`: Reference sequence
   - `{accession}.bam`: BAM alignment file (indexed)
   - `{accession}_mapped_reads.fastq`: Reads that mapped to that specific reference
-
-## Notes
-
-- Databases are downloaded to `Databases/` directory in the current working directory
-- Downloaded databases are cached and reused on subsequent runs
-- Accessions are temporarily downloaded, merged with the database, then cleaned up
-- The tool automatically handles database indexing for faster subsequent runs
-- For segmented viruses, the tool keeps the best reference for each segment (e.g., L and S segments for Lassa virus)
-- All SAM files are automatically removed to save space (BAM files are kept)
