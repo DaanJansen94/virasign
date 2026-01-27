@@ -1,6 +1,6 @@
 # Virasign
 
-Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral classification and reference selection pipeline. It maps long-read sequencing data (optimized for Oxford Nanopore via minimap2) against viral databases (RVDB, RefSeq, or custom), calculates coverage metrics, filters by identity and coverage thresholds, and generates comprehensive interactive HTML reports with filterable tables, charts, and heatmaps.
+Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral classification and reference selection pipeline. It maps long-read sequencing data (optimized for Oxford Nanopore via minimap2) against viral databases (RVDB, RefSeq, or custom) and generates comprehensive interactive HTML reports with filterable tables, charts, and heatmaps. For each identified viral reference, Virasign provides FASTA files of the reference sequences, mapped reads in FASTQ format, and BAM files for easy visualization.
 
 ## Installation
 
