@@ -7,7 +7,7 @@ package:
 
 source:
   url: https://github.com/DaanJansen94/virasign/archive/v{{ version }}.tar.gz
-  sha256: PLACEHOLDER_UPDATE_WHEN_CREATING_RELEASE
+  sha256: ac5badfcb18e6987c81a9745a0610fe73ce0b20945e3af3ecc5d399ae534f9d4
 
 build:
   number: 0
@@ -41,7 +41,7 @@ about:
   license: GPL-3.0
   license_family: GPL
   license_file: LICENSE
-  summary: Viral classification and reference selection tool for nanopore sequencing data
+  summary: Virasign is a viral classification tool designed for nanopore sequencing data.
   description: |
     Virasign (Viral Read ASSIGNment from nanopore sequencing) is a viral classification and reference selection tool for nanopore data. 
     It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or custom) and generates comprehensive 
