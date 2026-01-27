@@ -77,9 +77,7 @@ virasign -i input_dir -d my_accessions.txt -o output_dir
 
 Example HTML output for one sample:
 
-![HTML Output Example](html_output_example.png)
-
-*Click [here](results_summary_RVDB.html) to view the interactive HTML report*
+![HTML Output Example](html_example.png)
 
 ## Citation
 
