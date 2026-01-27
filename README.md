@@ -39,7 +39,7 @@ virasign -i input_dir -o output_dir [options]
 - `-o, --output`: Output directory for results (use `.` to create `Virasign_output/` in current directory)
 
 #### Optional Arguments
-- `-d, --database`: Database name, accession number (default: `RVDB`)
+- `-d, --database`: Database name (`RefSeq`, `RVDB` (default), or accession number)
 - `-a, --accession`: NCBI accession number(s) to download and merge with database
 - `--min_identity`: Minimum average identity percentage
 - `--min_mapped_reads`: Minimum number of mapped reads (default: `100`)
