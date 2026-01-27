@@ -6,8 +6,8 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="refselector",
     version="1.0.0",
-    author="RefSelector Team",
-    description="Reference sequence selection tool for viral genomics",
+    author="Virasign Team",
+    description="Virasign: Viral Read ASSIGNment from nanopore sequencing",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(),

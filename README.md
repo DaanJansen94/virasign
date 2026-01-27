@@ -1,6 +1,6 @@
-# RefSelector
+# Virasign
 
-A pipeline for selecting optimal viral reference sequences from databases (RVDB, RefSeq, or custom accession). Maps reads using minimap2, calculates coverage metrics, filters by identity thresholds, and generates comprehensive interactive HTML reports with filterable tables, charts, and heatmaps.
+Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral classification and reference selection pipeline. It maps long-read sequencing data (optimized for Oxford Nanopore via minimap2) against viral databases (RVDB, RefSeq, or custom), calculates coverage metrics, filters by identity and coverage thresholds, and generates comprehensive interactive HTML reports with filterable tables, charts, and heatmaps.
 
 ## Installation
 
@@ -16,7 +16,7 @@ conda install -c bioconda -c conda-forge minimap2 seqtk curl samtools -y
 
 **Note**: `seqtk` and `curl` are optional (Python fallbacks are available), but `minimap2` is required.
 
-### 2. Install RefSelector
+### 2. Install Virasign
 
 ```bash
 git clone https://github.com/DaanJansen94/refselector.git

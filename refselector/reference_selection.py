@@ -4088,7 +4088,7 @@ def generate_html_visualization(output_dir: Path):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RefSelector Results Summary - {database_name}</title>
+    <title>Virasign Results Summary - {database_name}</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * {{
@@ -4449,8 +4449,8 @@ def generate_html_visualization(output_dir: Path):
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔬 RefSelector Results Summary - {database_name}</h1>
-            <p>Viral Reference Selection Pipeline Results</p>
+            <h1>🔬 Virasign Results Summary - {database_name}</h1>
+            <p>Viral Read ASSIGNment from nanopore sequencing</p>
         </div>
         <div class="content">
             <div class="sample-selector">
@@ -5406,7 +5406,7 @@ def main(args=None):
     user_specified_identity = args.min_identity  # Store user's explicit value if provided
     
     logger.info("="*60)
-    logger.info("RefSelector: Reference Selection Pipeline")
+    logger.info("Virasign: Viral Read ASSIGNment from nanopore sequencing")
     logger.info("="*60)
     logger.info(f"Input directory: {args.input}")
     if len(database_fasta_paths) > 1:
