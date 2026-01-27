@@ -2378,6 +2378,7 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                         "aligned_bases": 0,
                         "matches": 0,
                         "covered_positions": set(),  # Track covered positions for breadth calculation
+                        "unique_reads": set(),  # Track unique read names to avoid double-counting when reads map to multiple references
                     }
                 
                 # Parse CIGAR
@@ -2403,7 +2404,8 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                 # For RefSeq: only reads with >= 97% identity are counted
                 # For RVDB: only reads with >= 80% identity are counted
                 if alignment_identity >= min_identity:
-                    stats_by_ref[sam_header]["mapped_reads"] += 1
+                    # Track unique reads (a read can map to multiple references)
+                    stats_by_ref[sam_header]["unique_reads"].add(read_name)
                     # Use aligned_m (query length) for aligned_bases to match how matches is calculated
                     # This ensures identity = matches/aligned_bases <= 100% (matches <= aligned_m)
                     stats_by_ref[sam_header]["aligned_bases"] += aligned_m
@@ -2417,9 +2419,14 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                 # This read alignment is NOT counted in mapped_reads, matches, etc.
     
     # Convert covered_positions set to count for each reference
+    # Count unique reads (not total alignments) to avoid double-counting when reads map to multiple references
     for sam_header in stats_by_ref:
         covered_set = stats_by_ref[sam_header]["covered_positions"]
         stats_by_ref[sam_header]["covered_positions"] = len(covered_set)
+        # Count unique reads instead of total alignments
+        stats_by_ref[sam_header]["mapped_reads"] = len(stats_by_ref[sam_header]["unique_reads"])
+        # Remove the set to save memory (we only need the count)
+        del stats_by_ref[sam_header]["unique_reads"]
     
     return stats_by_ref, ref_lengths, ref_headers
 
@@ -2549,11 +2556,11 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     is_refseq = "refseq" in selected_refs_path_str
     
     # Build minimap2 command with stricter parameters for RefSeq
+    # Allow multiple alignments per read for re-mapping as well (consistent with initial mapping)
     minimap_cmd = [
         "minimap2",
         "-ax", "map-ont",
-        "-N", "1",  # Only report 1 alignment per read
-        "--secondary=no",
+        # Removed -N 1 to allow multiple alignments per read
         "-p", str(minimap_p),  # Minimum matching proportion (filters during alignment, like metamaps --pi)
         "-f", "0.0002",
         "-I", "8G",
@@ -2869,11 +2876,11 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         logger.info(f"Using minimap2 -p {minimap_p:.2f} (user-specified)")
 
     # Build minimap2 command
+    # Allow multiple alignments per read to capture reads that map to multiple references of same species
     minimap_cmd = [
         "minimap2",
         "-ax", "map-ont",
-        "-N", "1",  # Only report 1 alignment per read
-        "--secondary=no",  # No secondary alignments
+        # Removed -N 1 to allow multiple alignments per read (helps when reads map to multiple references of same species)
         "-p", str(minimap_p),  # Minimum matching proportion (filters during alignment, like metamaps --pi)
         "-f", "0.0002",  # Filter top 0.02% frequent minimizers (faster, minimal sensitivity loss)
         "-I", "8G",  # Batch size for better memory efficiency
@@ -2935,8 +2942,101 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             "coverage_depth": coverage_depth,  # Average depth (vertical coverage, can be > 1.0)
             "coverage_breadth": coverage_breadth,  # Horizontal coverage (fraction of positions covered, 0.0 to 1.0)
             "avg_identity": identity,
+            "aligned_bases": aligned_i,  # Store for aggregation
+            "matches": matches_i,  # Store for aggregation
+            "ref_length": ref_len,  # Store for aggregation
+            "covered_positions": covered_pos,  # Store for aggregation
         }
         all_stats.append(stat_entry)
+    
+    # Aggregate by organism/species BEFORE filtering to combine reads that map to multiple references of same species
+    # This helps when reads are spread across many references (e.g., many MPOX references)
+    logger.info("Aggregating reads by organism/species before filtering (combining reads across multiple references of same species)...")
+    aggregated_stats = {}
+    for stat in all_stats:
+        # Extract organism name from description (simple approach: look for organism name pattern)
+        desc = stat.get("description", "").lower()
+        organism_key = None
+        
+        # Try to extract organism name (between pipes for GenBank format, or from description)
+        # For MPOX: look for "monkeypox" or "orthopoxvirus"
+        if "monkeypox" in desc or "mpox" in desc:
+            organism_key = "monkeypox_virus"
+        elif "orthopoxvirus" in desc:
+            organism_key = "orthopoxvirus"
+        else:
+            # Extract organism from GenBank format: acc|GENBANK|...|organism|...
+            parts = stat.get("description", "").split("|")
+            if len(parts) >= 4:
+                organism_key = parts[-2].strip().lower().replace(" ", "_")[:50]  # Limit length
+            else:
+                # Fallback: use accession as key (no aggregation)
+                organism_key = stat.get("accession", "unknown")
+        
+        if organism_key not in aggregated_stats:
+            aggregated_stats[organism_key] = {
+                "accession": stat["accession"],  # Keep best accession (prefer RefSeq)
+                "description": stat["description"],
+                "mapped_reads": 0,
+                "aligned_bases": 0,
+                "matches": 0,
+                "ref_length": 0,
+                "covered_positions": set(),
+                "references": [stat],  # Track all references for this organism
+            }
+        
+        # Aggregate: sum reads, bases, matches
+        aggregated_stats[organism_key]["mapped_reads"] += stat["mapped_reads"]
+        aggregated_stats[organism_key]["aligned_bases"] += stat.get("aligned_bases", 0)
+        aggregated_stats[organism_key]["matches"] += stat.get("matches", 0)
+        # Use max ref_length (represents the reference genome length for coverage calculation)
+        aggregated_stats[organism_key]["ref_length"] = max(
+            aggregated_stats[organism_key]["ref_length"], 
+            stat.get("ref_length", 0)
+        )
+        # For covered_positions, use max (best coverage breadth) since we're aggregating across references
+        # This is an approximation - ideally we'd union positions, but max is simpler and reasonable
+        current_covered = aggregated_stats[organism_key]["covered_positions"]
+        if isinstance(current_covered, set):
+            aggregated_stats[organism_key]["covered_positions"] = max(
+                len(current_covered) if current_covered else 0,
+                stat.get("covered_positions", 0)
+            )
+        else:
+            aggregated_stats[organism_key]["covered_positions"] = max(
+                current_covered if current_covered else 0,
+                stat.get("covered_positions", 0)
+            )
+        # Prefer RefSeq accession
+        if "refseq" in stat.get("description", "").lower() and "refseq" not in aggregated_stats[organism_key]["description"].lower():
+            aggregated_stats[organism_key]["accession"] = stat["accession"]
+            aggregated_stats[organism_key]["description"] = stat["description"]
+    
+    # Convert aggregated stats back to list format with recalculated metrics
+    aggregated_all_stats = []
+    for organism_key, agg in aggregated_stats.items():
+        ref_len = agg["ref_length"] if agg["ref_length"] > 0 else 1  # Avoid division by zero
+        aligned_bases = agg["aligned_bases"]
+        matches = agg["matches"]
+        
+        # Recalculate aggregated metrics
+        agg_identity = (matches / aligned_bases * 100) if aligned_bases > 0 else 0.0
+        agg_coverage_depth = aligned_bases / ref_len if ref_len > 0 else 0.0
+        covered_pos_count = len(agg["covered_positions"]) if isinstance(agg["covered_positions"], set) else agg.get("covered_positions", 0)
+        agg_coverage_breadth = covered_pos_count / ref_len if ref_len > 0 else 0.0
+        
+        aggregated_all_stats.append({
+            "accession": agg["accession"],
+            "description": agg["description"],
+            "mapped_reads": agg["mapped_reads"],
+            "coverage_depth": agg_coverage_depth,
+            "coverage_breadth": agg_coverage_breadth,
+            "avg_identity": agg_identity,
+        })
+    
+    logger.info(f"Aggregated {len(all_stats)} references -> {len(aggregated_all_stats)} organisms/species")
+    # Replace all_stats with aggregated version
+    all_stats = aggregated_all_stats
         
         # Filter by both minimum identity and minimum mapped reads thresholds
         if identity >= min_identity and s["mapped_reads"] >= min_mapped_reads:
