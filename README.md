@@ -14,8 +14,6 @@ conda activate virasign
 conda install -c bioconda -c conda-forge minimap2 seqtk curl samtools -y
 ```
 
-**Note**: `seqtk` and `curl` are optional (Python fallbacks are available), but `minimap2` is required.
-
 ### 2. Install Virasign
 
 ```bash
@@ -43,9 +41,7 @@ virasign -i <input_dir> -o <output_dir> [options]
 #### Optional Arguments
 - `-d, --database`: Database name, accession number, text file with accessions, or path to FASTA file (default: `RVDB`)
   - **Database names**: `RVDB`, `RefSeq`, or `RVDB,RefSeq` (automatically downloads to `Databases/` directory)
-  - **Accession number**: Single NCBI accession (e.g., `OZ254622.1`) - downloads and uses as database
-  - **Text file with accessions**: Path to text file with one accession per line - downloads all and merges into database
-  - **File path**: Path to your own FASTA database file
+  - **Accession number or text file**: Single NCBI accession (e.g., `OZ254622.1`) or path to text file with one accession per line - downloads and uses as database
   - **Default**: If not specified, defaults to `RVDB`
   - Examples:
     ```bash
