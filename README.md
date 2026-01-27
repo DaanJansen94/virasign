@@ -84,7 +84,7 @@ Example HTML output for one sample:
 If you use Lassaseq in your research, please cite:
 
 ```
-Jansen, D., & Vercauteren, K. (2026). Virasign: A viral classification tool designed for nanopore sequencing data (v0.0.1). Zenodo. https://doi.org/10.5281/zenodo.14936276
+Jansen, D., & Vercauteren, K. (2026). Virasign: A viral classification tool designed for nanopore sequencing data (v0.0.1). Zenodo. https://doi.org/10.5281/zenodo.18387008"
 ```
 
 ## License
