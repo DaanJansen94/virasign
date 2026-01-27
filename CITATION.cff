@@ -9,7 +9,7 @@ authors:
     orcid: https://orcid.org/0000-0003-1472-9938
 doi: "10.5281/zenodo.14936276"
 title: "Virasign: Viral Read ASSIGNment from nanopore sequencing."
-version: v1.0.0
+version: v0.0.1
 url: github.com/DaanJansen94/virasign
 date-released: 2026-01-27
 abstract: "Virasign is a viral classification tool designed for nanopore sequencing data."
