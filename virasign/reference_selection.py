@@ -22,7 +22,7 @@ import sqlite3
 
 def setup_logging(output_dir):
     """Set up logging configuration."""
-    log_file = Path(output_dir) / 'refselector.log'
+    log_file = Path(output_dir) / 'virasign.log'
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
@@ -373,9 +373,9 @@ def get_ncbi_files_dir(database_dir: Path) -> Path:
     """Get directory for downloaded NCBI taxonomy dump files."""
     return database_dir / "taxonomy_cache" / "ncbi_files"
 
-def get_refselector_databases_dir() -> Path:
-    """Get path to refselector Databases directory (where downloaded databases are stored)."""
-    # Create Databases directory in current working directory (where refselector is run from)
+def get_virasign_databases_dir() -> Path:
+    """Get path to virasign Databases directory (where downloaded databases are stored)."""
+    # Create Databases directory in current working directory (where virasign is run from)
     # This way databases are stored in the user's workspace, not in conda environment
     databases_dir = Path.cwd() / "Databases"
     databases_dir.mkdir(parents=True, exist_ok=True)
@@ -732,7 +732,7 @@ def download_accession_from_ncbi(accession: str, output_dir: Path = None) -> Pat
     Returns path to the downloaded FASTA file.
     """
     if output_dir is None:
-        output_dir = get_refselector_databases_dir() / "Custom"
+        output_dir = get_virasign_databases_dir() / "Custom"
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Remove version number for base accession (e.g., PX852146.1 -> PX852146)
@@ -858,7 +858,7 @@ def resolve_database_path(database_arg: str, accessions: list = None) -> Path:
     If accessions are provided, they will be downloaded and merged with the database.
     """
     database_arg = database_arg.strip()
-    databases_dir = get_refselector_databases_dir()
+    databases_dir = get_virasign_databases_dir()
     
     # Check if database_arg is a single accession number
     if is_accession_number(database_arg):
@@ -5310,7 +5310,7 @@ def main(args=None):
         args = parser.parse_args(args)
     
     # Set up output directory structure
-    # If --output . (current directory), create Refselector_output folder
+    # If --output . (current directory), create Virasign_output folder
     # Otherwise use the specified output directory
     # Handle case where current directory was deleted
     try:
@@ -5325,7 +5325,7 @@ def main(args=None):
             print(f"Warning: Current working directory was deleted, using {current_dir} as base", file=sys.stderr)
     
     if args.output == ".":
-        output_dir = current_dir / "Refselector_output"
+        output_dir = current_dir / "Virasign_output"
         output_dir.mkdir(parents=True, exist_ok=True)
     else:
         output_dir = Path(args.output)
