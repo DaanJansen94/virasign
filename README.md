@@ -105,9 +105,9 @@ output/
 
 ## Output Files
 
-- **`results_summary_*.html`**: Interactive HTML visualization reports (one per database)
-- **`*_final_selected_references.json`**: Final curated references after re-mapping (with accurate stats)
+- **results_summary_*.html**: Interactive HTML reports (one per database)
+- ***_final_selected_references.json**: Final curated references
 - **Per-reference folders**: Each curated reference gets its own folder with:
-  - `{accession}.fasta`: Reference sequence
-  - `{accession}.bam`: BAM alignment file (indexed)
-  - `{accession}_mapped_reads.fastq`: Reads that mapped to that specific reference
+  - **{accession}.fasta**: Reference sequence
+  - **{accession}.bam**: BAM alignment file (indexed)
+  - **{accession}_mapped_reads.fastq**: Reads that mapped to that specific reference
