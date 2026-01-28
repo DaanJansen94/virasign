@@ -3128,18 +3128,28 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             aggregated_stats[organism_key]["ref_length"], 
             stat.get("ref_length", 0)
         )
-        # For covered_positions, use max (best coverage breadth) since we're aggregating across references
-        # This is an approximation - ideally we'd union positions, but max is simpler and reasonable
+        # For covered_positions, we need to properly combine them when aggregating
+        # Since covered_positions is stored as integer (count) after parsing, we can't union exact positions
+        # Instead, we use max() as approximation, but this can underestimate breadth when multiple references overlap
+        # Note: This is a limitation - ideally we'd track positions as sets and union them
         current_covered = aggregated_stats[organism_key]["covered_positions"]
-        if isinstance(current_covered, set):
-            aggregated_stats[organism_key]["covered_positions"] = max(
-                len(current_covered) if current_covered else 0,
-                stat.get("covered_positions", 0)
-            )
+        stat_covered = stat.get("covered_positions", 0)
+        
+        # If both are sets (shouldn't happen after parsing, but handle it), union them
+        if isinstance(current_covered, set) and isinstance(stat_covered, set):
+            aggregated_stats[organism_key]["covered_positions"] = current_covered.union(stat_covered)
+        elif isinstance(current_covered, set):
+            # Current is set, stat is int - convert set to int and use max
+            aggregated_stats[organism_key]["covered_positions"] = max(len(current_covered), stat_covered)
+        elif isinstance(stat_covered, set):
+            # Stat is set, current is int - convert set to int and use max
+            aggregated_stats[organism_key]["covered_positions"] = max(current_covered, len(stat_covered))
         else:
+            # Both are integers - use max (approximation, underestimates when references overlap)
+            # TODO: This could be improved by tracking positions as sets during aggregation
             aggregated_stats[organism_key]["covered_positions"] = max(
                 current_covered if current_covered else 0,
-                stat.get("covered_positions", 0)
+                stat_covered if stat_covered else 0
             )
         # Prefer RefSeq accession
         if "refseq" in stat.get("description", "").lower() and "refseq" not in aggregated_stats[organism_key]["description"].lower():
