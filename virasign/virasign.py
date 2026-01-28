@@ -940,7 +940,7 @@ def is_accession_number(text: str) -> bool:
     pattern = r'^[A-Z]{1,2}_?\d+$'
     return bool(re.match(pattern, base_text.upper()))
 
-def resolve_database_path(database_arg: str, accessions: list = None) -> Path:
+def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = True, cluster_identity: float = 0.98) -> Path:
     """
     Resolve database argument to actual file path.
     Supports:
@@ -1083,7 +1083,7 @@ def resolve_database_path(database_arg: str, accessions: list = None) -> Path:
     
     for db_name in db_names:
         if db_name == 'rvdb':
-            fasta_file = download_rvdb_database(databases_dir)
+            fasta_file = download_rvdb_database(databases_dir, enable_clustering=enable_clustering, cluster_identity=cluster_identity)
             fasta_files.append(fasta_file)
         elif db_name == 'refseq':
             fasta_file = download_refseq_database(databases_dir)
@@ -5483,6 +5483,21 @@ def main(args=None):
         help="NCBI accession number(s) to download and merge with the database. Either: (1) comma-separated list (e.g., -a PX852146.1,NC_123456.1), or (2) text file with one accession per line (e.g., -a accessions.txt). Optional."
     )
     
+    parser.add_argument(
+        "--no-clustering",
+        action="store_false",
+        dest="enable_clustering",
+        help="Disable clustering for RVDB database (default: clustering enabled at 98%% identity)"
+    )
+    
+    parser.add_argument(
+        "--cluster_identity",
+        type=float,
+        default=0.98,
+        dest="cluster_identity",
+        help="Identity threshold for RVDB clustering (default: 0.98, i.e., 98%%). Only used if clustering is enabled."
+    )
+    
     if args is None:
         args = parser.parse_args()
     else:
@@ -5562,7 +5577,12 @@ def main(args=None):
     # Can return a single Path or a list of Paths if multiple databases specified
     # Also handles downloading and merging accessions if provided
     try:
-        database_result = resolve_database_path(args.database, accessions=accessions_list)
+        database_result = resolve_database_path(
+            args.database, 
+            accessions=accessions_list,
+            enable_clustering=args.enable_clustering,
+            cluster_identity=args.cluster_identity
+        )
         if isinstance(database_result, list):
             database_fasta_paths = database_result
             logger.info(f"Resolved databases: {args.database} -> {len(database_fasta_paths)} separate databases")
@@ -5606,6 +5626,12 @@ def main(args=None):
     logger.info(f"Coverage depth threshold: {args.coverage_depth_threshold}")
     logger.info(f"Coverage breadth threshold: {args.coverage_breadth_threshold}")
     logger.info(f"Threads: {args.threads}")
+    if "rvdb" in args.database.lower():
+        clustering_status = "enabled" if args.enable_clustering else "disabled"
+        if args.enable_clustering:
+            logger.info(f"RVDB clustering: {clustering_status} (identity threshold: {int(args.cluster_identity*100)}%%)")
+        else:
+            logger.info(f"RVDB clustering: {clustering_status}")
     logger.info("="*60)
     
     # Find samples
