@@ -2671,9 +2671,8 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     ref_index = ensure_minimap2_index(selected_refs_fasta)
     logger.info(f"Index created successfully. Using indexed database for re-mapping.")
     
-    # Use minimap_p derived from min_identity (like metamaps --pi)
-    # This filters alignments during mapping, not just after
-    minimap_p = min_identity / 100.0
+    # Don't use -p parameter - let minimap2 report all alignments, then filter by identity during SAM parsing
+    # This gives us better control and avoids missing valid hits due to strict filtering during mapping
     
     # Detect if RefSeq database (for stricter parameters to reduce false positives)
     selected_refs_path_str = Path(selected_refs_fasta).as_posix().lower()
@@ -2686,7 +2685,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         "-ax", "map-ont",
         "-N", "1",  # Only report 1 alignment per read (primary alignment only)
         "--secondary=no",  # No secondary alignments
-        "-p", str(minimap_p),  # Minimum matching proportion (filters during alignment, like metamaps --pi)
+        # Don't use -p here - filter by identity during SAM parsing instead
         "-f", "0.0002",
         "-I", "8G",
         "--max-chain-skip", "25",
@@ -2698,7 +2697,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         str(sample_fastq),
     ])
     
-    logger.info(f"Re-mapping all reads to selected references using indexed database (minimap2 -p {minimap_p:.2f}, min identity: {min_identity}%)...")
+    logger.info(f"Re-mapping all reads to selected references using indexed database (will filter by identity >= {min_identity}% during SAM parsing)...")
     try:
         with open(output_sam, "w") as out:
             subprocess.run(minimap_cmd, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
@@ -2996,13 +2995,13 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     
     aln_sam = sample_dir / f"{sample_name}.sam"
 
-    # Calculate minimap_p from min_identity if not provided (like metamaps --pi)
-    # This filters alignments during mapping, not just after
-    if minimap_p is None:
-        minimap_p = min_identity / 100.0
-        logger.info(f"Using minimap2 -p {minimap_p:.2f} (derived from min_identity {min_identity}%) to filter alignments during mapping")
-    else:
+    # Don't use -p parameter - let minimap2 report all alignments, then filter by identity during SAM parsing
+    # The -p parameter filters during mapping which is too strict and can miss valid hits
+    # Instead, we filter by identity during SAM parsing which gives us full control
+    if minimap_p is not None:
         logger.info(f"Using minimap2 -p {minimap_p:.2f} (user-specified)")
+    else:
+        logger.info(f"Using minimap2 without -p filter (will filter by identity >= {min_identity}% during SAM parsing)")
 
     # Build minimap2 command
     # Use primary alignments only (-N 1) to reduce false positives
@@ -3011,19 +3010,26 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         "-ax", "map-ont",
         "-N", "1",  # Only report 1 alignment per read (primary alignment only)
         "--secondary=no",  # No secondary alignments
-        "-p", str(minimap_p),  # Minimum matching proportion (filters during alignment, like metamaps --pi)
         "-f", "0.0002",  # Filter top 0.02% frequent minimizers (faster, minimal sensitivity loss)
         "-I", "8G",  # Batch size for better memory efficiency
         "--max-chain-skip", "25",  # Limit chain extension for speed
         "-t", str(threads),  # Use specified number of threads
     ]
     
+    # Only add -p if user explicitly specified it
+    if minimap_p is not None:
+        minimap_cmd.append("-p")
+        minimap_cmd.append(str(minimap_p))
+    
     minimap_cmd.extend([
         str(db_index),  # Use index for speed
         str(sample_fastq),
     ])
     
-    logger.info(f"Running minimap2 (single pass against indexed DB, {threads} threads, -p {minimap_p:.2f} for alignment filtering)...")
+    if minimap_p is not None:
+        logger.info(f"Running minimap2 (single pass against indexed DB, {threads} threads, -p {minimap_p:.2f} for alignment filtering)...")
+    else:
+        logger.info(f"Running minimap2 (single pass against indexed DB, {threads} threads, will filter by identity >= {min_identity}% during SAM parsing)...")
     try:
         with open(aln_sam, "w") as out:
             subprocess.run(minimap_cmd, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
