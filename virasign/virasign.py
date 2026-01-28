@@ -940,7 +940,7 @@ def is_accession_number(text: str) -> bool:
     pattern = r'^[A-Z]{1,2}_?\d+$'
     return bool(re.match(pattern, base_text.upper()))
 
-def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = False, cluster_identity: float = 0.98) -> Path:
+def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = False, cluster_identity: float = 0.98, rvdb_version: str = None) -> Path:
     """
     Resolve database argument to actual file path.
     Supports:
@@ -1083,7 +1083,22 @@ def resolve_database_path(database_arg: str, accessions: list = None, enable_clu
     
     for db_name in db_names:
         if db_name == 'rvdb':
-            fasta_file = download_rvdb_database(databases_dir, enable_clustering=enable_clustering, cluster_identity=cluster_identity)
+            # Convert version number to filename format (e.g., "30.0" -> "C-RVDBv30.0.fasta.gz")
+            if rvdb_version:
+                # Remove any leading/trailing whitespace and ensure it's in the right format
+                version_clean = rvdb_version.strip()
+                # If user provided just the number (e.g., "30.0"), convert to filename
+                if not version_clean.startswith("C-RVDB"):
+                    rvdb_filename = f"C-RVDBv{version_clean}.fasta.gz"
+                else:
+                    # User provided full filename
+                    rvdb_filename = version_clean
+                logger.info(f"Using RVDB version: {rvdb_filename}")
+            else:
+                # Default to v30.0
+                rvdb_filename = "C-RVDBv30.0.fasta.gz"
+                logger.info(f"Using default RVDB version: {rvdb_filename}")
+            fasta_file = download_rvdb_database(databases_dir, rvdb_version=rvdb_filename, enable_clustering=enable_clustering, cluster_identity=cluster_identity)
             fasta_files.append(fasta_file)
         elif db_name == 'refseq':
             fasta_file = download_refseq_database(databases_dir)
@@ -2369,6 +2384,37 @@ def build_header_mapping(database_fasta: Path) -> dict:
     
     return header_map
 
+def build_organism_mapping(database_fasta: Path) -> dict:
+    """
+    Build a mapping from accession to organism name by parsing FASTA headers.
+    Returns dict: accession -> organism_name
+    """
+    organism_map = {}
+    
+    if str(database_fasta).endswith(".gz"):
+        import gzip
+        fh = gzip.open(database_fasta, "rt")
+    else:
+        fh = open(database_fasta, "r")
+    
+    with fh:
+        for line in fh:
+            if line.startswith(">"):
+                header = line[1:].strip()
+                acc = extract_accession_from_header(header)
+                if acc:
+                    # Extract organism from header: acc|GENBANK|accession|description|organism|VRL|date
+                    # Organism is typically at index 4 (5th part)
+                    parts = header.split("|")
+                    if len(parts) >= 5:
+                        organism = parts[4].strip()
+                        organism_map[acc] = organism
+                    elif len(parts) >= 4:
+                        # Fallback: try parts[-2] if format is different
+                        organism_map[acc] = parts[-2].strip()
+    
+    return organism_map
+
 def build_ref_length_mapping(database_fasta: Path) -> dict:
     """
     Build a mapping from accession to reference length by parsing FASTA file.
@@ -2985,6 +3031,10 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     logger.info("Building header mapping from database...")
     header_map = build_header_mapping(Path(database_fasta))
     
+    # Build organism mapping from database FASTA (accession -> organism name)
+    logger.info("Building organism mapping from database...")
+    organism_map = build_organism_mapping(Path(database_fasta))
+    
     # Build reference length mapping from database FASTA (for cases where SAM headers don't have @SQ LN)
     logger.info("Building reference length mapping from database...")
     db_ref_lengths = build_ref_length_mapping(Path(database_fasta))
@@ -3094,24 +3144,31 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     logger.info("Aggregating reads by organism/species before filtering (combining reads across multiple references of same species)...")
     aggregated_stats = {}
     for stat in all_stats:
-        # Extract organism name from description (simple approach: look for organism name pattern)
-        desc = stat.get("description", "").lower()
+        # Use accession to look up organism from database mapping (more reliable than parsing description)
+        accession = stat.get("accession", "")
         organism_key = None
         
-        # Try to extract organism name (between pipes for GenBank format, or from description)
-        # For MPOX: look for "monkeypox" or "orthopoxvirus"
-        if "monkeypox" in desc or "mpox" in desc:
-            organism_key = "monkeypox_virus"
-        elif "orthopoxvirus" in desc:
-            organism_key = "orthopoxvirus"
+        if accession and accession in organism_map:
+            # Look up organism from database mapping
+            organism = organism_map[accession]
+            organism_key = organism.strip().lower().replace(" ", "_")[:50]  # Limit length
         else:
-            # Extract organism from GenBank format: acc|GENBANK|...|organism|...
-            parts = stat.get("description", "").split("|")
-            if len(parts) >= 4:
-                organism_key = parts[-2].strip().lower().replace(" ", "_")[:50]  # Limit length
+            # Fallback: try to extract from description if not found in mapping
+            desc = stat.get("description", "").lower()
+            if "monkeypox" in desc or "mpox" in desc:
+                organism_key = "monkeypox_virus"
+            elif "orthopoxvirus" in desc:
+                organism_key = "orthopoxvirus"
             else:
-                # Fallback: use accession as key (no aggregation)
-                organism_key = stat.get("accession", "unknown")
+                # Try parsing description as last resort
+                parts = stat.get("description", "").split("|")
+                if len(parts) >= 5:
+                    organism_key = parts[4].strip().lower().replace(" ", "_")[:50]
+                elif len(parts) >= 4:
+                    organism_key = parts[-2].strip().lower().replace(" ", "_")[:50]
+                else:
+                    # Final fallback: use accession as key (no aggregation)
+                    organism_key = accession if accession else "unknown"
         
         if organism_key not in aggregated_stats:
             aggregated_stats[organism_key] = {
@@ -5489,7 +5546,18 @@ def main(args=None):
     """Main entry point for the reference selection pipeline."""
     parser = argparse.ArgumentParser(
         description="Select best reference sequence from database for each sample",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Basic usage with default RVDB database:
+    virasign -i input_dir -o output_dir
+  
+  Use specific RVDB version:
+    virasign -i input_dir -o output_dir -d RVDB --rvdb-version 31.0
+  
+  Use both databases with custom accessions:
+    virasign -i input_dir -d RVDB,RefSeq -o output_dir -a PX852146.1,NC_123456.1 -t 16
+        """
     )
     
     parser.add_argument(
@@ -5573,6 +5641,14 @@ def main(args=None):
         default=0.98,
         dest="cluster_identity",
         help="Identity threshold for RVDB clustering (default: 0.98, i.e., 98%%). Only used if clustering is enabled with --enable-clustering."
+    )
+    
+    parser.add_argument(
+        "--rvdb-version",
+        type=str,
+        default=None,
+        dest="rvdb_version",
+        help="RVDB database version to download (e.g., '30.0', '31.0', '29.0'). Default: 30.0. Only applies when using RVDB database. Examples: '30.0' downloads C-RVDBv30.0.fasta.gz"
     )
     
     if args is None:
@@ -5662,7 +5738,8 @@ def main(args=None):
             args.database, 
             accessions=accessions_list,
             enable_clustering=args.enable_clustering,
-            cluster_identity=args.cluster_identity
+            cluster_identity=args.cluster_identity,
+            rvdb_version=getattr(args, 'rvdb_version', None)
         )
         if isinstance(database_result, list):
             database_fasta_paths = database_result

@@ -40,12 +40,15 @@ virasign -i input_dir -o output_dir [options]
 
 #### Optional Arguments
 - `-d, --database`: Database name (`RefSeq`, `RVDB` (default), or accession number)
+- `--rvdb-version`: RVDB database version to download (e.g., `30.0`, `31.0`, `29.0`). Default: `30.0`. Only applies when using RVDB database. See [available versions](https://rvdb.dbi.udel.edu/previous-release) for the complete list.
 - `-a, --accession`: NCBI accession number(s) to download and merge with database
 - `--min_identity`: Minimum average identity percentage
 - `--min_mapped_reads`: Minimum number of mapped reads (default: `100`)
 - `--coverage_depth_threshold`: Minimum coverage depth threshold (default: `1.0`)
 - `--coverage_breadth_threshold`: Minimum coverage breadth threshold (default: `0.1`)
 - `-t, --threads`: Number of threads for minimap2 (default: `1`)
+- `--enable-clustering`: Enable clustering for RVDB database (default: clustering disabled)
+- `--cluster_identity`: Identity threshold for RVDB clustering (default: `0.98`, i.e., 98%). Only used if clustering is enabled with `--enable-clustering`
 
 ### Examples
 
@@ -84,7 +87,7 @@ Example HTML output for one sample:
 If you use Lassaseq in your research, please cite:
 
 ```
-Jansen, D., & Vercauteren, K. (2026). Virasign: A viral classification tool designed for nanopore sequencing data (v0.0.1). Zenodo. https://doi.org/10.5281/zenodo.18387008
+Jansen, D., & Vercauteren, K. (2026). Virasign: A viral classification tool designed for nanopore sequencing data (v0.0.1). Zenodo. https://doi.org/10.5281/zenodo.18387008"
 ```
 
 ## License
