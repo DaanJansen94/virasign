@@ -381,29 +381,46 @@ def get_virasign_databases_dir() -> Path:
     databases_dir.mkdir(parents=True, exist_ok=True)
     return databases_dir
 
-def download_rvdb_database(databases_dir: Path, force_download: bool = False) -> Path:
+def download_rvdb_database(databases_dir: Path, force_download: bool = False, rvdb_version: str = "C-RVDBv30.0.fasta.gz") -> Path:
     """
-    Download and prepare RVDB database with complete genomes only.
-    Returns path to RVDBvCurrent_complete.fasta
+    Download and prepare RVDB database with complete genomes only, then cluster at 95% identity.
+    
+    Args:
+        databases_dir: Directory where databases are stored
+        force_download: Force re-download even if database exists
+        rvdb_version: RVDB version filename (e.g., "C-RVDBv30.0.fasta.gz" or "C-RVDBvCurrent.fasta.gz")
+    
+    Returns path to clustered RVDB database (e.g., RVDBv30.0_complete.fasta)
     """
     rvdb_dir = databases_dir / "RVDB"
     rvdb_dir.mkdir(parents=True, exist_ok=True)
     
-    output_fasta = rvdb_dir / "RVDBvCurrent_complete.fasta"
+    # Extract version number from filename (e.g., "C-RVDBv30.0.fasta.gz" -> "v30.0")
+    version_match = rvdb_version.replace("C-RVDB", "").replace(".fasta.gz", "")
+    version_suffix = version_match if version_match else "Current"
+    
+    output_fasta = rvdb_dir / f"RVDB{version_suffix}_complete.fasta"
     
     # Check if already exists
     if output_fasta.exists() and not force_download:
         logger.info(f"RVDB database already exists: {output_fasta}")
         
         # Clean up any intermediate files that might exist
-        compressed_file = rvdb_dir / "C-RVDBvCurrent.fasta.gz"
-        temp_fasta = rvdb_dir / "RVDBvCurrent.fasta"
+        compressed_file = rvdb_dir / rvdb_version
+        temp_fasta = rvdb_dir / rvdb_version.replace(".gz", "").replace(".fasta", ".fasta")
+        cluster_prefix = rvdb_dir / f"RVDB{version_suffix}_clu95"
         if compressed_file.exists():
             compressed_file.unlink()
             logger.info(f"  Cleaned up: {compressed_file.name}")
         if temp_fasta.exists():
             temp_fasta.unlink()
             logger.info(f"  Cleaned up: {temp_fasta.name}")
+        # Clean up clustering temp files
+        if (rvdb_dir / "tmp_clu95").exists():
+            shutil.rmtree(rvdb_dir / "tmp_clu95")
+        for f in rvdb_dir.glob(f"RVDB{version_suffix}_clu95*"):
+            if f != output_fasta:
+                f.unlink()
         
         # Check if metadata exists, if not create it
         metadata_file = rvdb_dir / "database_metadata.json"
@@ -411,11 +428,11 @@ def download_rvdb_database(databases_dir: Path, force_download: bool = False) ->
             logger.info("Creating metadata file for existing database...")
             metadata = {
                 "database_name": "RVDB",
-                "version": "Current",
+                "version": version_suffix,
                 "download_date": "Unknown (database existed before metadata tracking)",
-                "source_url": "https://rvdb.dbi.udel.edu/download/C-RVDBvCurrent.fasta.gz",
+                "source_url": f"https://rvdb.dbi.udel.edu/download/{rvdb_version}",
                 "filtered": True,
-                "filter_criteria": "complete genomes only",
+                "filter_criteria": "complete genomes only, clustered at 95% identity",
                 "output_file": str(output_fasta.name),
                 "note": "Metadata created retroactively"
             }
@@ -423,13 +440,13 @@ def download_rvdb_database(databases_dir: Path, force_download: bool = False) ->
                 json.dump(metadata, f, indent=2)
         return output_fasta
     
-    compressed_file = rvdb_dir / "C-RVDBvCurrent.fasta.gz"
-    temp_fasta = rvdb_dir / "RVDBvCurrent.fasta"
+    compressed_file = rvdb_dir / rvdb_version
+    temp_fasta = rvdb_dir / rvdb_version.replace(".gz", "")
     
     # Download if needed
     if not compressed_file.exists() or force_download:
-        logger.info("Downloading RVDB database (this may take a while, ~few GB)...")
-        url = "https://rvdb.dbi.udel.edu/download/C-RVDBvCurrent.fasta.gz"
+        logger.info(f"Downloading RVDB database version {rvdb_version} (this may take a while, ~few GB)...")
+        url = f"https://rvdb.dbi.udel.edu/download/{rvdb_version}"
         try:
             def show_progress(block_num, block_size, total_size):
                 if total_size > 0:
@@ -523,6 +540,64 @@ def download_rvdb_database(databases_dir: Path, force_download: bool = False) ->
         complete_count = sum(1 for _ in open(output_fasta)) // 2  # Approximate (headers + sequences)
         logger.info(f"RVDB complete genomes database ready: {output_fasta} ({complete_count} sequences)")
         
+        # Cluster at 95% identity with 80% coverage of shortest sequence
+        logger.info("Clustering complete genomes at 95% identity (80% coverage of shortest sequence)...")
+        mmseqs_available = shutil.which('mmseqs') is not None
+        
+        if mmseqs_available:
+            cluster_prefix_name = f"RVDB{version_suffix}_clu95"
+            cluster_prefix = rvdb_dir / cluster_prefix_name
+            tmp_cluster_dir = rvdb_dir / "tmp_clu95"
+            
+            try:
+                # Run mmseqs clustering
+                cluster_cmd = [
+                    'mmseqs', 'easy-linclust',
+                    str(output_fasta),
+                    str(cluster_prefix),
+                    str(tmp_cluster_dir),
+                    '--min-seq-id', '0.95',
+                    '-c', '0.8',
+                    '--cov-mode', '0',
+                    '--threads', '16'
+                ]
+                
+                logger.info(f"Running: {' '.join(cluster_cmd)}")
+                result = subprocess.run(cluster_cmd, check=True, capture_output=True, text=True)
+                
+                # Rename clustered representative sequences to final output
+                clustered_fasta = rvdb_dir / f"{cluster_prefix_name}_rep_seq.fasta"
+                if clustered_fasta.exists():
+                    # Replace the unclustered file with clustered version
+                    output_fasta.unlink()
+                    clustered_fasta.rename(output_fasta)
+                    logger.info(f"Clustered database ready: {output_fasta}")
+                    
+                    # Count clustered sequences
+                    clustered_count = sum(1 for _ in open(output_fasta)) // 2
+                    logger.info(f"Clustering reduced {complete_count} sequences -> {clustered_count} representatives")
+                else:
+                    logger.warning(f"Clustered output not found at {clustered_fasta}, keeping unclustered version")
+                    clustered_count = complete_count
+                
+                # Clean up clustering intermediate files
+                logger.info("Cleaning up clustering intermediate files...")
+                if tmp_cluster_dir.exists():
+                    shutil.rmtree(tmp_cluster_dir)
+                    logger.info(f"  Removed: tmp_clu95/")
+                # Remove other clustering output files (keep only the final FASTA)
+                for f in rvdb_dir.glob(f"{cluster_prefix_name}*"):
+                    if f != output_fasta:
+                        f.unlink()
+                        logger.info(f"  Removed: {f.name}")
+                
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                logger.warning(f"mmseqs clustering failed: {e}. Keeping unclustered database.")
+                clustered_count = complete_count
+        else:
+            logger.warning("mmseqs not found. Skipping clustering step. Install mmseqs2 for clustering.")
+            clustered_count = complete_count
+        
         # Clean up intermediate files to save disk space
         logger.info("Cleaning up intermediate files...")
         if compressed_file.exists():
@@ -531,20 +606,21 @@ def download_rvdb_database(databases_dir: Path, force_download: bool = False) ->
         if temp_fasta.exists():
             temp_fasta.unlink()
             logger.info(f"  Removed: {temp_fasta.name}")
-        logger.info("  Kept: RVDBvCurrent_complete.fasta (complete genomes only)")
+        logger.info(f"  Kept: {output_fasta.name} (complete genomes{' + clustered' if mmseqs_available else ''})")
         
         # Save metadata file
         metadata_file = rvdb_dir / "database_metadata.json"
         metadata = {
             "database_name": "RVDB",
-            "version": "Current",  # RVDB uses "Current" version naming
+            "version": version_suffix,
             "download_date": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "source_url": "https://rvdb.dbi.udel.edu/download/C-RVDBvCurrent.fasta.gz",
+            "source_url": f"https://rvdb.dbi.udel.edu/download/{rvdb_version}",
             "filtered": True,
-            "filter_criteria": "complete genomes only",
+            "filter_criteria": "complete genomes only" + (", clustered at 95% identity (80% coverage)" if mmseqs_available else ""),
             "output_file": str(output_fasta.name),
-            "sequence_count": complete_count,
-            "note": "Intermediate files (compressed and uncurated) were removed to save disk space"
+            "sequence_count": clustered_count if mmseqs_available else complete_count,
+            "clustered": mmseqs_available,
+            "note": "Intermediate files (compressed, uncurated, and clustering temp) were removed to save disk space"
         }
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
@@ -2942,7 +3018,7 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             "covered_positions": covered_pos,  # Store for aggregation
         }
         all_stats.append(stat_entry)
-    
+        
     # Aggregate by organism/species BEFORE filtering to combine reads that map to multiple references of same species
     # This helps when reads are spread across many references (e.g., many MPOX references)
     logger.info("Aggregating reads by organism/species before filtering (combining reads across multiple references of same species)...")
