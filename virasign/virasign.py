@@ -2369,6 +2369,42 @@ def build_header_mapping(database_fasta: Path) -> dict:
     
     return header_map
 
+def build_ref_length_mapping(database_fasta: Path) -> dict:
+    """
+    Build a mapping from accession to reference length by parsing FASTA file.
+    Returns dict: accession -> length
+    """
+    ref_lengths = {}
+    current_acc = None
+    current_length = 0
+    
+    if str(database_fasta).endswith(".gz"):
+        import gzip
+        fh = gzip.open(database_fasta, "rt")
+    else:
+        fh = open(database_fasta, "r")
+    
+    with fh:
+        for line in fh:
+            if line.startswith(">"):
+                # Save previous sequence length
+                if current_acc and current_length > 0:
+                    ref_lengths[current_acc] = current_length
+                
+                # Start new sequence
+                header = line[1:].strip()
+                current_acc = extract_accession_from_header(header)
+                current_length = 0
+            else:
+                # Count sequence length (remove whitespace)
+                current_length += len(line.strip())
+        
+        # Save last sequence
+        if current_acc and current_length > 0:
+            ref_lengths[current_acc] = current_length
+    
+    return ref_lengths
+
 def count_reads(fastq_file: Path) -> int:
     """Count number of reads in a FASTQ file (compressed or uncompressed)."""
     count = 0
@@ -2950,6 +2986,10 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     logger.info("Building header mapping from database...")
     header_map = build_header_mapping(Path(database_fasta))
     
+    # Build reference length mapping from database FASTA (for cases where SAM headers don't have @SQ LN)
+    logger.info("Building reference length mapping from database...")
+    db_ref_lengths = build_ref_length_mapping(Path(database_fasta))
+    
     # Ensure minimap2 index exists
     logger.info("Ensuring minimap2 index exists for database...")
     db_index = ensure_minimap2_index(Path(database_fasta))
@@ -3015,12 +3055,17 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         
         # Calculate coverage depth (average depth) and breadth (horizontal coverage)
         ref_len = ref_lengths.get(sam_header)
+        # If ref_length missing from SAM headers, try to get it from database FASTA
+        if not ref_len or ref_len <= 0:
+            ref_len = db_ref_lengths.get(acc, 0)
+        
         if ref_len and ref_len > 0:
             coverage_depth = aligned_i / ref_len  # Average depth (can be > 1.0, e.g., 10X = 10.0)
             covered_pos = s.get("covered_positions", 0)
             coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0  # Horizontal coverage (0.0 to 1.0)
         else:
-            # If reference length is missing, set coverage to 0 (will be filtered out)
+            # If reference length is still missing, log warning and set coverage to 0 (will be filtered out)
+            logger.warning(f"Reference length missing for {acc} ({sam_header}) - coverage set to 0")
             coverage_depth = 0.0
             coverage_breadth = 0.0
         
@@ -3104,7 +3149,23 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     # Convert aggregated stats back to list format with recalculated metrics
     aggregated_all_stats = []
     for organism_key, agg in aggregated_stats.items():
-        ref_len = agg["ref_length"] if agg["ref_length"] > 0 else 1  # Avoid division by zero
+        # Get ref_length from aggregation, but try database FASTA if missing
+        ref_len = agg.get("ref_length", 0)
+        if ref_len <= 0:
+            # Try to get ref_length from database FASTA using accession
+            acc = agg.get("accession", "")
+            if acc and acc in db_ref_lengths:
+                ref_len = db_ref_lengths[acc]
+            if ref_len <= 0:
+                logger.warning(f"Reference length missing for aggregated entry {acc} - using max covered position as estimate")
+                # As last resort, estimate ref_length from max covered position
+                covered_pos_count = len(agg["covered_positions"]) if isinstance(agg["covered_positions"], set) else agg.get("covered_positions", 0)
+                if covered_pos_count > 0:
+                    # Estimate: assume breadth should be at least what we see, so ref_len >= covered_positions
+                    ref_len = max(covered_pos_count, 1000)  # Minimum 1000bp estimate
+                else:
+                    ref_len = 1  # Only use 1 as absolute last resort
+        
         aligned_bases = agg["aligned_bases"]
         matches = agg["matches"]
         
