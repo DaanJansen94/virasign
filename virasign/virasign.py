@@ -381,7 +381,7 @@ def get_virasign_databases_dir() -> Path:
     databases_dir.mkdir(parents=True, exist_ok=True)
     return databases_dir
 
-def download_rvdb_database(databases_dir: Path, force_download: bool = False, rvdb_version: str = "C-RVDBv30.0.fasta.gz", enable_clustering: bool = True, cluster_identity: float = 0.98) -> Path:
+def download_rvdb_database(databases_dir: Path, force_download: bool = False, rvdb_version: str = "C-RVDBv30.0.fasta.gz", enable_clustering: bool = False, cluster_identity: float = 0.98) -> Path:
     """
     Download and prepare RVDB database with complete genomes only, optionally cluster at specified identity.
     
@@ -940,7 +940,7 @@ def is_accession_number(text: str) -> bool:
     pattern = r'^[A-Z]{1,2}_?\d+$'
     return bool(re.match(pattern, base_text.upper()))
 
-def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = True, cluster_identity: float = 0.98) -> Path:
+def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = False, cluster_identity: float = 0.98) -> Path:
     """
     Resolve database argument to actual file path.
     Supports:
@@ -5555,10 +5555,10 @@ def main(args=None):
     )
     
     parser.add_argument(
-        "--no-clustering",
-        action="store_false",
+        "--enable-clustering",
+        action="store_true",
         dest="enable_clustering",
-        help="Disable clustering for RVDB database (default: clustering enabled at 98%% identity)"
+        help="Enable clustering for RVDB database (default: clustering disabled). Use --cluster_identity to set identity threshold."
     )
     
     parser.add_argument(
@@ -5566,13 +5566,17 @@ def main(args=None):
         type=float,
         default=0.98,
         dest="cluster_identity",
-        help="Identity threshold for RVDB clustering (default: 0.98, i.e., 98%%). Only used if clustering is enabled."
+        help="Identity threshold for RVDB clustering (default: 0.98, i.e., 98%%). Only used if clustering is enabled with --enable-clustering."
     )
     
     if args is None:
         args = parser.parse_args()
     else:
         args = parser.parse_args(args)
+    
+    # Set default for enable_clustering (defaults to False if --enable-clustering not specified)
+    if not hasattr(args, 'enable_clustering'):
+        args.enable_clustering = False
     
     # Set up output directory structure
     # If --output . (current directory), create Virasign_output folder
