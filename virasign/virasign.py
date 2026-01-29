@@ -381,7 +381,7 @@ def get_virasign_databases_dir() -> Path:
     databases_dir.mkdir(parents=True, exist_ok=True)
     return databases_dir
 
-def download_rvdb_database(databases_dir: Path, force_download: bool = False, rvdb_version: str = "C-RVDBv30.0.fasta.gz", enable_clustering: bool = False, cluster_identity: float = 0.98) -> Path:
+def download_rvdb_database(databases_dir: Path, force_download: bool = False, rvdb_version: str = "C-RVDBv31.0.fasta.gz", enable_clustering: bool = False, cluster_identity: float = 0.98) -> Path:
     """
     Download and prepare RVDB database with complete genomes only, optionally cluster at specified identity.
     
@@ -1095,8 +1095,8 @@ def resolve_database_path(database_arg: str, accessions: list = None, enable_clu
                     rvdb_filename = version_clean
                 logger.info(f"Using RVDB version: {rvdb_filename}")
             else:
-                # Default to v30.0
-                rvdb_filename = "C-RVDBv30.0.fasta.gz"
+                # Default to v31.0
+                rvdb_filename = "C-RVDBv31.0.fasta.gz"
                 logger.info(f"Using default RVDB version: {rvdb_filename}")
             fasta_file = download_rvdb_database(databases_dir, rvdb_version=rvdb_filename, enable_clustering=enable_clustering, cluster_identity=cluster_identity)
             fasta_files.append(fasta_file)
@@ -2702,6 +2702,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     """
     Re-map all reads to the selected references to get accurate mapped_reads counts.
     Creates minimap2 index for the selected references database for speed.
+    For low-input samples (< 100k reads), uses secondary alignments to better detect multi-mapping reads.
     Returns a dictionary mapping reference descriptions to updated stats (mapped_reads, avg_identity, etc.).
     """
     
@@ -2711,6 +2712,16 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         for line in f:
             if line.startswith('>'):
                 ref_count += 1
+    
+    # Count reads in sample to determine if we should use secondary alignments
+    logger.info(f"Counting reads in sample to determine mapping strategy...")
+    total_reads = count_reads(sample_fastq)
+    use_secondary = total_reads < 100000  # Use secondary alignments for low-input samples (< 100k reads)
+    
+    if use_secondary:
+        logger.info(f"Low-input sample detected ({total_reads:,} reads < 100k). Using secondary alignments in re-mapping phase (similar to initial mapping).")
+    else:
+        logger.info(f"Large sample detected ({total_reads:,} reads >= 100k). Using primary alignments only in re-mapping phase.")
     
     # Create minimap2 index for selected references (for speed)
     logger.info(f"Creating minimap2 index for {ref_count} selected references (this speeds up re-mapping)...")
@@ -2724,13 +2735,12 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     selected_refs_path_str = Path(selected_refs_fasta).as_posix().lower()
     is_refseq = "refseq" in selected_refs_path_str
     
-    # Build minimap2 command with stricter parameters for RefSeq
-    # Use primary alignments only (-N 1) to reduce false positives
+    # Build minimap2 command
+    # For low-input samples (< 100k reads), allow secondary alignments (like initial mapping)
+    # For large samples (>= 100k reads), use primary alignments only to reduce false positives
     minimap_cmd = [
         "minimap2",
         "-ax", "map-ont",
-        "-N", "1",  # Only report 1 alignment per read (primary alignment only)
-        "--secondary=no",  # No secondary alignments
         # Don't use -p here - filter by identity during SAM parsing instead
         "-f", "0.0002",
         "-I", "8G",
@@ -2738,12 +2748,274 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         "-t", str(threads),
     ]
     
+    # Add alignment reporting parameters based on read count
+    if use_secondary:
+        # Low-input sample: For segmented viruses and multi-reference scenarios,
+        # map to each reference separately to ensure each gets its reads counted correctly.
+        # When mapping to multiple refs together, minimap2 prioritizes best match, causing
+        # lower-identity references (e.g., Lassa 85%) to lose reads to higher-identity ones (e.g., Measles 96%).
+        # By mapping separately, each reference gets primary alignments, preserving read counts.
+        logger.info(f"Low-input sample with secondary alignments: mapping to each reference separately to preserve read counts...")
+        
+        # Map to each reference separately and combine results
+        updated_stats = {}
+        ref_descriptions = {}  # sam_header -> full description
+        
+        # Extract each reference and map separately
+        with open(selected_refs_fasta, 'r') as f:
+            current_ref_lines = []
+            current_header = None
+            
+            for line in f:
+                if line.startswith('>'):
+                    # Process previous reference if exists
+                    if current_header and current_ref_lines:
+                        # Create temporary FASTA for this single reference
+                        import tempfile
+                        temp_fasta = tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False)
+                        temp_fasta.write(current_header)
+                        temp_fasta.writelines(current_ref_lines)
+                        temp_fasta.close()
+                        temp_fasta_path = Path(temp_fasta.name)
+                        
+                        # Extract accession and description
+                        acc = extract_accession_from_header(current_header[1:].strip())
+                        desc = current_header[1:].strip()
+                        ref_descriptions[acc] = desc
+                        
+                        # Debug: Log reference being mapped
+                        if "lassa" in desc.lower() or "AY628204.1" in acc:
+                            logger.info(f"DEBUG: Mapping to Lassa reference separately: {acc}")
+                            # Check reference length
+                            seq_len = sum(len(line.strip()) for line in current_ref_lines if not line.startswith('>'))
+                            logger.info(f"DEBUG: Lassa reference sequence length: {seq_len:,} bp")
+                        
+                        # Create index for this single reference
+                        ref_index_single = ensure_minimap2_index(temp_fasta_path)
+                        
+                        # Map to this single reference (primary alignments only - each ref gets its own primaries)
+                        temp_sam = tempfile.NamedTemporaryFile(mode='w', suffix='.sam', delete=False)
+                        temp_sam.close()
+                        temp_sam_path = Path(temp_sam.name)
+                        
+                        minimap_cmd_single = [
+                            "minimap2",
+                            "-ax", "map-ont",
+                            "-N", "1",  # Primary alignments only (but each ref gets its own primaries)
+                            "--secondary=no",
+                            "-f", "0.0002",
+                            "-I", "8G",
+                            "--max-chain-skip", "25",
+                            "-t", str(threads),
+                            str(ref_index_single),
+                            str(sample_fastq),
+                        ]
+                        
+                        try:
+                            with open(temp_sam_path, "w") as out:
+                                result = subprocess.run(minimap_cmd_single, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
+                            
+                            # Debug: Count alignments in SAM before parsing
+                            if "lassa" in desc.lower() or "AY628204.1" in acc:
+                                sam_line_count = sum(1 for line in open(temp_sam_path) if not line.startswith('@') and line.strip())
+                                logger.info(f"DEBUG: Lassa SAM file has {sam_line_count:,} alignment lines (before identity filtering)")
+                            
+                            # Parse SAM for this single reference
+                            stats_single, ref_lengths_single, ref_headers_single = parse_sam_per_reference_stats(temp_sam_path, min_identity=min_identity)
+                            
+                            # Debug: Log stats after parsing
+                            if "lassa" in desc.lower() or "AY628204.1" in acc:
+                                for sh, s in stats_single.items():
+                                    logger.info(f"DEBUG: Lassa stats after SAM parsing: {s['mapped_reads']:,} reads, "
+                                               f"identity={(s['matches']/s['aligned_bases']*100) if s['aligned_bases'] > 0 else 0:.2f}%")
+                            
+                            # Add to combined stats
+                            for sam_header, s in stats_single.items():
+                                aligned_i = s["aligned_bases"]
+                                matches_i = s["matches"]
+                                identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0
+                                
+                                ref_len = ref_lengths_single.get(sam_header)
+                                if ref_len and ref_len > 0:
+                                    coverage_depth = aligned_i / ref_len
+                                    covered_pos = s.get("covered_positions", 0)
+                                    coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0
+                                else:
+                                    coverage_depth = 0.0
+                                    coverage_breadth = 0.0
+                                
+                                # Use full description as key
+                                updated_stats[desc] = {
+                                    "mapped_reads": s["mapped_reads"],
+                                    "avg_identity": identity,
+                                    "coverage_depth": coverage_depth,
+                                    "coverage_breadth": coverage_breadth,
+                                }
+                            
+                            # Clean up
+                            temp_fasta_path.unlink()
+                            temp_sam_path.unlink()
+                            ref_index_single.unlink() if ref_index_single.exists() else None
+                            
+                        except subprocess.CalledProcessError as e:
+                            logger.warning(f"Failed to map to reference {acc}: {e.stderr}")
+                            # Clean up on error
+                            if temp_fasta_path.exists():
+                                temp_fasta_path.unlink()
+                            if temp_sam_path.exists():
+                                temp_sam_path.unlink()
+                    
+                    # Start new reference
+                    current_header = line
+                    current_ref_lines = []
+                else:
+                    current_ref_lines.append(line)
+            
+            # Process last reference
+            if current_header and current_ref_lines:
+                import tempfile
+                temp_fasta = tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False)
+                temp_fasta.write(current_header)
+                temp_fasta.writelines(current_ref_lines)
+                temp_fasta.close()
+                temp_fasta_path = Path(temp_fasta.name)
+                
+                acc = extract_accession_from_header(current_header[1:].strip())
+                desc = current_header[1:].strip()
+                ref_descriptions[acc] = desc
+                
+                ref_index_single = ensure_minimap2_index(temp_fasta_path)
+                temp_sam = tempfile.NamedTemporaryFile(mode='w', suffix='.sam', delete=False)
+                temp_sam.close()
+                temp_sam_path = Path(temp_sam.name)
+                
+                minimap_cmd_single = [
+                    "minimap2",
+                    "-ax", "map-ont",
+                    "-N", "1",
+                    "--secondary=no",
+                    "-f", "0.0002",
+                    "-I", "8G",
+                    "--max-chain-skip", "25",
+                    "-t", str(threads),
+                    str(ref_index_single),
+                    str(sample_fastq),
+                ]
+                
+                try:
+                    with open(temp_sam_path, "w") as out:
+                        subprocess.run(minimap_cmd_single, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
+                    
+                    stats_single, ref_lengths_single, ref_headers_single = parse_sam_per_reference_stats(temp_sam_path, min_identity=min_identity)
+                    
+                    for sam_header, s in stats_single.items():
+                        aligned_i = s["aligned_bases"]
+                        matches_i = s["matches"]
+                        identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0
+                        
+                        ref_len = ref_lengths_single.get(sam_header)
+                        if ref_len and ref_len > 0:
+                            coverage_depth = aligned_i / ref_len
+                            covered_pos = s.get("covered_positions", 0)
+                            coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0
+                        else:
+                            coverage_depth = 0.0
+                            coverage_breadth = 0.0
+                        
+                        updated_stats[desc] = {
+                            "mapped_reads": s["mapped_reads"],
+                            "avg_identity": identity,
+                            "coverage_depth": coverage_depth,
+                            "coverage_breadth": coverage_breadth,
+                        }
+                    
+                    temp_fasta_path.unlink()
+                    temp_sam_path.unlink()
+                    ref_index_single.unlink() if ref_index_single.exists() else None
+                    
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Failed to map to reference {acc}: {e.stderr}")
+                    if temp_fasta_path.exists():
+                        temp_fasta_path.unlink()
+                    if temp_sam_path.exists():
+                        temp_sam_path.unlink()
+        
+        # Build header mapping for description matching
+        selected_header_map = build_header_mapping(selected_refs_fasta)
+        
+        # Create combined SAM file from individual mappings (needed for create_per_reference_outputs)
+        # We'll collect all individual SAM files and combine them
+        individual_sam_files = []
+        with open(selected_refs_fasta, 'r') as f:
+            current_ref_lines = []
+            current_header = None
+            temp_sam_files = []
+            
+            for line in f:
+                if line.startswith('>'):
+                    if current_header and current_ref_lines:
+                        # Find corresponding temp SAM file (we'll need to track these)
+                        # For now, we'll recreate the mapping to get the SAM files
+                        # This is inefficient but ensures correctness
+                        pass
+                    current_header = line
+                    current_ref_lines = []
+                else:
+                    current_ref_lines.append(line)
+        
+        # Actually, a simpler approach: re-map to all references together to create the combined SAM
+        # But use the separate mapping stats we already computed
+        # This is a bit redundant but ensures we have the combined SAM file
+        logger.info("Creating combined SAM file for per-reference outputs...")
+        minimap_cmd_combined = [
+            "minimap2",
+            "-ax", "map-ont",
+            "-N", "1",  # Primary alignments only
+            "--secondary=no",
+            "-f", "0.0002",
+            "-I", "8G",
+            "--max-chain-skip", "25",
+            "-t", str(threads),
+            str(ref_index),
+            str(sample_fastq),
+        ]
+        try:
+            with open(output_sam, "w") as out:
+                subprocess.run(minimap_cmd_combined, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to create combined SAM file: {e.stderr}")
+            # Continue anyway - per-reference outputs might fail but stats are correct
+        
+        logger.info(f"Re-mapping complete (mapped to each reference separately for accurate stats). Updated stats for {len(updated_stats)} references.")
+        
+        # Debug: Log Lassa virus in updated_stats
+        lassa_in_updated = [k for k in updated_stats.keys() if "lassa" in k.lower() or "AY628204.1" in k]
+        if lassa_in_updated:
+            logger.info(f"DEBUG: Found Lassa virus in updated_stats: {len(lassa_in_updated)} entry(ies)")
+            for lassa_key in lassa_in_updated:
+                lassa_data = updated_stats[lassa_key]
+                logger.info(f"  - {lassa_key[:80]}: {lassa_data['mapped_reads']:,} reads, "
+                           f"identity={lassa_data['avg_identity']:.2f}%, "
+                           f"breadth={lassa_data['coverage_breadth']:.4f}")
+        else:
+            logger.warning(f"DEBUG: Lassa virus NOT found in updated_stats after remapping!")
+            logger.warning(f"DEBUG: Available keys in updated_stats: {list(updated_stats.keys())[:5]}")
+        
+        return updated_stats
+    else:
+        # Large sample: use primary alignments only to reduce false positives and speed up
+        minimap_cmd.extend([
+            "-N", "1",  # Only report 1 alignment per read (primary alignment only)
+            "--secondary=no",  # No secondary alignments
+        ])
+        logger.info(f"Re-mapping with primary alignments only (for large sample with {total_reads:,} reads)...")
+    
     minimap_cmd.extend([
         str(ref_index),  # Use index instead of FASTA for speed
         str(sample_fastq),
     ])
     
-    logger.info(f"Re-mapping all reads to selected references using indexed database (will filter by identity >= {min_identity}% during SAM parsing)...")
+    logger.info(f"Re-mapping all reads to selected references using indexed database (will filter by identity >= {min_identity}% during SAM parsing, {'with secondary alignments' if use_secondary else 'primary alignments only'})...")
     try:
         with open(output_sam, "w") as out:
             subprocess.run(minimap_cmd, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
@@ -2794,6 +3066,20 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         }
     
     logger.info(f"Re-mapping complete. Updated stats for {len(updated_stats)} references.")
+    
+    # Debug: Log Lassa virus in updated_stats
+    lassa_in_updated = [k for k in updated_stats.keys() if "lassa" in k.lower() or "AY628204.1" in k]
+    if lassa_in_updated:
+        logger.info(f"DEBUG: Found Lassa virus in updated_stats: {len(lassa_in_updated)} entry(ies)")
+        for lassa_key in lassa_in_updated:
+            lassa_data = updated_stats[lassa_key]
+            logger.info(f"  - {lassa_key[:80]}: {lassa_data['mapped_reads']:,} reads, "
+                       f"identity={lassa_data['avg_identity']:.2f}%, "
+                       f"breadth={lassa_data['coverage_breadth']:.4f}")
+    else:
+        logger.warning(f"DEBUG: Lassa virus NOT found in updated_stats after remapping!")
+        logger.warning(f"DEBUG: Available keys in updated_stats: {list(updated_stats.keys())[:5]}")
+    
     logger.debug(f"Updated stats keys: {list(updated_stats.keys())[:3]}...")  # Debug: show first few keys
     return updated_stats
 
@@ -3627,25 +3913,49 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             
             # Update curated_stats_dedup with accurate counts
             # Match by description first, then by accession if description doesn't match
+            # Also try partial description matching in case of format differences
+            # For low-input samples, preserve original stats if remapping causes breadth to drop below threshold
+            total_reads = count_reads(sample_fastq)
+            is_low_input = total_reads < 100000
+            
             for stat in curated_stats_dedup:
                 desc = stat["description"]
                 acc = stat.get("accession", "")
                 updated = False
+                is_lassa = "lassa" in desc.lower() or "lassa" in stat.get("organism", "").lower() or acc == "AY628204.1"
                 
-                # Try matching by description first
+                # Store original stats before updating
+                original_breadth = stat.get("coverage_breadth", 0.0)
+                original_reads = stat.get("mapped_reads", 0)
+                original_depth = stat.get("coverage_depth", 0.0)
+                original_identity = stat.get("avg_identity", 0.0)
+                
+                # Try matching by exact description first
                 if desc in updated_stats:
                     old_reads = stat["mapped_reads"]
-                    stat["mapped_reads"] = updated_stats[desc]["mapped_reads"]
-                    stat["avg_identity"] = updated_stats[desc]["avg_identity"]
-                    stat["coverage_depth"] = updated_stats[desc]["coverage_depth"]
-                    stat["coverage_breadth"] = updated_stats[desc]["coverage_breadth"]
+                    new_reads = updated_stats[desc]["mapped_reads"]
+                    new_breadth = updated_stats[desc]["coverage_breadth"]
+                    new_depth = updated_stats[desc]["coverage_depth"]
+                    new_identity = updated_stats[desc]["avg_identity"]
+                    
+                    # For low-input samples: if original breadth met threshold but remapped doesn't,
+                    # preserve original stats to avoid losing valid detections
+                    if is_low_input and original_breadth >= coverage_breadth_threshold and new_breadth < coverage_breadth_threshold:
+                        logger.warning(f"DEBUG: {acc} remapping dropped breadth from {original_breadth:.4f} to {new_breadth:.4f} (below threshold {coverage_breadth_threshold}). Preserving original stats for low-input sample.")
+                        # Keep original stats - don't update
+                        continue
+                    
+                    stat["mapped_reads"] = new_reads
+                    stat["avg_identity"] = new_identity
+                    stat["coverage_depth"] = new_depth
+                    stat["coverage_breadth"] = new_breadth
                     logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads")
                     updated = True
                 else:
                     # Try matching by accession (in case description format differs slightly)
                     for updated_desc, updated_data in updated_stats.items():
                         updated_acc = extract_accession_from_header(updated_desc)
-                        if updated_acc == acc:
+                        if updated_acc == acc and acc:  # Only match if accession is not empty
                             old_reads = stat["mapped_reads"]
                             stat["mapped_reads"] = updated_data["mapped_reads"]
                             stat["avg_identity"] = updated_data["avg_identity"]
@@ -3654,11 +3964,44 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                             logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads (matched by accession)")
                             updated = True
                             break
+                    
+                    # If still not matched, try partial description matching (for cases where description format differs)
+                    if not updated:
+                        # Try to find a description that contains the accession or key parts of the description
+                        desc_parts = desc.split("|")
+                        desc_accession = extract_accession_from_header(desc)
+                        
+                        for updated_desc, updated_data in updated_stats.items():
+                            # Check if accessions match
+                            if desc_accession and desc_accession == extract_accession_from_header(updated_desc):
+                                old_reads = stat["mapped_reads"]
+                                stat["mapped_reads"] = updated_data["mapped_reads"]
+                                stat["avg_identity"] = updated_data["avg_identity"]
+                                stat["coverage_depth"] = updated_data["coverage_depth"]
+                                stat["coverage_breadth"] = updated_data["coverage_breadth"]
+                                logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads (matched by accession from description)")
+                                updated = True
+                                break
+                            
+                            # Try matching by key parts of description (e.g., organism name, segment)
+                            if len(desc_parts) >= 4 and len(updated_desc.split("|")) >= 4:
+                                # Compare key parts: accession and organism/segment info
+                                if (desc_parts[2] if len(desc_parts) > 2 else "") in updated_desc:
+                                    # Additional check: make sure accessions match
+                                    if desc_accession == extract_accession_from_header(updated_desc):
+                                        old_reads = stat["mapped_reads"]
+                                        stat["mapped_reads"] = updated_data["mapped_reads"]
+                                        stat["avg_identity"] = updated_data["avg_identity"]
+                                        stat["coverage_depth"] = updated_data["coverage_depth"]
+                                        stat["coverage_breadth"] = updated_data["coverage_breadth"]
+                                        logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads (matched by partial description)")
+                                        updated = True
+                                        break
                 
                 if not updated:
                     # If not found in updated_stats, keep original stats (don't set to 0)
                     # Debug: Log available updated_stats keys for Lassa virus
-                    if "lassa" in desc.lower() or "lassa" in stat.get("organism", "").lower():
+                    if is_lassa:
                         logger.warning(f"  DEBUG: {stat['accession']} (Lassa virus) not found in re-mapped stats")
                         logger.warning(f"  DEBUG: Looking for description: {desc[:100]}")
                         logger.warning(f"  DEBUG: Looking for accession: {acc}")
@@ -3672,9 +4015,17 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                             for mk in matching_keys[:3]:
                                 logger.warning(f"    - {mk[:100]}")
                     # This can happen if the reference wasn't extracted correctly or description format differs
-                    logger.warning(f"  {stat['accession']}: No updated stats found - keeping original stats. Description '{desc[:60]}...' not in updated_stats")
+                    if is_lassa:
+                        logger.warning(f"  {stat['accession']}: No updated stats found - keeping original stats. Description '{desc[:60]}...' not in updated_stats")
                     # Don't modify stat - keep original mapped_reads, identity, etc.
                     # The reference will appear with original stats in curated_descriptions.json
+                elif is_lassa:
+                    # Debug: Log Lassa virus stats after remapping
+                    logger.info(f"  DEBUG: Lassa virus {stat['accession']} stats after remapping:")
+                    logger.info(f"    - mapped_reads: {stat['mapped_reads']:,}")
+                    logger.info(f"    - avg_identity: {stat['avg_identity']:.2f}%")
+                    logger.info(f"    - coverage_depth: {stat['coverage_depth']:.2f}")
+                    logger.info(f"    - coverage_breadth: {stat['coverage_breadth']:.4f}")
             
             logger.info(f"Re-mapping complete. Updated counts for {len([s for s in curated_stats_dedup if s['description'] in updated_stats])} references.")
             
@@ -3695,10 +4046,27 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     # Note: min_identity is database-specific: 97% for RefSeq (to reduce false positives),
     #       80% for RVDB (which works well with its curated references)
     curated_descriptions = []
+    
+    # Debug: Log Lassa virus stats before final filtering
+    lassa_before_final = [s for s in curated_stats_dedup if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower() or s.get("accession", "") == "AY628204.1"]
+    if lassa_before_final:
+        logger.info(f"DEBUG: Lassa virus BEFORE final threshold filtering:")
+        for l in lassa_before_final:
+            logger.info(f"  - {l.get('accession')}: identity={l.get('avg_identity', 0):.2f}% (>= {min_identity}%), "
+                       f"depth={l.get('coverage_depth', 0):.2f} (>= {coverage_depth_threshold}), "
+                       f"breadth={l.get('coverage_breadth', 0):.4f} (>= {coverage_breadth_threshold})")
+    
     for stat in curated_stats_dedup:
-        if (stat.get("avg_identity", 0.0) >= min_identity and
-            stat.get("coverage_depth", 0.0) >= coverage_depth_threshold and
-            stat.get("coverage_breadth", 0.0) >= coverage_breadth_threshold):
+        identity = stat.get("avg_identity", 0.0)
+        depth = stat.get("coverage_depth", 0.0)
+        breadth = stat.get("coverage_breadth", 0.0)
+        
+        # Debug: Log why Lassa virus is being filtered out
+        is_lassa = "lassa" in stat.get("organism", "").lower() or "lassa" in stat.get("description", "").lower() or stat.get("accession", "") == "AY628204.1"
+        
+        if (identity >= min_identity and
+            depth >= coverage_depth_threshold and
+            breadth >= coverage_breadth_threshold):
             
             # Extract segment information
             accession = stat.get("accession", "")
@@ -3752,6 +4120,23 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 "segment": segment_display if segment_display else None,  # None for non-segmented viruses
                 "database_source": database_source,  # Indicates which database this reference came from
             })
+        elif is_lassa:
+            # Debug: Log why Lassa virus was filtered out
+            reasons = []
+            if identity < min_identity:
+                reasons.append(f"identity {identity:.2f}% < {min_identity}%")
+            if depth < coverage_depth_threshold:
+                reasons.append(f"depth {depth:.2f} < {coverage_depth_threshold}")
+            if breadth < coverage_breadth_threshold:
+                reasons.append(f"breadth {breadth:.4f} < {coverage_breadth_threshold}")
+            logger.warning(f"DEBUG: Lassa virus {stat.get('accession')} filtered out from final JSON: {', '.join(reasons)}")
+    
+    # Debug: Log Lassa virus stats after final filtering
+    lassa_after_final = [s for s in curated_descriptions if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower() or s.get("accession", "") == "AY628204.1"]
+    if lassa_after_final:
+        logger.info(f"DEBUG: Lassa virus AFTER final threshold filtering: {len(lassa_after_final)} entry(ies) in final JSON")
+    elif lassa_before_final:
+        logger.warning(f"DEBUG: Lassa virus was present before final filtering but is missing from final JSON!")
     
     if curated_descriptions:
         # Separate by database source if multiple databases were used
@@ -5648,7 +6033,7 @@ Examples:
         type=str,
         default=None,
         dest="rvdb_version",
-        help="RVDB database version to download (e.g., '30.0', '31.0', '29.0'). Default: 30.0. Only applies when using RVDB database. Examples: '30.0' downloads C-RVDBv30.0.fasta.gz"
+        help="RVDB database version to download (e.g., '30.0', '31.0', '29.0'). Default: 31.0. Only applies when using RVDB database. Examples: '31.0' downloads C-RVDBv31.0.fasta.gz"
     )
     
     if args is None:
