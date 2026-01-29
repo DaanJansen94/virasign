@@ -27,18 +27,23 @@ pip install .
 ### Basic Usage
 
 ```bash
-virasign -i input_dir -o output_dir [options]
+# Without -o (creates Virasign_output in current directory)
+virasign -i input_dir [options]
+
+# With -o (uses specified directory)
+virasign -i input_dir -o output_dir -t threads [options]
 ```
 
-**Note**: The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified.
+**Note**: The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified. The output argument (`-o/--output`) is also optional - if not specified, results will be saved to `Virasign_output/` in the current directory.
 
 ### Command-Line Options
 
 #### Required Arguments
 - `-i, --input`: Input directory containing FASTQ files
-- `-o, --output`: Output directory for results (use `.` to create `Virasign_output/` in current directory)
 
 #### Optional Arguments
+- `-o, --output`: Output directory for results. If not specified, creates `Virasign_output/` folder in the current directory. Use `.` to explicitly create `Virasign_output/` in current directory.
+
 - `-d, --database`: Database name (`RefSeq`, `RVDB` (default), or accession number)
 - `--rvdb-version`: RVDB database version to download (e.g., `30.0`, `31.0`, `29.0`). Default: `31.0`. Only applies when using RVDB database. See [available versions](https://rvdb.dbi.udel.edu/previous-release) for the complete list.
 - `-a, --accession`: NCBI accession number(s) to download and merge with database
@@ -53,10 +58,16 @@ virasign -i input_dir -o output_dir [options]
 ### Examples
 
 ```bash
-# Basic usage with default RVDB database
+# Basic usage with default RVDB database (creates Virasign_output in current directory)
+virasign -i input_dir
+
+# Basic usage with specified output directory
 virasign -i input_dir -o output_dir
 
-# Use both databases with custom accessions and 16 threads
+# Use both databases with custom accessions and 16 threads (without -o, creates Virasign_output)
+virasign -i input_dir -d RVDB,RefSeq -a PX852146.1,NC_123456.1 -t 16
+
+# Use both databases with custom accessions and 16 threads (with -o, uses specified directory)
 virasign -i input_dir -d RVDB,RefSeq -o output_dir -a PX852146.1,NC_123456.1 -t 16
 
 # Use a single accession as the database

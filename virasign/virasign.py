@@ -1597,11 +1597,11 @@ def fetch_organism_from_ncbi(accession: str, cache_path: Path = None, database_p
                 # JSON database (legacy)
                 with open(database_path, 'r') as f:
                     database = json.load(f)
-                    # Try both versioned and unversioned
-                    if accession in database:
-                        return database[accession]
-                    if accession_base in database:
-                        return database[accession_base]
+                # Try both versioned and unversioned
+                if accession in database:
+                    return database[accession]
+                if accession_base in database:
+                    return database[accession_base]
         except Exception as e:
             logger.debug(f"Could not read comprehensive database: {e}")
     
@@ -2855,11 +2855,11 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                             "minimap2",
                             "-ax", "map-ont",
                             "-N", "1",  # Primary alignments only (but each ref gets its own primaries)
-                            "--secondary=no",
-                            "-f", "0.0002",
-                            "-I", "8G",
-                            "--max-chain-skip", "25",
-                            "-t", str(threads),
+        "--secondary=no",
+        "-f", "0.0002",
+        "-I", "8G",
+        "--max-chain-skip", "25",
+        "-t", str(threads),
                             str(ref_index_single),
                             str(sample_fastq),
                         ]
@@ -3503,7 +3503,7 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             "covered_positions": covered_pos,  # Store for aggregation
         }
         all_stats.append(stat_entry)
-    
+        
     if not debug_found:
         logger.debug(f"DEBUG: {debug_accession} not found in SAM parsing results")
         
@@ -4092,8 +4092,8 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                                         stat["coverage_depth"] = updated_data["coverage_depth"]
                                         stat["coverage_breadth"] = updated_data["coverage_breadth"]
                                         logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads (matched by partial description)")
-                                        updated = True
-                                        break
+                            updated = True
+                            break
                 
                 if not updated:
                     # If not found in updated_stats, keep original stats (don't set to 0)
@@ -4833,7 +4833,8 @@ def generate_html_visualization(output_dir: Path):
                 db_samples_metadata[sample_name] = {database_name: samples_metadata[sample_name][database_name]}
         
         # Build heatmap data for this database only
-        heatmap_data = {}  # species -> {sample_name: True/False or count}
+        # Store full reference data per species/sample so we can filter later
+        heatmap_data = {}  # species -> {sample_name: [list of refs that match this species]}
         all_species = set()
         for sample_name in db_samples_data:
             if database_name in db_samples_data[sample_name]:
@@ -4843,7 +4844,9 @@ def generate_html_visualization(output_dir: Path):
                         all_species.add(species)
                         if species not in heatmap_data:
                             heatmap_data[species] = {}
-                        heatmap_data[species][sample_name] = True
+                        if sample_name not in heatmap_data[species]:
+                            heatmap_data[species][sample_name] = []
+                        heatmap_data[species][sample_name].append(ref)  # Store full ref data for filtering
         
         # Prepare data for JavaScript (only this database)
         # Only include samples that have data for this database
@@ -5393,6 +5396,8 @@ def generate_html_visualization(output_dir: Path):
                     createCharts(sampleName);
                     charts[sampleName] = true;
                 }}
+                // Update heatmap when switching samples to reflect current sample's filters
+                updateHeatmap();
             }}
         }}
         
@@ -5587,6 +5592,9 @@ def generate_html_visualization(output_dir: Path):
             if (charts[sampleName]) {{
                 updateCharts(sampleName);
             }}
+            
+            // Update heatmap to reflect the same filters
+            updateHeatmap();
         }}
         
         // Filter table (kept for backward compatibility, but now calls applyAllFilters)
@@ -5944,11 +5952,163 @@ def generate_html_visualization(output_dir: Path):
             }}
         }}
         
-        // Create heatmap
+        // Get current filter values from the currently active sample
+        function getCurrentFilters() {{
+            const filters = {{
+                minReads: null,
+                minIdentity: null,
+                minDepth: null,
+                minBreadth: null,
+                filterAccession: '',
+                filterOrganism: '',
+                filterSpecies: '',
+                filterSegment: '',
+                excludeUnknown: false
+            }};
+            
+            // Find the currently active sample section
+            const activeSection = document.querySelector('.sample-section.active');
+            if (!activeSection) {{
+                // Fallback: use first sample with filters
+                for (let sampleName of allSamples) {{
+                    const filterRow = document.getElementById(`filters-${{sampleName}}`);
+                    if (filterRow) {{
+                        return getFiltersFromSample(sampleName);
+                    }}
+                }}
+                return filters;
+            }}
+            
+            // Extract sample name from active section ID (format: "sample-{sampleName}")
+            const sampleId = activeSection.id;
+            if (sampleId && sampleId.startsWith('sample-')) {{
+                const sampleName = sampleId.replace('sample-', '');
+                return getFiltersFromSample(sampleName);
+            }}
+            
+            return filters;
+        }}
+        
+        // Helper function to get filters from a specific sample
+        function getFiltersFromSample(sampleName) {{
+            const filters = {{
+                minReads: null,
+                minIdentity: null,
+                minDepth: null,
+                minBreadth: null,
+                filterAccession: '',
+                filterOrganism: '',
+                filterSpecies: '',
+                filterSegment: '',
+                excludeUnknown: false
+            }};
+            
+            const filterRow = document.getElementById(`filters-${{sampleName}}`);
+            if (filterRow) {{
+                const inputs = filterRow.querySelectorAll('input[type="text"]');
+                if (inputs.length >= 8) {{
+                    filters.filterAccession = inputs[0].value.trim().toLowerCase();
+                    filters.filterOrganism = inputs[1].value.trim().toLowerCase();
+                    filters.filterSpecies = inputs[2].value.trim().toLowerCase();
+                    filters.filterSegment = inputs[3].value.trim().toLowerCase();
+                    filters.minReads = inputs[4].value.trim() ? parseFloat(inputs[4].value.trim()) : null;
+                    filters.minIdentity = inputs[5].value.trim() ? parseFloat(inputs[5].value.trim()) : null;
+                    filters.minDepth = inputs[6].value.trim() ? parseFloat(inputs[6].value.trim()) : null;
+                    filters.minBreadth = inputs[7].value.trim() ? parseFloat(inputs[7].value.trim()) : null;
+                }}
+                const excludeUnknownCheckbox = document.getElementById(`excludeUnknown-${{sampleName}}`);
+                if (excludeUnknownCheckbox) {{
+                    filters.excludeUnknown = excludeUnknownCheckbox.checked;
+                }}
+            }}
+            
+            return filters;
+        }}
+        
+        // Check if a reference passes the current filters
+        function passesFilters(ref, filters) {{
+            // Check accession filter
+            if (filters.filterAccession) {{
+                const accession = (ref.accession || '').toLowerCase();
+                if (!accession.includes(filters.filterAccession)) {{
+                    return false;
+                }}
+            }}
+            
+            // Check organism filter
+            if (filters.filterOrganism) {{
+                const organism = (ref.organism || '').toLowerCase();
+                if (!organism.includes(filters.filterOrganism)) {{
+                    return false;
+                }}
+            }}
+            
+            // Check species filter
+            if (filters.filterSpecies) {{
+                const species = (ref.viral_species || ref.organism || '').toLowerCase();
+                if (!species.includes(filters.filterSpecies)) {{
+                    return false;
+                }}
+            }}
+            
+            // Check segment filter
+            if (filters.filterSegment) {{
+                const segment = (ref.segment || '').toLowerCase();
+                if (!segment.includes(filters.filterSegment)) {{
+                    return false;
+                }}
+            }}
+            
+            // Check numeric filters
+            if (filters.minReads !== null && !isNaN(filters.minReads)) {{
+                const reads = ref.mapped_reads || 0;
+                if (reads < filters.minReads) {{
+                    return false;
+                }}
+            }}
+            
+            if (filters.minIdentity !== null && !isNaN(filters.minIdentity)) {{
+                const identity = ref.avg_identity || 0;
+                if (identity < filters.minIdentity) {{
+                    return false;
+                }}
+            }}
+            
+            if (filters.minDepth !== null && !isNaN(filters.minDepth)) {{
+                const depth = ref.coverage_depth || 0;
+                if (depth < filters.minDepth) {{
+                    return false;
+                }}
+            }}
+            
+            if (filters.minBreadth !== null && !isNaN(filters.minBreadth)) {{
+                const breadth = (ref.coverage_breadth || 0) * 100; // Convert to percentage
+                if (breadth < filters.minBreadth) {{
+                    return false;
+                }}
+            }}
+            
+            // Check exclude unknown
+            if (filters.excludeUnknown) {{
+                const species = (ref.viral_species || ref.organism || '').toLowerCase();
+                if (species === 'unknown') {{
+                    return false;
+                }}
+            }}
+            
+            return true;
+        }}
+        
+        // Create or update heatmap based on current filters
         function createHeatmap() {{
+            updateHeatmap();
+        }}
+        
+        function updateHeatmap() {{
             const container = document.getElementById('heatmap-container');
             if (!container) return;
             
+            const filters = getCurrentFilters();
             const speciesList = Object.keys(heatmapData).sort();
             
             let html = '<table class="heatmap-table"><thead><tr><th>Viral Species</th>';
@@ -5958,12 +6118,29 @@ def generate_html_visualization(output_dir: Path):
             html += '</tr></thead><tbody>';
             
             speciesList.forEach(species => {{
+                // Check if this species should be shown (based on filters)
+                let speciesHasVisibleRefs = false;
+                const samplePresence = {{}};
+                
+                allSamples.forEach(sample => {{
+                    const refs = heatmapData[species][sample] || [];
+                    // Check if any reference for this species/sample passes filters
+                    const hasVisibleRef = refs.some(ref => passesFilters(ref, filters));
+                    samplePresence[sample] = hasVisibleRef;
+                    if (hasVisibleRef) {{
+                        speciesHasVisibleRefs = true;
+                    }}
+                }});
+                
+                // Only show species row if it has at least one visible reference
+                if (speciesHasVisibleRefs) {{
                 html += `<tr><th>${{species}}</th>`;
                 allSamples.forEach(sample => {{
-                    const present = heatmapData[species][sample] || false;
+                        const present = samplePresence[sample] || false;
                     html += `<td class="heatmap-cell ${{present ? 'heatmap-present' : 'heatmap-absent'}}">${{present ? '✓' : '—'}}</td>`;
                 }});
                 html += '</tr>';
+                }}
             }});
             
             html += '</tbody></table>';
@@ -6062,9 +6239,10 @@ Examples:
     parser.add_argument(
         "-o", "--output",
         type=str,
-        required=True,
+        required=False,
+        default=None,
         dest="output",
-        help="Output directory for results"
+        help="Output directory for results. If not specified, creates 'Virasign_output' folder in the current directory"
     )
     
     parser.add_argument(
@@ -6143,6 +6321,7 @@ Examples:
         args.enable_clustering = False
     
     # Set up output directory structure
+    # If --output not specified, create Virasign_output folder in current directory
     # If --output . (current directory), create Virasign_output folder
     # Otherwise use the specified output directory
     # Handle case where current directory was deleted
@@ -6157,9 +6336,13 @@ Examples:
             current_dir = Path(os.environ.get('HOME', '/tmp'))
             print(f"Warning: Current working directory was deleted, using {current_dir} as base", file=sys.stderr)
     
-    if args.output == ".":
+    if args.output is None or args.output == ".":
+        # If output not specified or set to ".", create Virasign_output in current directory
         output_dir = current_dir / "Virasign_output"
         output_dir.mkdir(parents=True, exist_ok=True)
+        if args.output is None:
+            # Log that we're using default output directory
+            print(f"Output directory not specified, using default: {output_dir}")
     else:
         output_dir = Path(args.output)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -6261,7 +6444,7 @@ Examples:
             logger.info(f"Min identity: 95% (RefSeq default)")
         else:
             logger.info(f"Min identity: 80% (default)")
-    logger.info(f"Output directory: {args.output}")
+    logger.info(f"Output directory: {output_dir} (specified: {args.output if args.output else 'default: Virasign_output'})")
     logger.info(f"Min mapped reads: {args.min_mapped_reads}")
     logger.info(f"Coverage depth threshold: {args.coverage_depth_threshold}")
     logger.info(f"Coverage breadth threshold: {args.coverage_breadth_threshold}")
