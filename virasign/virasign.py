@@ -1573,16 +1573,35 @@ def fetch_organism_from_ncbi(accession: str, cache_path: Path = None, database_p
     # Remove version from accession if present (e.g., "NC_001474.2" -> "NC_001474")
     accession_base = accession.split('.')[0] if '.' in accession else accession
     
-    # Step 1: Check comprehensive database first
+    # Step 1: Check comprehensive database first (SQLite or JSON)
     if database_path and database_path.exists():
         try:
-            with open(database_path, 'r') as f:
-                database = json.load(f)
+            if database_path.suffix == '.db':
+                # SQLite database
+                import sqlite3
+                conn = sqlite3.connect(str(database_path))
+                cursor = conn.cursor()
                 # Try both versioned and unversioned
-                if accession in database:
-                    return database[accession]
-                if accession_base in database:
-                    return database[accession_base]
+                cursor.execute('SELECT organism FROM accession_to_organism WHERE accession = ?', (accession,))
+                result = cursor.fetchone()
+                if result:
+                    conn.close()
+                    return result[0]
+                cursor.execute('SELECT organism FROM accession_to_organism WHERE accession = ?', (accession_base,))
+                result = cursor.fetchone()
+                if result:
+                    conn.close()
+                    return result[0]
+                conn.close()
+            else:
+                # JSON database (legacy)
+                with open(database_path, 'r') as f:
+                    database = json.load(f)
+                    # Try both versioned and unversioned
+                    if accession in database:
+                        return database[accession]
+                    if accession_base in database:
+                        return database[accession_base]
         except Exception as e:
             logger.debug(f"Could not read comprehensive database: {e}")
     
@@ -1601,18 +1620,20 @@ def fetch_organism_from_ncbi(accession: str, cache_path: Path = None, database_p
             
             # Use esearch to get UID
             search_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=nuccore&term={accession_base}&retmode=json"
-            with urllib.request.urlopen(search_url) as response:
+            with urllib.request.urlopen(search_url, timeout=30) as response:
                 data = json.loads(response.read())
                 if 'esearchresult' not in data or not data['esearchresult'].get('idlist'):
+                    logger.debug(f"No UID found for {accession}")
                     return ""
                 uid = data['esearchresult']['idlist'][0]
             
             # Use esummary to get organism
             summary_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=nuccore&id={uid}&retmode=json"
-            with urllib.request.urlopen(summary_url) as response:
+            with urllib.request.urlopen(summary_url, timeout=30) as response:
                 data = json.loads(response.read())
                 if 'result' in data and uid in data['result']:
-                    organism = data['result'][uid].get('Organism', '')
+                    # Try lowercase 'organism' first (correct field name), fallback to 'Organism' for compatibility
+                    organism = data['result'][uid].get('organism', '') or data['result'][uid].get('Organism', '')
                     if organism:
                         # Save to cache
                         if cache_path:
@@ -1620,7 +1641,9 @@ def fetch_organism_from_ncbi(accession: str, cache_path: Path = None, database_p
                             cache[accession] = organism
                             cache[accession_base] = organism
                             save_taxonomy_cache(cache_path, cache)
+                        logger.debug(f"Fetched organism '{organism}' from NCBI API for {accession}")
                         return organism
+            logger.debug(f"No organism found in esummary response for {accession}")
             return ""
         except Exception as e:
             if attempt < max_retries - 1:
@@ -1750,12 +1773,30 @@ def enrich_stats_with_organism(stats_list: list, cache_path: Path = None, databa
             if organism:
                 api_calls += 1
         
-        stat["organism"] = organism
+        stat["organism"] = organism if organism else ""  # Ensure it's set, even if empty
         
         # Extract viral species - use from database if available, otherwise try offline lookup, then API, then fallback to parsing
+        # For custom accessions, organism might be empty from FASTA header, so we need to fetch from NCBI
         if "viral_species" not in stat or not stat.get("viral_species"):
-            viral_species = extract_viral_species(organism, accession=accession, database_path=database_path, cache_path=cache_path, nodes_file=nodes_file, names_file=names_file)
-            stat["viral_species"] = viral_species
+            if organism:
+                viral_species = extract_viral_species(organism, accession=accession, database_path=database_path, cache_path=cache_path, nodes_file=nodes_file, names_file=names_file)
+                stat["viral_species"] = viral_species
+            elif accession:
+                # If no organism found, try fetching species directly from NCBI using accession
+                # This helps for custom accessions where organism wasn't in the FASTA header
+                viral_species = fetch_species_from_ncbi(accession, database_path=database_path, cache_path=cache_path, nodes_file=nodes_file, names_file=names_file)
+                if viral_species:
+                    stat["viral_species"] = viral_species
+                    # Also try to get organism from NCBI API if we still don't have it
+                    if not organism:
+                        organism = fetch_organism_from_ncbi_with_loaded_data(accession, database, cache, cache_path)
+                        if organism:
+                            stat["organism"] = organism
+                            api_calls += 1
+                else:
+                    stat["viral_species"] = ""
+            else:
+                stat["viral_species"] = ""
         
         if (i + 1) % 10 == 0:
             logger.info(f"  Processed {i + 1}/{len(stats_list)} organisms... (database: {database_hits}, cache: {cache_hits}, API: {api_calls})")
@@ -1798,10 +1839,11 @@ def fetch_organism_from_ncbi_with_loaded_data(accession: str, database: dict = N
             
             # Use esummary to get organism
             summary_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=nuccore&id={uid}&retmode=json"
-            with urllib.request.urlopen(summary_url) as response:
+            with urllib.request.urlopen(summary_url, timeout=30) as response:
                 data = json.loads(response.read())
                 if 'result' in data and uid in data['result']:
-                    organism = data['result'][uid].get('Organism', '')
+                    # Try lowercase 'organism' first (correct field name), fallback to 'Organism' for compatibility
+                    organism = data['result'][uid].get('organism', '') or data['result'][uid].get('Organism', '')
                     if organism:
                         # Save to cache
                         if cache_path:
@@ -2387,6 +2429,7 @@ def build_header_mapping(database_fasta: Path) -> dict:
 def build_organism_mapping(database_fasta: Path) -> dict:
     """
     Build a mapping from accession to organism name by parsing FASTA headers.
+    Handles both pipe-delimited format (RVDB/RefSeq) and simple NCBI format.
     Returns dict: accession -> organism_name
     """
     organism_map = {}
@@ -2403,15 +2446,25 @@ def build_organism_mapping(database_fasta: Path) -> dict:
                 header = line[1:].strip()
                 acc = extract_accession_from_header(header)
                 if acc:
-                    # Extract organism from header: acc|GENBANK|accession|description|organism|VRL|date
+                    # Try pipe-delimited format first (RVDB/RefSeq): acc|GENBANK|accession|description|organism|VRL|date
                     # Organism is typically at index 4 (5th part)
                     parts = header.split("|")
                     if len(parts) >= 5:
                         organism = parts[4].strip()
-                        organism_map[acc] = organism
+                        if organism:  # Only add if not empty
+                            organism_map[acc] = organism
                     elif len(parts) >= 4:
                         # Fallback: try parts[-2] if format is different
-                        organism_map[acc] = parts[-2].strip()
+                        organism = parts[-2].strip()
+                        if organism:
+                            organism_map[acc] = organism
+                    else:
+                        # Simple NCBI format: >accession description
+                        # For custom accessions downloaded from NCBI, the header is usually:
+                        # >accession description
+                        # We can't extract organism from this format reliably, so leave it empty
+                        # The organism will be fetched via NCBI API in enrich_stats_with_organism
+                        pass
     
     return organism_map
 
@@ -3193,14 +3246,22 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             
             # 3. Convert SAM to coordinate-sorted BAM (+ index) for easy visualization
             # Note: `samtools index` requires coordinate-sorted BAM.
+            # The sorted BAM will replace any existing BAM file with the same name.
             ref_bam = acc_dir / f"{accession}.bam"
             ref_bai = acc_dir / f"{accession}.bam.bai"
             try:
                 # Check if samtools is available
                 subprocess.run(['samtools', '--version'], check=True, capture_output=True)
 
-                # Create coordinate-sorted BAM:
+                # Remove existing BAM and BAI files if they exist (will be replaced with sorted version)
+                if ref_bam.exists():
+                    ref_bam.unlink()
+                if ref_bai.exists():
+                    ref_bai.unlink()
+
+                # Create coordinate-sorted BAM (samtools sort writes directly to output file, replacing if exists):
                 # samtools view -bS ref.sam | samtools sort -o ref.bam -
+                # The -o flag writes directly to ref.bam (replaces existing file)
                 view_cmd = ['samtools', 'view', '-bS', str(ref_sam)]
                 sort_cmd = ['samtools', 'sort', '-o', str(ref_bam), '-']
 
@@ -3220,7 +3281,11 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
                 if sort_p.returncode != 0:
                     raise subprocess.CalledProcessError(sort_p.returncode, sort_cmd, output=None, stderr=sort_err)
 
-                # Index BAM (creates .bai next to the BAM)
+                # Verify BAM file was created and is sorted
+                if not ref_bam.exists():
+                    raise FileNotFoundError(f"Sorted BAM file was not created: {ref_bam}")
+
+                # Index BAM (creates .bai next to the BAM, replaces existing index)
                 subprocess.run(['samtools', 'index', str(ref_bam)], check=True, capture_output=True)
 
                 if ref_bai.exists():
@@ -3386,6 +3451,10 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     # Calculate identity for all references and filter by minimum identity threshold
     all_stats = []
     
+    # Debug: Track AY628205.1 specifically
+    debug_accession = "AY628205.1"
+    debug_found = False
+    
     for sam_header, s in stats_by_ref.items():
         aligned_i = s["aligned_bases"]
         matches_i = s["matches"]
@@ -3394,6 +3463,16 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         acc = extract_accession_from_header(sam_header)
         # Look up full header from FASTA using accession (SAM header might be truncated)
         desc = header_map.get(acc, ref_headers.get(sam_header, sam_header))
+        
+        # Debug: Log AY628205.1 if found
+        if acc == debug_accession or debug_accession in sam_header:
+            debug_found = True
+            ref_len = ref_lengths.get(sam_header) or db_ref_lengths.get(acc, 0)
+            coverage_depth = aligned_i / ref_len if ref_len > 0 else 0.0
+            covered_pos = s.get("covered_positions", 0)
+            coverage_breadth = covered_pos / ref_len if ref_len > 0 else 0.0
+            logger.info(f"DEBUG: Found {debug_accession} in SAM parsing: {s['mapped_reads']} reads, "
+                       f"identity={identity:.2f}%, depth={coverage_depth:.2f}, breadth={coverage_breadth:.4f}")
         
         # Calculate coverage depth (average depth) and breadth (horizontal coverage)
         ref_len = ref_lengths.get(sam_header)
@@ -3424,14 +3503,25 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             "covered_positions": covered_pos,  # Store for aggregation
         }
         all_stats.append(stat_entry)
+    
+    if not debug_found:
+        logger.debug(f"DEBUG: {debug_accession} not found in SAM parsing results")
         
     # Aggregate by organism/species BEFORE filtering to combine reads that map to multiple references of same species
+    # IMPORTANT: For segmented viruses (e.g., Lassa, Influenza), keep segments separate by including segment in key
     # This helps when reads are spread across many references (e.g., many MPOX references)
-    logger.info("Aggregating reads by organism/species before filtering (combining reads across multiple references of same species)...")
+    # but prevents different segments from being aggregated together
+    logger.info("Aggregating reads by organism/species before filtering (combining reads across multiple references of same species, but keeping segments separate)...")
+    
+    # Get segment database path for segment extraction
+    database_dir = Path(database_fasta).parent
+    segment_database_path = get_segment_database_path(database_dir)
+    
     aggregated_stats = {}
     for stat in all_stats:
         # Use accession to look up organism from database mapping (more reliable than parsing description)
         accession = stat.get("accession", "")
+        description = stat.get("description", "")
         organism_key = None
         
         if accession and accession in organism_map:
@@ -3440,14 +3530,14 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             organism_key = organism.strip().lower().replace(" ", "_")[:50]  # Limit length
         else:
             # Fallback: try to extract from description if not found in mapping
-            desc = stat.get("description", "").lower()
+            desc = description.lower()
             if "monkeypox" in desc or "mpox" in desc:
                 organism_key = "monkeypox_virus"
             elif "orthopoxvirus" in desc:
                 organism_key = "orthopoxvirus"
             else:
                 # Try parsing description as last resort
-                parts = stat.get("description", "").split("|")
+                parts = description.split("|")
                 if len(parts) >= 5:
                     organism_key = parts[4].strip().lower().replace(" ", "_")[:50]
                 elif len(parts) >= 4:
@@ -3455,6 +3545,13 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
                 else:
                     # Final fallback: use accession as key (no aggregation)
                     organism_key = accession if accession else "unknown"
+        
+        # Extract segment information to keep segmented viruses separate
+        segment = extract_segment_from_description(description, accession=accession, database_path=segment_database_path)
+        
+        # Include segment in aggregation key if present (prevents different segments from being aggregated)
+        if segment:
+            organism_key = f"{organism_key}__segment_{segment}"
         
         if organism_key not in aggregated_stats:
             aggregated_stats[organism_key] = {
