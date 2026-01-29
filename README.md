@@ -1,6 +1,6 @@
 # Virasign
 
-Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or custom) and generates comprehensive interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data.
+Virasign (Viral Read **ASSIGN**ment from nanopore sequencing) is a viral taxonomic classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or custom) and performs taxonomic classification to identify viral species and organisms. Virasign generates comprehensive interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data.
 
 ## Installation
 
@@ -84,10 +84,10 @@ Example HTML output for one sample:
 
 ## Citation
 
-If you use Lassaseq in your research, please cite:
+If you use Virasign in your research, please cite:
 
 ```
-Jansen, D., & Vercauteren, K. (2026). Virasign: A viral classification tool designed for nanopore sequencing data (v0.0.1). Zenodo. https://doi.org/10.5281/zenodo.18387008"
+Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification tool designed for nanopore sequencing data (v0.0.1). Zenodo. https://doi.org/10.5281/zenodo.18387008"
 ```
 
 ## License
