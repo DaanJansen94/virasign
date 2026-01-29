@@ -40,7 +40,7 @@ virasign -i input_dir -o output_dir [options]
 
 #### Optional Arguments
 - `-d, --database`: Database name (`RefSeq`, `RVDB` (default), or accession number)
-- `--rvdb-version`: RVDB database version to download (e.g., `30.0`, `31.0`, `29.0`). Default: `30.0`. Only applies when using RVDB database. See [available versions](https://rvdb.dbi.udel.edu/previous-release) for the complete list.
+- `--rvdb-version`: RVDB database version to download (e.g., `30.0`, `31.0`, `29.0`). Default: `31.0`. Only applies when using RVDB database. See [available versions](https://rvdb.dbi.udel.edu/previous-release) for the complete list.
 - `-a, --accession`: NCBI accession number(s) to download and merge with database
 - `--min_identity`: Minimum average identity percentage
 - `--min_mapped_reads`: Minimum number of mapped reads (default: `100`)
