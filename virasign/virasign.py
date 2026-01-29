@@ -5979,7 +5979,7 @@ def generate_html_visualization(output_dir: Path):
                 return filters;
             }}
             
-            // Extract sample name from active section ID (format: "sample-{sampleName}")
+            // Extract sample name from active section ID (format: "sample-{{sampleName}}")
             const sampleId = activeSection.id;
             if (sampleId && sampleId.startsWith('sample-')) {{
                 const sampleName = sampleId.replace('sample-', '');
