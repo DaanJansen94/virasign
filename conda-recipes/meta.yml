@@ -29,6 +29,8 @@ requirements:
     - seqtk =1.3
     - curl =7.88
     - samtools =1.17
+    - gzip =1.14  # Provides gunzip for RefSeq database extraction
+    - mmseqs2 =2.23394  # Optional but recommended for database clustering
 
 test:
   imports:
@@ -41,12 +43,15 @@ about:
   license: GPL-3.0
   license_family: GPL
   license_file: LICENSE
-  summary: Virasign is a viral classification tool designed for nanopore sequencing data.
+  summary: Virasign is a viral taxonomic classification tool designed for nanopore sequencing data.
   description: |
-    Virasign (Viral Read ASSIGNment from nanopore sequencing) is a viral classification and reference selection tool for nanopore data. 
-    It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or custom) and generates comprehensive 
-    interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest 
-    reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data.
+    Virasign (Viral Read ASSIGNment) is a viral taxonomic classification and reference selection tool for nanopore data. 
+    It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or custom accessions) and performs 
+    taxonomic classification to identify viral species. Virasign generates comprehensive interactive HTML reports with filterable 
+    tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in 
+    FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data (e.g., IGV). Virasign 
+    includes options to blind yourself from certain incidental findings (such as HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) when 
+    wanted, ensuring these findings do not appear in any output files, in line with consent guidelines and ethical research practices.
   doc_url: https://github.com/DaanJansen94/virasign/blob/main/README.md
   dev_url: https://github.com/DaanJansen94/virasign
 
