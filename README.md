@@ -47,37 +47,10 @@ virasign -i input_dir -o output_dir -t threads [options]
 - `-d, --database`: Database name (`RefSeq`, `RVDB` (default), or accession number)
 - `--rvdb-version`: RVDB database version to download (e.g., `30.0`, `31.0`, `29.0`). Default: `31.0`. Only applies when using RVDB database. See [available versions](https://rvdb.dbi.udel.edu/previous-release) for the complete list.
 - `-a, --accession`: NCBI accession number(s) to download and merge with database
-- `-b, --blind`: Blind specific viral species from analysis (not reported in any output files). Useful for blinding yourself from common incidental findings that require mandatory reporting (e.g., Hepatitis viruses, HIV, HTLV, EBV, CMV, HPV). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full official viral species names (e.g., `'Orthohepadnavirus hominoidei'`, `'Human immunodeficiency virus'`). Multiple species can be specified comma-separated (e.g., `-b HEP,HIV,HTLV` or `-b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'`). You can mix abbreviations and full species names in the same command. Blinded species will not appear in any intermediate or final output files, ensuring complete blinding.
+- `-b, --blind`: Blind specific viral species from analysis (not reported in any output files). Useful for blinding yourself from common incidental findings that require mandatory reporting (e.g., Hepatitis viruses, HIV, HTLV, EBV, CMV, HPV). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full official viral species names (e.g., `'Orthohepadnavirus hominoidei'`, `'Human immunodeficiency virus'`). Multiple species can be specified comma-separated (e.g., `-b HEP,HIV,HTLV,EBV,CMV,HPV` or `-b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'`). You can mix abbreviations and full species names in the same command. Blinded species will not appear in any intermediate or final output files, ensuring complete blinding.
 
 - `--blinding`: List all available blinding abbreviations and exit. Useful for quick reference of which viruses can be blinded using abbreviations.
 
-#### Available Blinding Abbreviations
-
-The following abbreviations are available for blinding common incidental findings:
-
-- **HEP**: All Hepatitis viruses (A, B, C, D, E, etc.) - `Orthohepadnavirus hominoidei`
-- **HIV**: Human immunodeficiency virus (HIV-1, HIV-2) - `Human immunodeficiency virus`
-- **HTLV**: Human T-lymphotropic virus (HTLV-1, HTLV-2) - `Primate T-lymphotropic virus`
-- **EBV**: Epstein-Barr virus (Human herpesvirus 4) - `Human gammaherpesvirus 4`
-- **CMV**: Cytomegalovirus (Human herpesvirus 5) - `Human betaherpesvirus 5`
-- **HPV**: Human papillomavirus (all types) - `Alphapapillomavirus`
-
-**Usage examples:**
-```bash
-# List all available abbreviations
-virasign --blinding
-
-# Using abbreviations:
-virasign -i input_dir -b HEP,HIV,HTLV
-virasign -i input_dir -b HEP,HIV,HTLV,EBV,CMV,HPV
-
-# Using full official viral species names:
-virasign -i input_dir -b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'
-virasign -i input_dir -b 'Primate T-lymphotropic virus'
-
-# You can mix abbreviations and full species names:
-virasign -i input_dir -b 'HEP,Human immunodeficiency virus,HTLV'
-```
 - `--min_identity`: Minimum average identity percentage
 - `--min_mapped_reads`: Minimum number of mapped reads (default: `100`)
 - `--coverage_depth_threshold`: Minimum coverage depth threshold (default: `1.0`)
