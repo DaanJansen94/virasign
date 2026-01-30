@@ -84,6 +84,7 @@ virasign -i input_dir -d my_accessions.txt -o output_dir -b HEP,HIV,HTLV
 
 ## Output Files
 
+- **.virasign.log**: Detailed log file (hidden file, contains all processing details)
 - **results_summary_*.html**: Interactive HTML reports (one per database)
 - ***_final_selected_references.json**: Final curated references
 - **Per-reference folders**: Each curated reference gets its own folder with:
