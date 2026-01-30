@@ -55,7 +55,7 @@ virasign -i input_dir -o output_dir -t threads [options]
 
 The following abbreviations are available for blinding common incidental findings:
 
-- **HEP** or **HBV**: All Hepatitis viruses (A, B, C, D, E, etc.) - `Orthohepadnavirus hominoidei`
+- **HEP**: All Hepatitis viruses (A, B, C, D, E, etc.) - `Orthohepadnavirus hominoidei`
 - **HIV**: Human immunodeficiency virus (HIV-1, HIV-2) - `Human immunodeficiency virus`
 - **HTLV**: Human T-lymphotropic virus (HTLV-1, HTLV-2) - `Primate T-lymphotropic virus`
 - **EBV**: Epstein-Barr virus (Human herpesvirus 4) - `Human gammaherpesvirus 4`
