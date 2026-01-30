@@ -21,16 +21,23 @@ import gzip
 import zipfile
 import sqlite3
 
-def setup_logging(output_dir):
-    """Set up logging configuration."""
-    log_file = Path(output_dir) / 'virasign.log'
+def setup_logging(output_dir, verbose=True):
+    """Set up logging configuration.
+    
+    Args:
+        output_dir: Directory where log file will be created
+        verbose: If False, only log to file (no console output)
+    """
+    log_file = Path(output_dir) / '.virasign.log'  # Hidden log file
+    handlers = [logging.FileHandler(log_file, mode='w')]  # Always log to file
+    if verbose:
+        handlers.append(logging.StreamHandler())  # Only add console handler if verbose
+    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file, mode='w'),  # 'w' mode overwrites the file
-            logging.StreamHandler()
-        ]
+        handlers=handlers,
+        force=True  # Override any existing configuration
     )
     return logging.getLogger(__name__)
 
@@ -4007,12 +4014,11 @@ def _process_sample_task(task_args):
     database_fasta_path = Path(database_fasta_path_str)
     db_output_dir = Path(db_output_dir_str)
     
-    logger.info(f"\n{'='*60}")
+    # Log to file only (not to console - we'll use progress bars for console)
     logger.info(f"Processing sample: {sample_name} with database: {db_name}")
     logger.info(f"Database file: {database_fasta_path}")
     logger.info(f"Output directory: {db_output_dir}")
     logger.info(f"Threads: {threads}")
-    logger.info(f"{'='*60}")
     
     process_sample(
         sample_name,
@@ -4041,9 +4047,8 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         blinded_species = []
     if organism_variations is None:
         organism_variations = {}
-    logger.info(f"\n{'='*60}")
+    # Log to file only (not to console - we'll use progress bars for console)
     logger.info(f"Processing sample: {sample_name}")
-    logger.info(f"{'='*60}")
     logger.info(f"Mapping ALL reads to database (no rarefaction)...")
     
     # Use the provided output_dir (which may already be database-specific if multiple databases)
@@ -4103,7 +4108,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     # Use sample_dir (which is already database-specific if multiple databases)
     save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads, blinded_species=blinded_species, organism_variations=organism_variations)
     
-    logger.info(f"\n{'='*60}")
+    # Log to file only (not to console)
     logger.info("Sample processing complete!")
     if best_ref and best_stats:
         logger.info(f"  - Best reference: {best_ref['accession']}")
@@ -4111,7 +4116,6 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         logger.info(f"  - Average identity: {best_stats['avg_identity']:.2f}%")
     else:
         logger.info("  - No reads mapped to any reference")
-    logger.info(f"{'='*60}")
     
     return best_ref
 
@@ -6751,7 +6755,8 @@ Examples:
     
     # Set up logging (log file goes in output_dir, same as sample outputs)
     # This will create a fresh log file
-    setup_logging(output_dir)
+    # Use verbose=False to suppress console output (we'll use progress bars instead)
+    setup_logging(output_dir, verbose=False)
     logger.info(f"Cleaned output directory: {output_dir} (removed old sample directories and files)")
     
     # Parse accessions (either comma-separated string OR text file, not both)
@@ -6978,10 +6983,14 @@ Examples:
     if total_threads == 1:
         # Sequential processing: 1 thread per sample
         logger.info(f"Processing {num_tasks} task(s) sequentially (1 thread specified)")
-        for task_args in tasks_with_threads:
+        print(f"\nProcessing {num_tasks} sample(s) sequentially (1 thread)...")
+        print("=" * 60)
+        for i, task_args in enumerate(tasks_with_threads, 1):
             task_list = list(task_args)
             task_list[9] = 1  # Override to 1 thread
+            print(f"[{i}/{num_tasks}] {task_list[0]}: Running...")
             _process_sample_task(tuple(task_list))
+            print(f"[{i}/{num_tasks}] {task_list[0]}: ✓ Completed")
     else:
         # Scale up threads per sample if more threads are available
         # First, calculate minimum threads needed based on read counts
@@ -7007,11 +7016,16 @@ Examples:
         # Sort by thread requirement (smaller first for better packing)
         tasks_sorted = sorted(tasks_with_threads, key=lambda x: x[9])
         
+        # Log to file only
         logger.info(f"Processing {num_tasks} task(s) with {total_threads} total threads (dynamic scheduling)")
         total_threads_needed = sum(t[9] for t in tasks_sorted)
         logger.info(f"Total threads needed: {total_threads_needed}, Available: {total_threads}")
         for task in tasks_sorted:
             logger.info(f"  - {task[0]}: {task[9]} threads")
+        
+        # Print progress to console
+        print(f"\nProcessing {num_tasks} sample(s) with {total_threads} threads...")
+        print("=" * 60)
         
         # Use ProcessPoolExecutor with dynamic task submission
         # As tasks complete, their threads are freed and next tasks can start immediately
@@ -7020,6 +7034,7 @@ Examples:
             running_futures = {}  # future -> (task, threads_used)
             pending_tasks = list(tasks_sorted)
             completed_count = 0
+            sample_progress = {task[0]: "Waiting" for task in tasks_sorted}
             
             # Submit initial batch of tasks that fit
             available_threads = total_threads
@@ -7032,7 +7047,9 @@ Examples:
                     pending_tasks.remove(task)
                     available_threads -= required_threads
                     initial_batch_count += 1
+                    sample_progress[task[0]] = "Running"
                     logger.info(f"Started: {task[0]} ({required_threads} threads) - {initial_batch_count} sample(s) running in parallel")
+                    print(f"[{completed_count}/{num_tasks}] {task[0]}: Running...")
             
             logger.info(f"Initial batch: {initial_batch_count} sample(s) started, {len(pending_tasks)} sample(s) pending, {available_threads} threads remaining")
             
@@ -7044,9 +7061,13 @@ Examples:
                 
                 try:
                     sample_name, db_name = completed_future.result()
+                    sample_progress[sample_name] = "Completed"
                     logger.info(f"Completed ({completed_count}/{num_tasks}): {sample_name} ({db_name}) - {threads_used} threads freed")
+                    print(f"[{completed_count}/{num_tasks}] {sample_name}: ✓ Completed")
                 except Exception as e:
+                    sample_progress[task[0]] = "Failed"
                     logger.error(f"Task {task[0]} ({task[5]}) failed: {e}")
+                    print(f"[{completed_count}/{num_tasks}] {task[0]}: ✗ Failed - {e}")
                     raise
                 
                 # Threads are now available - submit next pending task if any
@@ -7061,7 +7082,9 @@ Examples:
                             running_futures[future] = (task, required_threads)
                             pending_tasks.remove(task)
                             available_threads -= required_threads
+                            sample_progress[task[0]] = "Running"
                             logger.info(f"Started: {task[0]} ({required_threads} threads) - threads freed from completed task")
+                            print(f"[{completed_count}/{num_tasks}] {task[0]}: Running...")
             
             # Process any remaining pending tasks (shouldn't happen, but handle it)
             if pending_tasks:
@@ -7071,9 +7094,10 @@ Examples:
                     task_list[9] = min(total_threads, task_list[9])
                     _process_sample_task(tuple(task_list))
     
-    logger.info("\n" + "="*60)
     logger.info("All samples processed successfully!")
-    logger.info("="*60)
+    print("\n" + "=" * 60)
+    print("All samples processed successfully!")
+    print("=" * 60)
     
     # Generate HTML visualization of results
     generate_html_visualization(output_dir)
