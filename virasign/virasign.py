@@ -7008,6 +7008,8 @@ Examples:
         tasks_sorted = sorted(tasks_with_threads, key=lambda x: x[9])
         
         logger.info(f"Processing {num_tasks} task(s) with {total_threads} total threads (dynamic scheduling)")
+        total_threads_needed = sum(t[9] for t in tasks_sorted)
+        logger.info(f"Total threads needed: {total_threads_needed}, Available: {total_threads}")
         for task in tasks_sorted:
             logger.info(f"  - {task[0]}: {task[9]} threads")
         
@@ -7021,6 +7023,7 @@ Examples:
             
             # Submit initial batch of tasks that fit
             available_threads = total_threads
+            initial_batch_count = 0
             for task in pending_tasks[:]:
                 required_threads = task[9]
                 if required_threads <= available_threads:
@@ -7028,7 +7031,10 @@ Examples:
                     running_futures[future] = (task, required_threads)
                     pending_tasks.remove(task)
                     available_threads -= required_threads
-                    logger.info(f"Started: {task[0]} ({required_threads} threads)")
+                    initial_batch_count += 1
+                    logger.info(f"Started: {task[0]} ({required_threads} threads) - {initial_batch_count} sample(s) running in parallel")
+            
+            logger.info(f"Initial batch: {initial_batch_count} sample(s) started, {len(pending_tasks)} sample(s) pending, {available_threads} threads remaining")
             
             # Process completed tasks and submit new ones as threads become available
             for completed_future in as_completed(running_futures.keys()):
