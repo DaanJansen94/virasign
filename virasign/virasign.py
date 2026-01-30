@@ -4888,16 +4888,14 @@ def generate_html_visualization(output_dir: Path):
     # Find all unfiltered JSON files for metadata
     unfiltered_json_files = list(output_dir.rglob("*_unfiltered_all_references.json"))
     
-    # Find all sample directories
+    # Find all sample directories - include ALL sample directories, even if they have no viruses
     all_sample_dirs = [d for d in output_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
     all_sample_names = set()
+    # Add all sample directories (even if they have no JSON files - they might have no viruses detected)
     for sample_dir in all_sample_dirs:
-        has_json = any(sample_dir.glob("*.json"))
-        # Check for database subdirectories (RefSeq, RVDB, Custom, or any other subdirectory with JSON files)
-        has_db_subdirs = any((sample_dir / subdir).is_dir() and any((sample_dir / subdir).glob("*.json")) for subdir in sample_dir.iterdir() if (sample_dir / subdir).is_dir())
-        if has_json or has_db_subdirs:
-            all_sample_names.add(sample_dir.name)
+        all_sample_names.add(sample_dir.name)
     
+    # Also add samples from JSON file paths (for custom databases or nested structures)
     for json_file in unfiltered_json_files:
         rel_path = json_file.relative_to(output_dir)
         parts = rel_path.parts
@@ -5189,16 +5187,36 @@ def generate_html_visualization(output_dir: Path):
         db_samples_data = {}
         db_samples_metadata = {}
         db_samples_with_results = set()
+        db_samples_list = set()  # Track all samples for this database (including those with no viruses)
         
         for sample_name in all_sample_names:
-            if sample_name in samples_data and database_name in samples_data[sample_name]:
-                db_samples_data[sample_name] = {database_name: samples_data[sample_name][database_name]}
-                db_samples_with_results.add(sample_name)
-            if sample_name in samples_metadata and database_name in samples_metadata[sample_name]:
-                db_samples_metadata[sample_name] = {database_name: samples_metadata[sample_name][database_name]}
+            # Check if this sample has data for this database
+            has_data = (sample_name in samples_data and database_name in samples_data[sample_name]) or \
+                      (sample_name in samples_metadata and database_name in samples_metadata[sample_name])
+            
+            if has_data:
+                db_samples_list.add(sample_name)
+                if sample_name in samples_data and database_name in samples_data[sample_name]:
+                    db_samples_data[sample_name] = {database_name: samples_data[sample_name][database_name]}
+                    db_samples_with_results.add(sample_name)
+                if sample_name in samples_metadata and database_name in samples_metadata[sample_name]:
+                    db_samples_metadata[sample_name] = {database_name: samples_metadata[sample_name][database_name]}
+            else:
+                # Sample exists but has no data for this database - still include it
+                # Check if sample directory exists (might be a sample with no viruses)
+                sample_dir = output_dir / sample_name
+                if sample_dir.exists() and sample_dir.is_dir():
+                    db_samples_list.add(sample_name)
+                    # Create empty entry for this sample
+                    db_samples_data[sample_name] = {database_name: []}
+                    db_samples_metadata[sample_name] = {database_name: {
+                        "database_source": database_name,
+                        "filtering_criteria": {}
+                    }}
         
         # Build heatmap data for this database only
         # Store full reference data per species/sample so we can filter later
+        # Include ALL samples in heatmap, even if they have no viruses (they'll just have empty entries)
         heatmap_data = {}  # species -> {sample_name: [list of refs that match this species]}
         all_species = set()
         for sample_name in db_samples_data:
@@ -5214,7 +5232,7 @@ def generate_html_visualization(output_dir: Path):
                         heatmap_data[species][sample_name].append(ref)  # Store full ref data for filtering
         
         # Prepare data for JavaScript (only this database)
-        # Only include samples that have data for this database
+        # Include ALL samples, even if they have no viruses detected
         db_samples_json = {}
         db_samples_list = []
         for sample_name in all_sample_names:
@@ -5240,6 +5258,22 @@ def generate_html_visualization(output_dir: Path):
                 }
                 has_data = True
                 db_samples_list.append(sample_name)
+            else:
+                # Sample exists but has no data for this database - still include it (no viruses detected)
+                # Check if sample directory exists
+                sample_dir = output_dir / sample_name
+                if sample_dir.exists() and sample_dir.is_dir():
+                    db_samples_json[sample_name] = {
+                        database_name: {
+                            "references": [],
+                            "metadata": {
+                                "database_source": database_name,
+                                "filtering_criteria": {}
+                            }
+                        }
+                    }
+                    has_data = True
+                    db_samples_list.append(sample_name)
         
         # Generate HTML for this database
         samples_json_str = json_module.dumps(db_samples_json).replace('</', '<\\/')
