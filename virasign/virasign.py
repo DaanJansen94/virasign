@@ -7088,23 +7088,9 @@ Examples:
             logger.info(f"Initial batch: {initial_batch_count} sample(s) started, {len(pending_tasks)} sample(s) pending, {available_threads} threads remaining")
             
             # Process completed tasks and submit new ones as threads become available
-            for completed_future in as_completed(running_futures.keys()):
-                # Get completed task info
-                task, threads_used = running_futures.pop(completed_future)
-                completed_count += 1
-                
-                try:
-                    sample_name, db_name = completed_future.result()
-                    sample_progress[sample_name] = "Completed"
-                    logger.info(f"Completed ({completed_count}/{num_tasks}): {sample_name} ({db_name}) - {threads_used} threads freed")
-                    print(f"[{completed_count}/{num_tasks}] {sample_name}: ✓ Completed")
-                except Exception as e:
-                    sample_progress[task[0]] = "Failed"
-                    logger.error(f"Task {task[0]} ({task[5]}) failed: {e}")
-                    print(f"[{completed_count}/{num_tasks}] {task[0]}: ✗ Failed - {e}")
-                    raise
-                
-                # Threads are now available - submit next pending task if any
+            # Use a while loop to handle dynamic addition of futures
+            while running_futures or pending_tasks:
+                # Submit new tasks if threads are available
                 if pending_tasks:
                     available_threads = total_threads - sum(threads for _, threads in running_futures.values())
                     
@@ -7119,6 +7105,27 @@ Examples:
                             sample_progress[task[0]] = "Running"
                             logger.info(f"Started: {task[0]} ({required_threads} threads) - threads freed from completed task")
                             print(f"[{completed_count}/{num_tasks}] {task[0]}: Running...")
+                
+                # Wait for at least one task to complete
+                if running_futures:
+                    completed_future = next(as_completed(running_futures.keys()))
+                    # Get completed task info
+                    task, threads_used = running_futures.pop(completed_future)
+                    completed_count += 1
+                    
+                    try:
+                        sample_name, db_name = completed_future.result()
+                        sample_progress[sample_name] = "Completed"
+                        logger.info(f"Completed ({completed_count}/{num_tasks}): {sample_name} ({db_name}) - {threads_used} threads freed")
+                        print(f"[{completed_count}/{num_tasks}] {sample_name}: ✓ Completed")
+                    except Exception as e:
+                        sample_progress[task[0]] = "Failed"
+                        logger.error(f"Task {task[0]} ({task[5]}) failed: {e}")
+                        print(f"[{completed_count}/{num_tasks}] {task[0]}: ✗ Failed - {e}")
+                        raise
+                elif pending_tasks:
+                    # No running tasks but pending tasks remain - shouldn't happen, but handle it
+                    break
             
             # Process any remaining pending tasks (shouldn't happen, but handle it)
             if pending_tasks:
