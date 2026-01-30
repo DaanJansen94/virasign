@@ -9,6 +9,7 @@ import logging
 import shutil
 import json
 import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import re
 import hashlib
 import time
@@ -3991,6 +3992,43 @@ def extract_fasta_record(database_fasta: Path, target_header: str, out_fasta: Pa
                         out.write(line)
     return found
 
+def _process_sample_task(task_args):
+    """
+    Wrapper function for parallel processing of samples.
+    This function can be pickled for multiprocessing.
+    All Path objects are converted to strings for pickling.
+    """
+    (sample_name, sample_file_str, database_fasta_path_str, db_output_dir_str, db_min_identity, 
+     db_name, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, 
+     threads, blinded_species, organism_variations) = task_args
+    
+    # Convert strings back to Path objects
+    sample_file = Path(sample_file_str)
+    database_fasta_path = Path(database_fasta_path_str)
+    db_output_dir = Path(db_output_dir_str)
+    
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Processing sample: {sample_name} with database: {db_name}")
+    logger.info(f"Database file: {database_fasta_path}")
+    logger.info(f"Output directory: {db_output_dir}")
+    logger.info(f"Threads: {threads}")
+    logger.info(f"{'='*60}")
+    
+    process_sample(
+        sample_name,
+        sample_file,
+        str(database_fasta_path),
+        db_output_dir,
+        min_identity=db_min_identity,
+        min_mapped_reads=min_mapped_reads,
+        coverage_depth_threshold=coverage_depth_threshold,
+        coverage_breadth_threshold=coverage_breadth_threshold,
+        threads=threads,
+        blinded_species=blinded_species,
+        organism_variations=organism_variations
+    )
+    return sample_name, db_name
+
 def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, blinded_species=None, organism_variations=None):
     """
     Process a single sample: map ALL reads to database and find best reference.
@@ -6639,7 +6677,7 @@ Examples:
         type=str,
         default=None,
         dest="blind",
-        help="Blind specific viral species from analysis (not reported in any output files). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full official viral species names (e.g., 'Orthohepadnavirus hominoidei', 'Human immunodeficiency virus'). Multiple species can be specified comma-separated (e.g., -b HEP,HIV,HTLV or -b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'). Use --blinding to see all available abbreviations."
+        help="Blind specific viral species from analysis (not in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names. Multiple comma-separated (e.g., -b HEP,HIV,HTLV). Use --blinding to see all abbreviations."
     )
     
     parser.add_argument(
@@ -6827,7 +6865,8 @@ Examples:
     
     logger.info(f"Found {len(samples)} sample(s)")
     
-    # Process each sample
+    # Prepare all sample+database combinations for processing
+    sample_db_tasks = []
     for sample_file in samples:
         sample_name = sample_file.stem
         if sample_name.endswith('.fastq'):
@@ -6881,25 +6920,150 @@ Examples:
             db_output_dir = output_dir / sample_name / db_name if len(database_fasta_paths) > 1 else output_dir / sample_name
             db_output_dir.mkdir(parents=True, exist_ok=True)
             
-            logger.info(f"\n{'='*60}")
-            logger.info(f"Processing sample: {sample_name} with database: {db_name}")
-            logger.info(f"Database file: {database_fasta_path}")
-            logger.info(f"Output directory: {db_output_dir}")
-            logger.info(f"{'='*60}")
+            # Store task info (keep sample_file as Path for read counting)
+            sample_db_tasks.append((
+                sample_name,
+                sample_file,  # Keep Path for read counting
+                str(database_fasta_path),  # Convert to string for pickling
+                str(db_output_dir),  # Convert to string for pickling
+                db_min_identity,
+                db_name,
+                args.min_mapped_reads,
+                args.coverage_depth_threshold,
+                args.coverage_breadth_threshold,
+                args.threads,  # Will be adjusted based on read count
+                blinded_species,
+                organism_variations
+            ))
+    
+    # Count reads for each sample to determine optimal thread assignment
+    logger.info("Counting reads in samples to optimize thread assignment...")
+    sample_read_counts = {}
+    for task in sample_db_tasks:
+        sample_file = task[1]  # Path object
+        sample_name = task[0]
+        if sample_file not in sample_read_counts:
+            read_count = count_reads(sample_file)
+            sample_read_counts[sample_file] = read_count
+            logger.info(f"  {sample_name}: {read_count:,} reads")
+    
+    # Assign threads based on read count: < 100k reads = 4 threads, >= 100k reads = 8 threads
+    tasks_with_threads = []
+    for task in sample_db_tasks:
+        sample_file = task[1]
+        sample_name = task[0]
+        read_count = sample_read_counts.get(sample_file, None)
         
-            process_sample(
-            sample_name,
-            sample_file,
-                str(database_fasta_path),
-                db_output_dir,  # Use database-specific output directory
-                min_identity=db_min_identity,  # Use database-specific threshold
-            min_mapped_reads=args.min_mapped_reads,
-            coverage_depth_threshold=args.coverage_depth_threshold,
-                coverage_breadth_threshold=args.coverage_breadth_threshold,
-                threads=args.threads,
-                blinded_species=blinded_species,
-                organism_variations=organism_variations
-        )
+        if read_count is None:
+            # Fallback: use 8 threads if counting failed
+            assigned_threads = 8
+            logger.warning(f"  Could not count reads for {sample_name}, using 8 threads")
+        elif read_count < 100000:
+            assigned_threads = 4
+            logger.info(f"  {sample_name}: {read_count:,} reads (< 100k) -> 4 threads")
+        else:
+            assigned_threads = 8
+            logger.info(f"  {sample_name}: {read_count:,} reads (>= 100k) -> 8 threads")
+        
+        # Update task with assigned threads and convert sample_file to string
+        task_list = list(task)
+        task_list[1] = str(task_list[1])  # Convert Path to string for pickling
+        task_list[9] = assigned_threads  # Update threads
+        tasks_with_threads.append(tuple(task_list))
+    
+    # Calculate parallelization strategy based on thread requirements
+    total_threads = args.threads
+    num_tasks = len(tasks_with_threads)
+    
+    if total_threads == 1:
+        # Sequential processing: 1 thread per sample
+        logger.info(f"Processing {num_tasks} task(s) sequentially (1 thread specified)")
+        for task_args in tasks_with_threads:
+            task_list = list(task_args)
+            task_list[9] = 1  # Override to 1 thread
+            _process_sample_task(tuple(task_list))
+    else:
+        # Scale up threads per sample if more threads are available
+        # First, calculate minimum threads needed based on read counts
+        min_threads_needed = sum(t[9] for t in tasks_with_threads)
+        
+        if min_threads_needed <= total_threads:
+            # We have enough threads - scale up if possible
+            # Distribute excess threads proportionally among samples
+            excess_threads = total_threads - min_threads_needed
+            if excess_threads > 0 and num_tasks > 0:
+                # Distribute excess threads evenly among all samples
+                threads_per_sample_extra = excess_threads // num_tasks
+                logger.info(f"Scaling up threads: {excess_threads} excess threads available, adding {threads_per_sample_extra} threads per sample")
+                
+                for i, task in enumerate(tasks_with_threads):
+                    task_list = list(task)
+                    original_threads = task_list[9]
+                    task_list[9] = original_threads + threads_per_sample_extra
+                    tasks_with_threads[i] = tuple(task_list)
+                    logger.info(f"  {task[0]}: {original_threads} -> {task_list[9]} threads")
+        
+        # Dynamic scheduling: submit tasks as threads become available
+        # Sort by thread requirement (smaller first for better packing)
+        tasks_sorted = sorted(tasks_with_threads, key=lambda x: x[9])
+        
+        logger.info(f"Processing {num_tasks} task(s) with {total_threads} total threads (dynamic scheduling)")
+        for task in tasks_sorted:
+            logger.info(f"  - {task[0]}: {task[9]} threads")
+        
+        # Use ProcessPoolExecutor with dynamic task submission
+        # As tasks complete, their threads are freed and next tasks can start immediately
+        with ProcessPoolExecutor(max_workers=num_tasks) as executor:
+            # Track running tasks and available threads
+            running_futures = {}  # future -> (task, threads_used)
+            pending_tasks = list(tasks_sorted)
+            completed_count = 0
+            
+            # Submit initial batch of tasks that fit
+            available_threads = total_threads
+            for task in pending_tasks[:]:
+                required_threads = task[9]
+                if required_threads <= available_threads:
+                    future = executor.submit(_process_sample_task, task)
+                    running_futures[future] = (task, required_threads)
+                    pending_tasks.remove(task)
+                    available_threads -= required_threads
+                    logger.info(f"Started: {task[0]} ({required_threads} threads)")
+            
+            # Process completed tasks and submit new ones as threads become available
+            for completed_future in as_completed(running_futures.keys()):
+                # Get completed task info
+                task, threads_used = running_futures.pop(completed_future)
+                completed_count += 1
+                
+                try:
+                    sample_name, db_name = completed_future.result()
+                    logger.info(f"Completed ({completed_count}/{num_tasks}): {sample_name} ({db_name}) - {threads_used} threads freed")
+                except Exception as e:
+                    logger.error(f"Task {task[0]} ({task[5]}) failed: {e}")
+                    raise
+                
+                # Threads are now available - submit next pending task if any
+                if pending_tasks:
+                    available_threads = total_threads - sum(threads for _, threads in running_futures.values())
+                    
+                    # Try to submit pending tasks that fit
+                    for task in pending_tasks[:]:
+                        required_threads = task[9]
+                        if required_threads <= available_threads:
+                            future = executor.submit(_process_sample_task, task)
+                            running_futures[future] = (task, required_threads)
+                            pending_tasks.remove(task)
+                            available_threads -= required_threads
+                            logger.info(f"Started: {task[0]} ({required_threads} threads) - threads freed from completed task")
+            
+            # Process any remaining pending tasks (shouldn't happen, but handle it)
+            if pending_tasks:
+                logger.warning(f"Processing {len(pending_tasks)} remaining task(s) sequentially")
+                for task in pending_tasks:
+                    task_list = list(task)
+                    task_list[9] = min(total_threads, task_list[9])
+                    _process_sample_task(tuple(task_list))
     
     logger.info("\n" + "="*60)
     logger.info("All samples processed successfully!")
