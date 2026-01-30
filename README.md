@@ -1,6 +1,6 @@
 # Virasign
 
-Virasign (Viral Read **ASSIGN**ment) is a viral taxonomic classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or a custom accesion number) and performs taxonomic classification to identify viral species. Virasign generates comprehensive interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data (e.g., IGV). Virasign includes options to blind yourself from certain incidental findings (such as HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) when wanted, ensuring these findings do not appear in any output files, in line with consent guidelines and ethical research practices.
+Virasign (**Viral** Read **ASSIGN**ment) is a viral taxonomic classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or a custom accesion number) and performs taxonomic classification to identify viral species. Virasign generates comprehensive interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data (e.g., IGV). Virasign includes options to blind yourself from certain incidental findings (such as HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) when wanted, ensuring these findings do not appear in any output files, in line with consent guidelines and ethical research practices.
 
 ## Installation
 
@@ -47,7 +47,7 @@ virasign -i input_dir -o output_dir -t threads [options]
 - `-d, --database`: Database name (`RefSeq`, `RVDB` (default), or accession number)
 - `--rvdb-version`: RVDB database version to download (e.g., `30.0`, `31.0`, `29.0`). Default: `31.0`. Only applies when using RVDB database. See [available versions](https://rvdb.dbi.udel.edu/previous-release) for the complete list.
 - `-a, --accession`: NCBI accession number(s) to download and merge with database
-- `-b, --blind`: Blind specific viral species from analysis (not reported in any output files). Useful for blinding yourself from common incidental findings that require mandatory reporting (e.g., Hepatitis viruses, HIV, HTLV, EBV, CMV, HPV). Can specify abbreviations or full species names. Multiple species can be specified comma-separated (e.g., `-b HEP,HIV,HTLV` or `-b HEP,HIV,HTLV,EBV,CMV,HPV`). Use `--blinding` to see all available abbreviations. Blinded species will not appear in any intermediate or final output files, ensuring complete blinding.
+- `-b, --blind`: Blind specific viral species from analysis (not reported in any output files). Useful for blinding yourself from common incidental findings that require mandatory reporting (e.g., Hepatitis viruses, HIV, HTLV, EBV, CMV, HPV). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full official viral species names (e.g., `'Orthohepadnavirus hominoidei'`, `'Human immunodeficiency virus'`). Multiple species can be specified comma-separated (e.g., `-b HEP,HIV,HTLV` or `-b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'`). You can mix abbreviations and full species names in the same command. Use `--blinding` to see all available abbreviations. Blinded species will not appear in any intermediate or final output files, ensuring complete blinding.
 
 - `--blinding`: List all available blinding abbreviations and exit. Useful for quick reference of which viruses can be blinded using abbreviations.
 
@@ -67,11 +67,16 @@ The following abbreviations are available for blinding common incidental finding
 # List all available abbreviations
 virasign --blinding
 
-# Blind Hepatitis, HIV, and HTLV
+# Using abbreviations:
 virasign -i input_dir -b HEP,HIV,HTLV
-
-# Blind all common incidental findings
 virasign -i input_dir -b HEP,HIV,HTLV,EBV,CMV,HPV
+
+# Using full official viral species names:
+virasign -i input_dir -b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'
+virasign -i input_dir -b 'Primate T-lymphotropic virus'
+
+# You can mix abbreviations and full species names:
+virasign -i input_dir -b 'HEP,Human immunodeficiency virus,HTLV'
 ```
 - `--min_identity`: Minimum average identity percentage
 - `--min_mapped_reads`: Minimum number of mapped reads (default: `100`)

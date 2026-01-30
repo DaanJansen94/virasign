@@ -52,7 +52,6 @@ def expand_blind_abbreviations(blind_list: list) -> tuple:
     # when found as incidental findings in viral metagenomics
     abbreviation_map = {
         'HEP': 'Orthohepadnavirus hominoidei',
-        'HBV': 'Orthohepadnavirus hominoidei',
         'HIV': 'Human immunodeficiency virus',
         'HTLV': 'Primate T-lymphotropic virus',
         'EBV': 'Human gammaherpesvirus 4',
@@ -127,7 +126,6 @@ def list_blinding_abbreviations():
     """
     abbreviation_map = {
         'HEP': 'Orthohepadnavirus hominoidei',
-        'HBV': 'Orthohepadnavirus hominoidei',
         'HIV': 'Human immunodeficiency virus',
         'HTLV': 'Primate T-lymphotropic virus',
         'EBV': 'Human gammaherpesvirus 4',
@@ -137,7 +135,6 @@ def list_blinding_abbreviations():
     
     descriptions = {
         'HEP': 'All Hepatitis viruses (A, B, C, D, E, etc.)',
-        'HBV': 'Hepatitis B virus (same as HEP)',
         'HIV': 'Human immunodeficiency virus (HIV-1, HIV-2)',
         'HTLV': 'Human T-lymphotropic virus (HTLV-1, HTLV-2)',
         'EBV': 'Epstein-Barr virus (Human herpesvirus 4)',
@@ -156,9 +153,16 @@ def list_blinding_abbreviations():
         lines.append("")
     
     lines.append("Usage examples:")
+    lines.append("  # Using abbreviations:")
     lines.append("  virasign -i input_dir -b HEP,HIV,HTLV")
     lines.append("  virasign -i input_dir -b EBV,CMV,HPV")
     lines.append("  virasign -i input_dir -b HEP,HIV,HTLV,EBV,CMV,HPV")
+    lines.append("")
+    lines.append("  # Using full official viral species names:")
+    lines.append("  virasign -i input_dir -b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'")
+    lines.append("  virasign -i input_dir -b 'Primate T-lymphotropic virus'")
+    lines.append("")
+    lines.append("Note: You can mix abbreviations and full species names in the same command.")
     
     return "\n".join(lines)
 
@@ -6635,7 +6639,7 @@ Examples:
         type=str,
         default=None,
         dest="blind",
-        help="Blind specific viral species from analysis (not reported in any output files). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names. Multiple species can be specified comma-separated (e.g., -b HEP,HIV,HTLV). Use --blinding to see all available abbreviations."
+        help="Blind specific viral species from analysis (not reported in any output files). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full official viral species names (e.g., 'Orthohepadnavirus hominoidei', 'Human immunodeficiency virus'). Multiple species can be specified comma-separated (e.g., -b HEP,HIV,HTLV or -b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'). Use --blinding to see all available abbreviations."
     )
     
     parser.add_argument(
