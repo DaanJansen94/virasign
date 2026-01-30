@@ -35,6 +35,212 @@ def setup_logging(output_dir):
 
 logger = logging.getLogger(__name__)
 
+def expand_blind_abbreviations(blind_list: list) -> tuple:
+    """
+    Expand abbreviations to full viral species names and return both species names and organism name variations.
+    
+    Args:
+        blind_list: List of abbreviations or full species names
+        
+    Returns:
+        Tuple of (expanded_species_list, organism_variations_dict)
+        - expanded_species_list: List of full species names (abbreviations expanded)
+        - organism_variations_dict: Dict mapping species to list of organism name variations to match
+    """
+    # Mapping of abbreviations to full viral species names
+    # These are chronic viruses that require mandatory reporting/patient communication
+    # when found as incidental findings in viral metagenomics
+    abbreviation_map = {
+        'HEP': 'Orthohepadnavirus hominoidei',
+        'HBV': 'Orthohepadnavirus hominoidei',
+        'HIV': 'Human immunodeficiency virus',
+        'HTLV': 'Primate T-lymphotropic virus',
+        'EBV': 'Human gammaherpesvirus 4',
+        'CMV': 'Human betaherpesvirus 5',
+        'HPV': 'Alphapapillomavirus',
+    }
+    
+    # Mapping of species to organism name variations (for matching organism field)
+    # HEP matches ALL hepatitis viruses (A, B, C, D, E, etc.)
+    # HIV matches all HIV variants
+    # HTLV matches all HTLV variants (HTLV-1, HTLV-2, etc.)
+    # EBV matches Epstein-Barr virus
+    # CMV matches Cytomegalovirus
+    # HPV matches all Human papillomavirus types
+    organism_variations = {
+        'Orthohepadnavirus hominoidei': [
+            'hepatitis',  # Matches any hepatitis (A, B, C, D, E, etc.)
+            'hepatitis a', 'hepatitis b', 'hepatitis c', 'hepatitis d', 'hepatitis e',
+            'hepatitis a virus', 'hepatitis b virus', 'hepatitis c virus', 'hepatitis d virus', 'hepatitis e virus',
+            'hav', 'hbv', 'hcv', 'hdv', 'hev',
+            'hep a', 'hep b', 'hep c', 'hep d', 'hep e'
+        ],
+        'Human immunodeficiency virus': [
+            'human immunodeficiency virus', 'hiv', 'aids virus',
+            'hiv-1', 'hiv-2', 'hiv 1', 'hiv 2',
+            'human immunodeficiency virus 1', 'human immunodeficiency virus 2'
+        ],
+        'Primate T-lymphotropic virus': [
+            'human t-lymphotropic virus', 'htlv', 'human t cell lymphotropic virus',
+            'htlv-1', 'htlv-2', 'htlv 1', 'htlv 2',
+            'human t-lymphotropic virus 1', 'human t-lymphotropic virus 2',
+            'human t cell lymphotropic virus 1', 'human t cell lymphotropic virus 2'
+        ],
+        'Human gammaherpesvirus 4': [
+            'epstein-barr virus', 'ebv', 'human herpesvirus 4', 'hhv-4', 'hhv4',
+            'epstein barr virus', 'glandular fever virus', 'infectious mononucleosis virus'
+        ],
+        'Human betaherpesvirus 5': [
+            'cytomegalovirus', 'cmv', 'human herpesvirus 5', 'hhv-5', 'hhv5',
+            'human cytomegalovirus', 'hcmv'
+        ],
+        'Alphapapillomavirus': [
+            'human papillomavirus', 'hpv', 'papillomavirus',
+            'hpv-1', 'hpv-2', 'hpv-6', 'hpv-11', 'hpv-16', 'hpv-18', 'hpv-31', 'hpv-33', 'hpv-35', 'hpv-39', 'hpv-45', 'hpv-51', 'hpv-52', 'hpv-56', 'hpv-58', 'hpv-59', 'hpv-68',
+            'human papilloma virus', 'papilloma virus'
+        ],
+    }
+    
+    expanded = []
+    organism_variations_dict = {}
+    
+    for item in blind_list:
+        item_upper = item.strip().upper()
+        if item_upper in abbreviation_map:
+            species = abbreviation_map[item_upper]
+            expanded.append(species)
+            if species in organism_variations:
+                organism_variations_dict[species] = organism_variations[species]
+            logger.info(f"Expanded blind abbreviation '{item}' -> '{species}'")
+        else:
+            # Use as-is (assumed to be full species name)
+            species = item.strip()
+            expanded.append(species)
+            if species in organism_variations:
+                organism_variations_dict[species] = organism_variations[species]
+    
+    return expanded, organism_variations_dict
+
+def list_blinding_abbreviations():
+    """
+    Return a formatted string listing all available blinding abbreviations.
+    """
+    abbreviation_map = {
+        'HEP': 'Orthohepadnavirus hominoidei',
+        'HBV': 'Orthohepadnavirus hominoidei',
+        'HIV': 'Human immunodeficiency virus',
+        'HTLV': 'Primate T-lymphotropic virus',
+        'EBV': 'Human gammaherpesvirus 4',
+        'CMV': 'Human betaherpesvirus 5',
+        'HPV': 'Alphapapillomavirus',
+    }
+    
+    descriptions = {
+        'HEP': 'All Hepatitis viruses (A, B, C, D, E, etc.)',
+        'HBV': 'Hepatitis B virus (same as HEP)',
+        'HIV': 'Human immunodeficiency virus (HIV-1, HIV-2)',
+        'HTLV': 'Human T-lymphotropic virus (HTLV-1, HTLV-2)',
+        'EBV': 'Epstein-Barr virus (Human herpesvirus 4)',
+        'CMV': 'Cytomegalovirus (Human herpesvirus 5)',
+        'HPV': 'Human papillomavirus (all types)',
+    }
+    
+    lines = []
+    lines.append("Available blinding abbreviations:")
+    lines.append("")
+    for abbrev in sorted(abbreviation_map.keys()):
+        species = abbreviation_map[abbrev]
+        desc = descriptions.get(abbrev, species)
+        lines.append(f"  {abbrev:6} -> {desc}")
+        lines.append(f"           ({species})")
+        lines.append("")
+    
+    lines.append("Usage examples:")
+    lines.append("  virasign -i input_dir -b HEP,HIV,HTLV")
+    lines.append("  virasign -i input_dir -b EBV,CMV,HPV")
+    lines.append("  virasign -i input_dir -b HEP,HIV,HTLV,EBV,CMV,HPV")
+    
+    return "\n".join(lines)
+
+def should_blind_stat(stat: dict, blinded_species: list, organism_map: dict = None, organism_variations: dict = None) -> bool:
+    """
+    Check if a stat entry should be blinded based on blinded_species list.
+    
+    Args:
+        stat: Statistics dictionary (may have 'organism', 'viral_species', 'accession', 'description')
+        blinded_species: List of viral species names to blind
+        organism_map: Optional mapping of accession -> organism (for lookup if organism not in stat)
+        organism_variations: Optional dict mapping species to list of organism name variations
+        
+    Returns:
+        True if stat should be blinded, False otherwise
+    """
+    if not blinded_species:
+        return False
+    
+    # Get organism from stat or lookup from organism_map
+    organism = stat.get("organism", "").strip()
+    if not organism and organism_map:
+        accession = stat.get("accession", "")
+        if accession in organism_map:
+            organism = organism_map[accession].strip()
+    
+    # Get viral_species from stat
+    viral_species = stat.get("viral_species", "").strip()
+    
+    # Get description for additional matching
+    description = stat.get("description", "").lower()
+    
+    # Check if organism or viral_species matches any blinded species
+    # Use case-insensitive matching (exact match or contains as whole word)
+    for blinded in blinded_species:
+        blinded_lower = blinded.lower().strip()
+        organism_lower = organism.lower() if organism else ""
+        viral_species_lower = viral_species.lower() if viral_species else ""
+        
+        # Check viral_species match
+        if viral_species_lower:
+            if viral_species_lower == blinded_lower or blinded_lower in viral_species_lower:
+                return True
+        
+        # Check organism match (exact or contains)
+        if organism_lower:
+            if organism_lower == blinded_lower or blinded_lower in organism_lower:
+                return True
+            
+            # Check organism variations (e.g., "hepatitis" for HEP to match all hepatitis viruses)
+            if organism_variations and blinded in organism_variations:
+                for variation in organism_variations[blinded]:
+                    variation_lower = variation.lower()
+                    # For "hepatitis" (general term), check if it appears as a word (not just substring)
+                    # This prevents false matches like "non-hepatitis" but matches "hepatitis A", "hepatitis B", etc.
+                    if variation_lower == 'hepatitis':
+                        # Match if "hepatitis" appears as a word (followed by space, dash, or end of string)
+                        import re
+                        if re.search(r'\bhepatitis\b', organism_lower):
+                            return True
+                    else:
+                        # For specific variations, use substring matching
+                        if variation_lower in organism_lower:
+                            return True
+        
+        # Check description for common names (e.g., "hepatitis" in description)
+        if description:
+            if organism_variations and blinded in organism_variations:
+                for variation in organism_variations[blinded]:
+                    variation_lower = variation.lower()
+                    # For "hepatitis" (general term), check if it appears as a word
+                    if variation_lower == 'hepatitis':
+                        import re
+                        if re.search(r'\bhepatitis\b', description):
+                            return True
+                    else:
+                        # For specific variations, use substring matching
+                        if variation_lower in description:
+                            return True
+    
+    return False
+
 def extract_accession_from_header(header: str) -> str:
     """
     Extract accession number from FASTA header.
@@ -1597,11 +1803,11 @@ def fetch_organism_from_ncbi(accession: str, cache_path: Path = None, database_p
                 # JSON database (legacy)
                 with open(database_path, 'r') as f:
                     database = json.load(f)
-                # Try both versioned and unversioned
-                if accession in database:
-                    return database[accession]
-                if accession_base in database:
-                    return database[accession_base]
+                    # Try both versioned and unversioned
+                    if accession in database:
+                        return database[accession]
+                    if accession_base in database:
+                        return database[accession_base]
         except Exception as e:
             logger.debug(f"Could not read comprehensive database: {e}")
     
@@ -3364,7 +3570,7 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
         initial_sam.unlink()
         logger.info(f"Removed initial mapping SAM file: {initial_sam.name}")
 
-def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, output_dir: Path, sample_name: str, minimap_p: float = None, min_identity: float = 80.0, min_mapped_reads: int = 100, coverage_depth_threshold: float = 1.0, coverage_breadth_threshold: float = 0.1, threads: int = 1):
+def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, output_dir: Path, sample_name: str, minimap_p: float = None, min_identity: float = 80.0, min_mapped_reads: int = 100, coverage_depth_threshold: float = 1.0, coverage_breadth_threshold: float = 0.1, threads: int = 1, blinded_species=None, organism_variations=None):
     """
     Find best reference using minimap2 with indexed database (single-pass mapping).
     Returns best_ref, best_stats, all_stats, filtered_stats, curated_stats.
@@ -3631,6 +3837,16 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         covered_pos_count = len(agg["covered_positions"]) if isinstance(agg["covered_positions"], set) else agg.get("covered_positions", 0)
         agg_coverage_breadth = covered_pos_count / ref_len if ref_len > 0 else 0.0
         
+        # Get organism from first reference in aggregation (they should all have same organism)
+        organism = ""
+        if agg.get("references") and len(agg["references"]) > 0:
+            first_ref = agg["references"][0]
+            accession = agg.get("accession", "")
+            if accession and accession in organism_map:
+                organism = organism_map[accession]
+            elif first_ref.get("accession") and first_ref.get("accession") in organism_map:
+                organism = organism_map[first_ref.get("accession")]
+        
         aggregated_all_stats.append({
             "accession": agg["accession"],
             "description": agg["description"],
@@ -3638,11 +3854,20 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             "coverage_depth": agg_coverage_depth,
             "coverage_breadth": agg_coverage_breadth,
             "avg_identity": agg_identity,
+            "organism": organism,  # Add organism for exclusion filtering
         })
     
     logger.info(f"Aggregated {len(all_stats)} references -> {len(aggregated_all_stats)} organisms/species")
     # Replace all_stats with aggregated version
     all_stats = aggregated_all_stats
+    
+    # Filter blinded species if specified
+    if blinded_species:
+        initial_count = len(all_stats)
+        all_stats = [s for s in all_stats if not should_blind_stat(s, blinded_species, organism_map, organism_variations)]
+        blinded_count = initial_count - len(all_stats)
+        if blinded_count > 0:
+            logger.info(f"Blinded {blinded_count} species from analysis (filtered by --blind)")
     
     # Apply both filters: identity >= min_identity AND mapped_reads >= min_mapped_reads
     filtered_all_stats = [s for s in all_stats if s["avg_identity"] >= min_identity and s["mapped_reads"] >= min_mapped_reads]
@@ -3762,11 +3987,18 @@ def extract_fasta_record(database_fasta: Path, target_header: str, out_fasta: Pa
                         out.write(line)
     return found
 
-def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1):
+def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, blinded_species=None, organism_variations=None):
     """
     Process a single sample: map ALL reads to database and find best reference.
     Simple workflow: no rarefaction, no unmapped extraction, no minority detection.
+    
+    Args:
+        blinded_species: List of viral species names to exclude from analysis (optional)
     """
+    if blinded_species is None:
+        blinded_species = []
+    if organism_variations is None:
+        organism_variations = {}
     logger.info(f"\n{'='*60}")
     logger.info(f"Processing sample: {sample_name}")
     logger.info(f"{'='*60}")
@@ -3789,7 +4021,9 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         min_mapped_reads=min_mapped_reads,
         coverage_depth_threshold=coverage_depth_threshold,
         coverage_breadth_threshold=coverage_breadth_threshold,
-        threads=threads
+        threads=threads,
+        blinded_species=blinded_species,
+        organism_variations=organism_variations
     )
     
     if not best_ref:
@@ -3798,7 +4032,9 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         save_results(
             sample_name, None, None, all_stats, filtered_stats, curated_stats,
             sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads,
-            coverage_depth_threshold, coverage_breadth_threshold, threads
+            coverage_depth_threshold, coverage_breadth_threshold, threads,
+            blinded_species=blinded_species,
+            organism_variations=organism_variations
         )
         return None
     
@@ -3823,7 +4059,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     
     # Save results with curated JSON (re-mapping will happen inside save_results after deduplication)
     # Use sample_dir (which is already database-specific if multiple databases)
-    save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads)
+    save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads, blinded_species=blinded_species, organism_variations=organism_variations)
     
     logger.info(f"\n{'='*60}")
     logger.info("Sample processing complete!")
@@ -3837,7 +4073,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     
     return best_ref
 
-def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1):
+def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, blinded_species=None, organism_variations=None):
     """Save mapping statistics and best reference to JSON file and save best reference sequence as FASTA."""
     # output_dir is already the sample directory (or database-specific subdirectory if multiple databases)
     sample_dir = output_dir
@@ -3919,6 +4155,14 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         nodes_file=nodes_file,
         names_file=names_file
     )
+    
+    # Filter blinded species after enrichment (now we have organism and viral_species)
+    if blinded_species:
+        initial_count = len(curated_stats_with_organism)
+        curated_stats_with_organism = [s for s in curated_stats_with_organism if not should_blind_stat(s, blinded_species, None, organism_variations)]
+        blinded_count = initial_count - len(curated_stats_with_organism)
+        if blinded_count > 0:
+            logger.info(f"Blinded {blinded_count} species from curated results (filtered by --blind)")
     
     # Debug: Log Lassa virus stats before deduplication
     lassa_before = [s for s in curated_stats_with_organism if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower()]
@@ -4420,6 +4664,79 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             curated_stats_by_db[db_source] = []
         curated_stats_by_db[db_source].append(stat)
     
+    # Filter blinded species from all stats before saving to JSON files
+    # This ensures blinded species don't appear in any intermediate output files
+    if blinded_species:
+        # Filter all_stats_dedup
+        initial_all = len(all_stats_dedup)
+        all_stats_dedup = [s for s in all_stats_dedup if not should_blind_stat(s, blinded_species, None, organism_variations)]
+        if initial_all > len(all_stats_dedup):
+            logger.info(f"Blinded {initial_all - len(all_stats_dedup)} species from all_stats before saving to JSON")
+        
+        # Filter filtered_stats_dedup
+        initial_filtered = len(filtered_stats_dedup)
+        filtered_stats_dedup = [s for s in filtered_stats_dedup if not should_blind_stat(s, blinded_species, None, organism_variations)]
+        if initial_filtered > len(filtered_stats_dedup):
+            logger.info(f"Blinded {initial_filtered - len(filtered_stats_dedup)} species from filtered_stats before saving to JSON")
+        
+        # Filter curated_stats_dedup_original
+        initial_curated = len(curated_stats_dedup_original)
+        curated_stats_dedup_original = [s for s in curated_stats_dedup_original if not should_blind_stat(s, blinded_species, None, organism_variations)]
+        if initial_curated > len(curated_stats_dedup_original):
+            logger.info(f"Blinded {initial_curated - len(curated_stats_dedup_original)} species from curated_stats before saving to JSON")
+        
+        # Filter stats grouped by database
+        for db_source in list(all_stats_by_db.keys()):
+            initial = len(all_stats_by_db[db_source])
+            all_stats_by_db[db_source] = [s for s in all_stats_by_db[db_source] if not should_blind_stat(s, blinded_species, None, organism_variations)]
+            if initial > len(all_stats_by_db[db_source]):
+                logger.info(f"Blinded {initial - len(all_stats_by_db[db_source])} species from {db_source} all_stats")
+        
+        for db_source in list(filtered_stats_by_db.keys()):
+            initial = len(filtered_stats_by_db[db_source])
+            filtered_stats_by_db[db_source] = [s for s in filtered_stats_by_db[db_source] if not should_blind_stat(s, blinded_species, None, organism_variations)]
+            if initial > len(filtered_stats_by_db[db_source]):
+                logger.info(f"Blinded {initial - len(filtered_stats_by_db[db_source])} species from {db_source} filtered_stats")
+        
+        for db_source in list(curated_stats_by_db.keys()):
+            initial = len(curated_stats_by_db[db_source])
+            curated_stats_by_db[db_source] = [s for s in curated_stats_by_db[db_source] if not should_blind_stat(s, blinded_species, None, organism_variations)]
+            if initial > len(curated_stats_by_db[db_source]):
+                logger.info(f"Blinded {initial - len(curated_stats_by_db[db_source])} species from {db_source} curated_stats")
+        
+        # Check if best_reference is blinded and set to None if so
+        # Find the stat entry for best_ref in curated_stats_dedup_original (which has organism/viral_species after enrichment)
+        if best_ref:
+            best_accession = best_ref.get("accession", "")
+            best_stat_entry = None
+            # Look for the stat entry in curated_stats_dedup_original (which has organism/viral_species)
+            for stat in curated_stats_dedup_original:
+                if stat.get("accession", "") == best_accession:
+                    best_stat_entry = stat
+                    break
+            
+            if best_stat_entry and should_blind_stat(best_stat_entry, blinded_species):
+                logger.warning(f"Best reference {best_accession} is blinded - setting to None")
+                best_ref = None
+                best_stats = None
+        
+        # Update the results dictionary with filtered stats (to ensure blinded species don't appear in unfiltered JSON)
+        results["all_stats"] = all_stats_dedup
+        results["filtered_stats"] = filtered_stats_dedup
+        results["curated_reference_stats"] = curated_stats_dedup_original
+        results["best_reference"] = {
+            "accession": best_ref.get("accession", "") if best_ref else "",
+            "description": best_ref.get("description", "") if best_ref else "",
+            "database_source": best_database_source,
+        }
+        results["best_stats"] = {
+            "mapped_reads": best_stats.get("mapped_reads", 0) if best_stats else 0,
+            "avg_identity": best_stats.get("avg_identity", 0.0) if best_stats else 0.0,
+            "coverage_depth": best_stats.get("coverage_depth", 0.0) if best_stats else 0.0,
+            "coverage_breadth": best_stats.get("coverage_breadth", 0.0) if best_stats else 0.0,
+            "note": "These stats are from the initial mapping to the full database (reads may be split across multiple references). For accurate re-mapped counts, see curated_descriptions.json"
+        }
+    
     # Check if we're already in a database-specific folder (sample/RVDB/ or sample/RefSeq/)
     # If so, don't create subdirectories - just save files directly
     sample_dir_str = str(sample_dir)
@@ -4435,22 +4752,24 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             db_dir = sample_dir / db_source
             db_dir.mkdir(parents=True, exist_ok=True)
             
-            # Find best reference for this database
+            # Find best reference for this database (after filtering blinded species)
             db_best_ref = None
             db_best_stats = None
             if curated_stats_by_db.get(db_source):
                 db_best = max(curated_stats_by_db[db_source], key=lambda x: x.get("mapped_reads", 0))
-                db_best_ref = {
-                    "accession": db_best.get("accession", ""),
-                    "description": db_best.get("description", ""),
-                    "database_source": db_source
-                }
-                db_best_stats = {
-                    "mapped_reads": db_best.get("mapped_reads", 0),
-                    "avg_identity": db_best.get("avg_identity", 0.0),
-                    "coverage_depth": db_best.get("coverage_depth", 0.0),
-                    "coverage_breadth": db_best.get("coverage_breadth", 0.0),
-                }
+                # Check if best reference is blinded
+                if not should_blind_stat(db_best, blinded_species, None, organism_variations):
+                    db_best_ref = {
+                        "accession": db_best.get("accession", ""),
+                        "description": db_best.get("description", ""),
+                        "database_source": db_source
+                    }
+                    db_best_stats = {
+                        "mapped_reads": db_best.get("mapped_reads", 0),
+                        "avg_identity": db_best.get("avg_identity", 0.0),
+                        "coverage_depth": db_best.get("coverage_depth", 0.0),
+                        "coverage_breadth": db_best.get("coverage_breadth", 0.0),
+                    }
             
             db_results = {
                 "sample_name": sample_name,
@@ -6222,7 +6541,7 @@ Examples:
     parser.add_argument(
         "-i", "--input",
         type=str,
-        required=True,
+        required=False,  # Will be validated after checking for --blinding
         dest="input",
         help="Input directory containing FASTQ files"
     )
@@ -6311,10 +6630,35 @@ Examples:
         help="RVDB database version to download (e.g., '30.0', '31.0', '29.0'). Default: 31.0. Only applies when using RVDB database. Examples: '31.0' downloads C-RVDBv31.0.fasta.gz"
     )
     
+    parser.add_argument(
+        "-b", "--blind",
+        type=str,
+        default=None,
+        dest="blind",
+        help="Blind specific viral species from analysis (not reported in any output files). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names. Multiple species can be specified comma-separated (e.g., -b HEP,HIV,HTLV). Use --blinding to see all available abbreviations."
+    )
+    
+    parser.add_argument(
+        "--blinding",
+        action="store_true",
+        dest="list_blinding",
+        help="List all available blinding abbreviations and exit."
+    )
+    
     if args is None:
         args = parser.parse_args()
     else:
         args = parser.parse_args(args)
+    
+    # Handle --blinding flag (list abbreviations and exit)
+    # Check this early, before validating required arguments
+    if hasattr(args, 'list_blinding') and args.list_blinding:
+        print(list_blinding_abbreviations())
+        sys.exit(0)
+    
+    # Validate that input is provided (unless --blinding was used)
+    if not args.input:
+        parser.error("the following arguments are required: -i/--input")
     
     # Set default for enable_clustering (defaults to False if --enable-clustering not specified)
     if not hasattr(args, 'enable_clustering'):
@@ -6447,6 +6791,18 @@ Examples:
     logger.info(f"Output directory: {output_dir} (specified: {args.output if args.output else 'default: Virasign_output'})")
     logger.info(f"Min mapped reads: {args.min_mapped_reads}")
     logger.info(f"Coverage depth threshold: {args.coverage_depth_threshold}")
+    
+    # Process blinded species
+    blinded_species = []
+    organism_variations = {}
+    if args.blind:
+        blind_list = [item.strip() for item in args.blind.split(',') if item.strip()]
+        blinded_species, organism_variations = expand_blind_abbreviations(blind_list)
+        logger.info(f"Blinding {len(blinded_species)} viral species from analysis (will not appear in any output files):")
+        for species in blinded_species:
+            logger.info(f"  - {species}")
+    else:
+        logger.info("No species blinded (all viral species will be analyzed)")
     logger.info(f"Coverage breadth threshold: {args.coverage_breadth_threshold}")
     logger.info(f"Threads: {args.threads}")
     if "rvdb" in args.database.lower():
@@ -6536,7 +6892,9 @@ Examples:
             min_mapped_reads=args.min_mapped_reads,
             coverage_depth_threshold=args.coverage_depth_threshold,
                 coverage_breadth_threshold=args.coverage_breadth_threshold,
-                threads=args.threads
+                threads=args.threads,
+                blinded_species=blinded_species,
+                organism_variations=organism_variations
         )
     
     logger.info("\n" + "="*60)
