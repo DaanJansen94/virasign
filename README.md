@@ -10,6 +10,7 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 - **Clear output**: Results for each identified virus are easy to find and use (JSON summaries, per-reference FASTA/BAM/FASTQ), so you can move straight to consensus building or other preferred metagenomics pipeline steps.
 - **Visualization**: Interactive HTML reports with filterable tables, charts, and heatmaps give an immediate, interpretable overview of viral species, coverage, and identity without extra scripting.
 - **Blinding options**: You can blind specific viral species from all outputs (e.g. HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) so incidental findings do not appear in any files. Useful for consent guidelines and ethical research practice.
+- **High sensitivity and specificity**: Virasign’s two-step design (map to a large viral DB, deduplicate by species, then remap to a curated set) gives good sensitivity and specificity and accurate per-virus read counts and BAM/FASTQ. See [Design and how Virasign works](#design-and-how-virasign-works) below.
 
 ## Installation
 
@@ -164,3 +165,14 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## Support
 
 If you encounter any problems or have questions, please open an issue on GitHub.
+
+## Design and how Virasign works
+
+Virasign works in two steps: **(1)** map reads to a large viral DB (e.g. RVDB, RefSeq), **(2)** pick one best reference per viral species and remap all reads to that curated set.
+
+- **Best-reference selection**: References are deduplicated by viral species and one representative ref per species is chosen (by read count, identity, coverage), giving a small set of best refs instead of many near-duplicates.
+- **Why remap**: In one pass to the full DB, minimap2 reports one primary alignment per read, so the best ref “wins” and other species get no count. Remapping to the curated set gives correct counts per virus and meaningful BAM/FASTQ for consensus and downstream analysis, and increases specificity (fewer spurious hits).
+- **Why not secondary mapping**: Reporting multiple alignments per read in the first pass would create many false positives with a large DB and lower specificity. Virasign uses primary-only for the first pass, then deduplicates and remaps.
+- **Scale and flexibility**: Large viral DBs give sensitivity and completeness (e.g. catching more true viral hits, including low-abundance or divergent viruses). Custom databases and accessions are supported, and the tool is expandable to future reference sets.
+
+Also on [**Zenodo**](https://zenodo.org/records/18387009) and [**Docker**](https://hub.docker.com/repository/docker/daanjansen94/virasign/general).
