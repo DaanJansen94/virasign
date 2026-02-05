@@ -9,7 +9,7 @@ authors:
     orcid: https://orcid.org/0000-0003-1472-9938
 doi: "10.5281/zenodo.18387008"
 title: "Virasign: A viral taxonomic classification tool designed for nanopore sequencing data"
-version: v0.0.1
+version: v0.0.2
 url: github.com/DaanJansen94/virasign
 date-released: 2026-01-27
 abstract: "Virasign is a viral taxonomic classification tool designed for nanopore sequencing data."
