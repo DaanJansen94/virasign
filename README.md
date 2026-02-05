@@ -12,6 +12,8 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 - **Visualization**: Interactive HTML reports with filterable tables, charts, and heatmaps give an immediate, interpretable overview of viral species, coverage, and identity without extra scripting.
 - **Blinding options**: You can blind specific viral species from all outputs (e.g. HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) so incidental findings do not appear in any files. Useful for consent guidelines and ethical research practice.
 
+!! Note: The first run with Virasign will take a lot longer than subsequent runs, as it performs a one-time automatic download of the required database !! 
+
 ## Installation
 
 ### Prerequisites
@@ -77,7 +79,7 @@ virasign -i input_dir [options]
 virasign -i input_dir -o output_dir -t threads [options]
 ```
 
-**Note**: The first run with Virasign may take slightly longer than subsequent runs, as it performs a one-time automatic download of the required database. The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified. The output argument (`-o/--output`) is also optional - if not specified, results will be saved to `Virasign_output/` in the current directory.
+**Note**: The first run with Virasign will take a lot longer than subsequent runs, as it performs a one-time automatic download of the required database. The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified. The output argument (`-o/--output`) is also optional - if not specified, results will be saved to `Virasign_output/` in the current directory.
 
 ### Command-Line Options
 
