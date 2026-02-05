@@ -3,4 +3,9 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
+name = "virasign"
+version = "0.0.2"
+description = "Virasign: Viral Read ASSIGNment from nanopore sequencing"
+readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
+requires-python = ">=3.7,<3.14"
