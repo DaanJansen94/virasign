@@ -42,7 +42,7 @@ conda activate virasign
    ```bash
    conda create -n virasign python=3.9 -y
    conda activate virasign
-   conda install -c bioconda -c conda-forge minimap2=2.24 seqtk=1.3 curl=7.88 samtools=1.17 mmseqs2=15.6f452 -y
+   conda install -c bioconda -c conda-forge minimap2=2.24 seqtk=1.3 curl samtools mmseqs2=15.6f452 -y
    ```
 
 2. Install virasign:

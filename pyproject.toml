@@ -9,3 +9,6 @@ description = "Virasign: Viral Read ASSIGNment from nanopore sequencing"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.7,<3.14"
+
+[project.scripts]
+virasign = "virasign.virasign:main"
