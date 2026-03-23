@@ -9,7 +9,7 @@ import logging
 import shutil
 import json
 import multiprocessing
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import re
 import hashlib
 import time
@@ -42,6 +42,10 @@ def setup_logging(output_dir, verbose=True):
     return logging.getLogger(__name__)
 
 logger = logging.getLogger(__name__)
+
+# Process-local cache for expensive per-database metadata.
+# On Linux (fork), entries prepared in the parent are inherited by workers.
+_DATABASE_CONTEXT_CACHE = {}
 
 def expand_blind_abbreviations(blind_list: list) -> tuple:
     """
@@ -2722,38 +2726,75 @@ def build_ref_length_mapping(database_fasta: Path) -> dict:
     
     return ref_lengths
 
+
+def prepare_database_context(database_fasta: Path) -> dict:
+    """
+    Prepare expensive per-database metadata once and cache it.
+    Returns a dict with:
+      - header_map
+      - organism_map
+      - db_ref_lengths
+      - db_index
+    """
+    db_key = str(Path(database_fasta).resolve())
+    cached = _DATABASE_CONTEXT_CACHE.get(db_key)
+    if cached is not None:
+        return cached
+
+    logger.info(f"Preparing shared database context for: {database_fasta}")
+
+    logger.info("Building header mapping from database...")
+    header_map = build_header_mapping(Path(database_fasta))
+
+    logger.info("Building organism mapping from database...")
+    organism_map = build_organism_mapping(Path(database_fasta))
+
+    logger.info("Building reference length mapping from database...")
+    db_ref_lengths = build_ref_length_mapping(Path(database_fasta))
+
+    logger.info("Ensuring minimap2 index exists for database...")
+    db_index = ensure_minimap2_index(Path(database_fasta))
+
+    context = {
+        "header_map": header_map,
+        "organism_map": organism_map,
+        "db_ref_lengths": db_ref_lengths,
+        "db_index": db_index,
+    }
+    _DATABASE_CONTEXT_CACHE[db_key] = context
+    return context
+
 def count_reads(fastq_file: Path) -> int:
-    """Count number of reads in a FASTQ file (compressed or uncompressed)."""
-    count = 0
-    if str(fastq_file).endswith(".gz"):
-        import gzip
-        fh = gzip.open(fastq_file, "rt")
-    else:
-        fh = open(fastq_file, "r")
-    
-    with fh:
-        for line in fh:
-            if line.startswith("@"):
-                # Check if it's a read header (not quality score)
-                if len(line.split()) > 0:
-                    count += 1
-    
-    # FASTQ has 4 lines per read, but we count headers
-    # Actually, we should count every @ line that's a header
-    # Let me fix this
-    count = 0
-    if str(fastq_file).endswith(".gz"):
-        import gzip
-        fh = gzip.open(fastq_file, "rt")
-    else:
-        fh = open(fastq_file, "r")
-    
-    with fh:
-        for i, line in enumerate(fh):
-            if i % 4 == 0 and line.startswith("@"):
-                count += 1
-    
-    return count
+    """Count reads in FASTQ file (compressed or uncompressed)."""
+    fastq_file = Path(fastq_file)
+
+    # Fast path for plain FASTQ: use wc -l and divide by 4.
+    if not str(fastq_file).endswith(".gz"):
+        try:
+            result = subprocess.run(
+                ["wc", "-l", str(fastq_file)],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            total_lines = int(result.stdout.strip().split()[0])
+            return total_lines // 4
+        except Exception:
+            # Fallback to Python path if wc is unavailable or fails.
+            pass
+
+    # Gzipped path (and fallback): count newlines in binary chunks.
+    line_count = 0
+    with gzip.open(fastq_file, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            line_count += chunk.count(b"\n")
+    return line_count // 4
+
+
+def _count_reads_task(task_info):
+    """Worker-friendly wrapper for parallel read counting."""
+    sample_name, sample_file = task_info
+    return sample_name, sample_file, count_reads(sample_file)
 
 def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
     """
@@ -2825,7 +2866,8 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                         "mapped_reads": 0,
                         "aligned_bases": 0,
                         "matches": 0,
-                        "covered_positions": set(),  # Track covered positions for breadth calculation
+                        # Track intervals instead of per-base sets; this is much faster on large SAM files.
+                        "coverage_intervals": [],
                     }
                 
                 # Parse CIGAR
@@ -2856,18 +2898,34 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
                     # This ensures identity = matches/aligned_bases <= 100% (matches <= aligned_m)
                     stats_by_ref[sam_header]["aligned_bases"] += aligned_m
                     stats_by_ref[sam_header]["matches"] += matches
-                    # Track covered positions (for breadth calculation) - only for reads meeting threshold
-                    for i in range(pos, pos + ref_consumed):
-                        stats_by_ref[sam_header]["covered_positions"].add(i)
+                    # Track covered intervals (for breadth calculation) - only for reads meeting threshold
+                    if ref_consumed > 0:
+                        stats_by_ref[sam_header]["coverage_intervals"].append((pos, pos + ref_consumed))
                 # else: skip this individual read alignment (doesn't meet identity threshold)
                 # This read alignment is NOT counted in mapped_reads, matches, aligned_bases, covered_positions, etc.
                 # else: skip this individual read alignment (doesn't meet identity threshold)
                 # This read alignment is NOT counted in mapped_reads, matches, etc.
     
-    # Convert covered_positions set to count for each reference
+    # Convert coverage intervals to covered position count for each reference.
+    def merged_covered_length(intervals):
+        if not intervals:
+            return 0
+        intervals.sort()
+        total = 0
+        cur_start, cur_end = intervals[0]
+        for start, end in intervals[1:]:
+            if start <= cur_end:
+                if end > cur_end:
+                    cur_end = end
+            else:
+                total += cur_end - cur_start
+                cur_start, cur_end = start, end
+        total += cur_end - cur_start
+        return total
+
     for sam_header in stats_by_ref:
-        covered_set = stats_by_ref[sam_header]["covered_positions"]
-        stats_by_ref[sam_header]["covered_positions"] = len(covered_set)
+        intervals = stats_by_ref[sam_header].pop("coverage_intervals", [])
+        stats_by_ref[sam_header]["covered_positions"] = merged_covered_length(intervals)
     
     return stats_by_ref, ref_lengths, ref_headers
 
@@ -3596,21 +3654,12 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     sample_dir = output_dir
     sample_dir.mkdir(parents=True, exist_ok=True)
     
-    # Build header mapping for matching SAM headers to full descriptions
-    logger.info("Building header mapping from database...")
-    header_map = build_header_mapping(Path(database_fasta))
-    
-    # Build organism mapping from database FASTA (accession -> organism name)
-    logger.info("Building organism mapping from database...")
-    organism_map = build_organism_mapping(Path(database_fasta))
-    
-    # Build reference length mapping from database FASTA (for cases where SAM headers don't have @SQ LN)
-    logger.info("Building reference length mapping from database...")
-    db_ref_lengths = build_ref_length_mapping(Path(database_fasta))
-    
-    # Ensure minimap2 index exists
-    logger.info("Ensuring minimap2 index exists for database...")
-    db_index = ensure_minimap2_index(Path(database_fasta))
+    # Use cached shared context to avoid repeated full-database parsing in workers.
+    db_context = prepare_database_context(Path(database_fasta))
+    header_map = db_context["header_map"]
+    organism_map = db_context["organism_map"]
+    db_ref_lengths = db_context["db_ref_lengths"]
+    db_index = db_context["db_index"]
     
     aln_sam = sample_dir / f"{sample_name}.sam"
 
@@ -3669,10 +3718,6 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     # Calculate identity for all references and filter by minimum identity threshold
     all_stats = []
     
-    # Debug: Track AY628205.1 specifically
-    debug_accession = "AY628205.1"
-    debug_found = False
-    
     for sam_header, s in stats_by_ref.items():
         aligned_i = s["aligned_bases"]
         matches_i = s["matches"]
@@ -3681,16 +3726,6 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         acc = extract_accession_from_header(sam_header)
         # Look up full header from FASTA using accession (SAM header might be truncated)
         desc = header_map.get(acc, ref_headers.get(sam_header, sam_header))
-        
-        # Debug: Log AY628205.1 if found
-        if acc == debug_accession or debug_accession in sam_header:
-            debug_found = True
-            ref_len = ref_lengths.get(sam_header) or db_ref_lengths.get(acc, 0)
-            coverage_depth = aligned_i / ref_len if ref_len > 0 else 0.0
-            covered_pos = s.get("covered_positions", 0)
-            coverage_breadth = covered_pos / ref_len if ref_len > 0 else 0.0
-            logger.info(f"DEBUG: Found {debug_accession} in SAM parsing: {s['mapped_reads']} reads, "
-                       f"identity={identity:.2f}%, depth={coverage_depth:.2f}, breadth={coverage_breadth:.4f}")
         
         # Calculate coverage depth (average depth) and breadth (horizontal coverage)
         ref_len = ref_lengths.get(sam_header)
@@ -3721,9 +3756,6 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             "covered_positions": covered_pos,  # Store for aggregation
         }
         all_stats.append(stat_entry)
-        
-    if not debug_found:
-        logger.debug(f"DEBUG: {debug_accession} not found in SAM parsing results")
         
     # Aggregate by organism/species BEFORE filtering to combine reads that map to multiple references of same species
     # IMPORTANT: For segmented viruses (e.g., Lassa, Influenza), keep segments separate by including segment in key
@@ -3779,7 +3811,7 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
                 "aligned_bases": 0,
                 "matches": 0,
                 "ref_length": 0,
-                "covered_positions": set(),
+                "covered_positions": 0,
                 "references": [stat],  # Track all references for this organism
             }
         
@@ -3792,29 +3824,11 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             aggregated_stats[organism_key]["ref_length"], 
             stat.get("ref_length", 0)
         )
-        # For covered_positions, we need to properly combine them when aggregating
-        # Since covered_positions is stored as integer (count) after parsing, we can't union exact positions
-        # Instead, we use max() as approximation, but this can underestimate breadth when multiple references overlap
-        # Note: This is a limitation - ideally we'd track positions as sets and union them
-        current_covered = aggregated_stats[organism_key]["covered_positions"]
-        stat_covered = stat.get("covered_positions", 0)
-        
-        # If both are sets (shouldn't happen after parsing, but handle it), union them
-        if isinstance(current_covered, set) and isinstance(stat_covered, set):
-            aggregated_stats[organism_key]["covered_positions"] = current_covered.union(stat_covered)
-        elif isinstance(current_covered, set):
-            # Current is set, stat is int - convert set to int and use max
-            aggregated_stats[organism_key]["covered_positions"] = max(len(current_covered), stat_covered)
-        elif isinstance(stat_covered, set):
-            # Stat is set, current is int - convert set to int and use max
-            aggregated_stats[organism_key]["covered_positions"] = max(current_covered, len(stat_covered))
-        else:
-            # Both are integers - use max (approximation, underestimates when references overlap)
-            # TODO: This could be improved by tracking positions as sets during aggregation
-            aggregated_stats[organism_key]["covered_positions"] = max(
-                current_covered if current_covered else 0,
-                stat_covered if stat_covered else 0
-            )
+        # covered_positions is a numeric count here; keep the max across aggregated references.
+        aggregated_stats[organism_key]["covered_positions"] = max(
+            aggregated_stats[organism_key]["covered_positions"],
+            stat.get("covered_positions", 0)
+        )
         # Prefer RefSeq accession
         if "refseq" in stat.get("description", "").lower() and "refseq" not in aggregated_stats[organism_key]["description"].lower():
             aggregated_stats[organism_key]["accession"] = stat["accession"]
@@ -3833,7 +3847,7 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
             if ref_len <= 0:
                 logger.warning(f"Reference length missing for aggregated entry {acc} - using max covered position as estimate")
                 # As last resort, estimate ref_length from max covered position
-                covered_pos_count = len(agg["covered_positions"]) if isinstance(agg["covered_positions"], set) else agg.get("covered_positions", 0)
+                covered_pos_count = agg.get("covered_positions", 0)
                 if covered_pos_count > 0:
                     # Estimate: assume breadth should be at least what we see, so ref_len >= covered_positions
                     ref_len = max(covered_pos_count, 1000)  # Minimum 1000bp estimate
@@ -3846,7 +3860,7 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         # Recalculate aggregated metrics
         agg_identity = (matches / aligned_bases * 100) if aligned_bases > 0 else 0.0
         agg_coverage_depth = aligned_bases / ref_len if ref_len > 0 else 0.0
-        covered_pos_count = len(agg["covered_positions"]) if isinstance(agg["covered_positions"], set) else agg.get("covered_positions", 0)
+        covered_pos_count = agg.get("covered_positions", 0)
         agg_coverage_breadth = covered_pos_count / ref_len if ref_len > 0 else 0.0
         
         # Get organism from first reference in aggregation (they should all have same organism)
@@ -6893,6 +6907,12 @@ Examples:
         else:
             logger.info(f"RVDB clustering: {clustering_status}")
     logger.info("="*60)
+
+    # Precompute shared database context once in the parent process.
+    # This avoids per-worker duplicate FASTA scans and index build races.
+    logger.info("Precomputing shared database context...")
+    for database_fasta_path in database_fasta_paths:
+        prepare_database_context(Path(database_fasta_path))
     
     # Find samples
     input_dir = Path(args.input)
@@ -6975,14 +6995,25 @@ Examples:
                 organism_variations
             ))
     
-    # Count reads for each sample to determine optimal thread assignment
+    # Count reads for each unique sample to determine optimal thread assignment.
     logger.info("Counting reads in samples to optimize thread assignment...")
     sample_read_counts = {}
+    unique_samples = {}
     for task in sample_db_tasks:
-        sample_file = task[1]  # Path object
         sample_name = task[0]
-        if sample_file not in sample_read_counts:
-            read_count = count_reads(sample_file)
+        sample_file = task[1]  # Path object
+        unique_samples.setdefault(sample_file, sample_name)
+
+    # Use thread pool for read counting. This is mostly I/O bound, and gzip
+    # decompression is handled in C, so parallel counting reduces startup time.
+    read_count_workers = min(max(1, args.threads), len(unique_samples))
+    with ThreadPoolExecutor(max_workers=read_count_workers) as executor:
+        futures = [
+            executor.submit(_count_reads_task, (sample_name, sample_file))
+            for sample_file, sample_name in unique_samples.items()
+        ]
+        for future in as_completed(futures):
+            sample_name, sample_file, read_count = future.result()
             sample_read_counts[sample_file] = read_count
             logger.info(f"  {sample_name}: {read_count:,} reads")
     
