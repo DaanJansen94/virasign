@@ -131,8 +131,8 @@ virasign -i input_dir -d OZ254622.1 -o output_dir
 virasign -i input_dir -d my_accessions.txt -o output_dir
 # (my_accessions.txt contains one accession per line)
 
-# Use text file with accessions and blind certain viruses
-virasign -i input_dir -d my_accessions.txt -o output_dir -b HEP,HIV,HTLV
+# Blind incidental findings of chronic viruses
+virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 ```
 
 ## Output Files
