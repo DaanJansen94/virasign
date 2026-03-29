@@ -121,6 +121,9 @@ virasign -i input_dir -o output_dir
 # Use both databases with special added accessions and 16 threads (without -o, creates Virasign_output)
 virasign -i input_dir -d RVDB,RefSeq -a PX852146.1,NC_123456.1 -t 16
 
+# Use both databases with specifying RVDB version
+virasign -i input_dir -d RVDB,RefSeq --rvdb-version 31.0
+
 # Use a single accession as the database
 virasign -i input_dir -d OZ254622.1 -o output_dir
 
