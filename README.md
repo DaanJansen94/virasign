@@ -81,6 +81,8 @@ virasign -i input_dir -o output_dir -t threads [options]
 
 **Note**: The first run with Virasign will take a lot longer than subsequent runs, as it performs a one-time automatic download of the required database. The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified. The output argument (`-o/--output`) is also optional - if not specified, results will be saved to `Virasign_output/` in the current directory.
 
+**Rough runtime**: After the database is downloaded, **~1M reads** with RVDB is often **on the order of a few minutes** with **`-t 4`**. **More threads** help most when you have **many reads** (mapping is the heavy step); gains taper off depending on your machine and disk.
+
 ### Command-Line Options
 
 To see all available options:
