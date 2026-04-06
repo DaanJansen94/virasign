@@ -3850,17 +3850,16 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             read_ids_for_this_ref = read_ids_by_reference[accession]
             logger.info(f"  Extracting {len(read_ids_for_this_ref)} read(s) that mapped to {accession}...")
 
-            ref_fastq = acc_dir / f"{accession}_mapped_reads.fastq"
+            ref_fastq = acc_dir / f"{accession}_mapped_reads.fastq.gz"
             sample_fastq_path = Path(sample_fastq)
             is_gzipped = sample_fastq_path.suffix == ".gz"
 
             read_count = 0
-            with open(ref_fastq, "w") as f_out:
+            with gzip.open(ref_fastq, "wt", compresslevel=6, encoding="utf-8", newline="\n") as f_out:
                 if is_gzipped:
-                    import gzip
                     f_in = gzip.open(sample_fastq_path, "rt")
                 else:
-                    f_in = open(sample_fastq_path, "r")
+                    f_in = open(sample_fastq_path, "r", encoding="utf-8", errors="replace")
 
                 with f_in:
                     # Read FASTQ in 4-line records.
