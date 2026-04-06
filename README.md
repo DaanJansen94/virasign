@@ -147,10 +147,10 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 | Output | Description |
 |--------|-------------|
 | `.virasign.log` | Detailed run log (hidden file in the output directory) |
-| `results_summary_*.html` | Interactive HTML report (one file per database) |
-| `*_final_selected_references.json` | Final curated references per sample |
+| `results_summary_*.html` | Interactive HTML report (one file per database) (see example below) |
+| `*_final_selected_references.json` | Summary of curated references per sample (metadata/stats; not the sequences themselves) |
 
-**Per-virus / per-reference folder** (`{accession}/`):
+**Per-virus / per-reference folder** (`{accession}/`) — reference FASTA, BAM, and mapped reads:
 
 | File | Description |
 |------|-------------|
