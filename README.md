@@ -150,7 +150,7 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 | `results_summary_*.html` | Interactive HTML report (see example below) |
 | `*_final_selected_references.json` | Summary per sample (metadata/stats; not the sequences themselves) |
 
-**Per-virus / per-reference folder** (`{accession}/`) — reference FASTA, BAM, and mapped reads:
+**Per-virus folder** (`{accession}/`) — reference FASTA, BAM, and mapped reads:
 
 | File | Description |
 |------|-------------|
