@@ -144,13 +144,19 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 
 ## Output Files
 
-- **.virasign.log**: Detailed log file (hidden file, contains all processing details)
-- **results_summary_*.html**: Interactive HTML reports (one per database)
-- ***_final_selected_references.json**: Final curated references
-- **Per-reference folders**: Each curated reference gets its own folder with:
-  - **{accession}.fasta**: Reference sequence
-  - **{accession}.bam**: BAM alignment file (indexed with {accession}.bam.bai)
-  - **{accession}_mapped_reads.fastq.gz**: Reads that mapped to that specific reference (gzip-compressed FASTQ)
+| Output | Description |
+|--------|-------------|
+| `.virasign.log` | Detailed run log (hidden file in the output directory) |
+| `results_summary_*.html` | Interactive HTML report (one file per database) |
+| `*_final_selected_references.json` | Final curated references per sample |
+
+**Per-virus / per-reference folder** (`{accession}/`):
+
+| File | Description |
+|------|-------------|
+| `{accession}.fasta` | Reference sequence |
+| `{accession}.bam` | Alignments (indexed: `{accession}.bam.bai`) |
+| `{accession}_mapped_reads.fastq.gz` | Reads mapped to that reference (gzip FASTQ) |
 
 ---
 
