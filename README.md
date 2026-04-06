@@ -14,6 +14,8 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 
 ⚠️ **Note:** The first run with Virasign will take a lot longer than subsequent runs because it performs a one-time automatic download of the required database.
 
+---
+
 ## Installation
 
 ### Prerequisites
@@ -62,6 +64,8 @@ conda activate virasign
    ```
    Note: Any time you modify the code or pull updates from GitHub, you need to reinstall the package using these commands for the changes to take effect.
 
+---
+
 ## Usage
 
 First, make sure your conda environment is activated:
@@ -80,8 +84,6 @@ virasign -i input_dir -o output_dir -t threads [options]
 ```
 
 **Note**: The first run with Virasign will take a lot longer than subsequent runs, as it performs a one-time automatic download of the required database. The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified. The output argument (`-o/--output`) is also optional - if not specified, results will be saved to `Virasign_output/` in the current directory.
-
-**Rough runtime**: After the database is downloaded, **~1M reads** with RVDB is often **on the order of a few minutes** with **`-t 4`**. **More threads** help most when you have **many reads**.
 
 ### Command-Line Options
 
@@ -138,6 +140,8 @@ virasign -i input_dir -d my_accessions.txt -o output_dir
 virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 ```
 
+---
+
 ## Output Files
 
 - **.virasign.log**: Detailed log file (hidden file, contains all processing details)
@@ -154,6 +158,8 @@ Example HTML output for one sample:
 
 ![HTML Output Example](html_example.png)
 
+---
+
 ## Design and how Virasign works
 
 Virasign works in two steps: **(1)** map reads to a large viral DB (e.g. RVDB, RefSeq), **(2)** pick one best reference per viral species and remap all reads to that curated set.
@@ -165,6 +171,8 @@ Virasign works in two steps: **(1)** map reads to a large viral DB (e.g. RVDB, R
 
 Also on [**Zenodo**](https://zenodo.org/records/18387009) and [**Docker**](https://hub.docker.com/repository/docker/daanjansen94/virasign/general).
 
+---
+
 ## Citation
 
 If you use Virasign in your research, please cite:
@@ -173,13 +181,19 @@ If you use Virasign in your research, please cite:
 Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification tool designed for nanopore sequencing data (v0.0.2). Zenodo. https://doi.org/10.5281/zenodo.18387008
 ```
 
+---
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - see the [LICENSE](LICENSE) file for details.
 
+---
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+---
 
 ## Support
 
