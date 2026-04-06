@@ -471,7 +471,7 @@ def fetch_segment_from_ncbi(accession: str, database_path: Path = None, max_retr
     
     return segment
 
-def extract_segment_from_description(description: str, accession: str = None, database_path: Path = None) -> str:
+def extract_segment_from_description(description: str, accession: str = None, database_path: Path = None, fetch_from_ncbi: bool = False) -> str:
     """
     Extract segment identifier from description for segmented viruses.
     
@@ -500,8 +500,15 @@ def extract_segment_from_description(description: str, accession: str = None, da
     Returns segment identifier (e.g., 'L', 'S', '1', '2', 'M', 'PB2', 'S1', 'L2', etc.) 
     or empty string if not segmented.
     """
-    # Step 1: Try to get segment from NCBI GenBank database (most reliable)
-    if accession:
+    # Step 1: If available, use local segment database (fast, offline).
+    # NCBI fetching is disabled by default because this function is often called in tight loops.
+    if accession and database_path:
+        segment = get_segment_from_database(accession, database_path)
+        if segment:
+            return segment
+
+    # Optional: fetch from NCBI (slow, network-dependent). Use only for small numbers of calls.
+    if fetch_from_ncbi and accession:
         segment = fetch_segment_from_ncbi(accession, database_path)
         if segment:
             return segment
@@ -2805,10 +2812,20 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
     - ref_lengths: dict mapping SAM header -> reference length
     - ref_headers: dict mapping SAM header -> full header string
     """
+    with open(sam_file, "r") as f:
+        return parse_sam_per_reference_stats_from_lines(f, min_identity=min_identity)
+
+
+def parse_sam_per_reference_stats_from_lines(lines, min_identity: float = 0.0):
+    """
+    Streaming SAM parser variant of `parse_sam_per_reference_stats`.
+
+    `lines` can be any iterable yielding SAM lines (e.g., file handle or minimap2 stdout).
+    """
     stats_by_ref = {}
     ref_lengths = {}
     ref_headers = {}
-    
+
     def cigar_aligned_bases(cigar: str) -> tuple:
         """Parse CIGAR string and return (reference_consumed, aligned_M_bases)."""
         num = ""
@@ -2828,84 +2845,73 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
             elif ch in ("D", "N"):
                 total += n
         return total, aligned_m
-    
-    with open(sam_file, "r") as f:
-        for line in f:
-            if line.startswith("@SQ"):
-                # Parse reference length from @SQ header
-                # @SQ	SN:header	LN:length
-                parts = line.strip().split("\t")
-                header = None
-                length = None
-                for part in parts:
-                    if part.startswith("SN:"):
-                        header = part[3:]
-                    elif part.startswith("LN:"):
-                        length = int(part[3:])
-                if header and length:
-                    ref_lengths[header] = length
-                    ref_headers[header] = header
-            elif line.startswith("@"):
-                continue
-            else:
-                fields = line.rstrip("\n").split("\t")
-                if len(fields) < 11:
-                    continue
-                
-                read_name = fields[0]
-                flag = int(fields[1])
-                if flag & 0x4:  # unmapped
-                    continue
-                
-                sam_header = fields[2]
-                pos = int(fields[3]) - 1  # Convert to 0-based
-                cigar = fields[5]
-                
-                if sam_header not in stats_by_ref:
-                    stats_by_ref[sam_header] = {
-                        "mapped_reads": 0,
-                        "aligned_bases": 0,
-                        "matches": 0,
-                        # Track intervals instead of per-base sets; this is much faster on large SAM files.
-                        "coverage_intervals": [],
-                    }
-                
-                # Parse CIGAR
-                ref_consumed, aligned_m = cigar_aligned_bases(cigar)
-                
-                # Get NM (number of mismatches) from optional fields
-                nm = 0
-                for opt in fields[11:]:
-                    if opt.startswith("NM:i:"):
-                        try:
-                            nm = int(opt.split(":")[2])
-                        except Exception:
-                            nm = 0
-                        break
-                
-                matches = aligned_m - nm
-                
-                # Calculate identity for THIS INDIVIDUAL READ ALIGNMENT
-                # This is per-read filtering, not average-based filtering
-                alignment_identity = (matches / aligned_m * 100) if aligned_m > 0 else 0.0
-                
-                # Only count THIS READ ALIGNMENT if it meets the minimum identity threshold
-                # For RefSeq: only reads with >= 97% identity are counted
-                # For RVDB: only reads with >= 80% identity are counted
-                if alignment_identity >= min_identity:
-                    stats_by_ref[sam_header]["mapped_reads"] += 1
-                    # Use aligned_m (query length) for aligned_bases to match how matches is calculated
-                    # This ensures identity = matches/aligned_bases <= 100% (matches <= aligned_m)
-                    stats_by_ref[sam_header]["aligned_bases"] += aligned_m
-                    stats_by_ref[sam_header]["matches"] += matches
-                    # Track covered intervals (for breadth calculation) - only for reads meeting threshold
-                    if ref_consumed > 0:
-                        stats_by_ref[sam_header]["coverage_intervals"].append((pos, pos + ref_consumed))
-                # else: skip this individual read alignment (doesn't meet identity threshold)
-                # This read alignment is NOT counted in mapped_reads, matches, aligned_bases, covered_positions, etc.
-                # else: skip this individual read alignment (doesn't meet identity threshold)
-                # This read alignment is NOT counted in mapped_reads, matches, etc.
-    
+
+    for line in lines:
+        if line.startswith("@SQ"):
+            # Parse reference length from @SQ header
+            # @SQ	SN:header	LN:length
+            parts = line.strip().split("\t")
+            header = None
+            length = None
+            for part in parts:
+                if part.startswith("SN:"):
+                    header = part[3:]
+                elif part.startswith("LN:"):
+                    length = int(part[3:])
+            if header and length:
+                ref_lengths[header] = length
+                ref_headers[header] = header
+            continue
+        if line.startswith("@"):
+            continue
+
+        fields = line.rstrip("\n").split("\t")
+        if len(fields) < 11:
+            continue
+
+        flag = int(fields[1])
+        if flag & 0x4:  # unmapped
+            continue
+
+        sam_header = fields[2]
+        pos = int(fields[3]) - 1  # Convert to 0-based
+        cigar = fields[5]
+
+        s = stats_by_ref.get(sam_header)
+        if s is None:
+            s = {
+                "mapped_reads": 0,
+                "aligned_bases": 0,
+                "matches": 0,
+                # Track intervals instead of per-base sets; this is much faster on large SAM files.
+                "coverage_intervals": [],
+            }
+            stats_by_ref[sam_header] = s
+
+        # Parse CIGAR
+        ref_consumed, aligned_m = cigar_aligned_bases(cigar)
+
+        # Get NM (number of mismatches) from optional fields
+        nm = 0
+        for opt in fields[11:]:
+            if opt.startswith("NM:i:"):
+                try:
+                    nm = int(opt.split(":")[2])
+                except Exception:
+                    nm = 0
+                break
+
+        matches = aligned_m - nm
+
+        # Per-read alignment identity filter
+        alignment_identity = (matches / aligned_m * 100) if aligned_m > 0 else 0.0
+        if alignment_identity >= min_identity:
+            s["mapped_reads"] += 1
+            s["aligned_bases"] += aligned_m
+            s["matches"] += matches
+            if ref_consumed > 0:
+                s["coverage_intervals"].append((pos, pos + ref_consumed))
+
     # Convert coverage intervals to covered position count for each reference.
     def merged_covered_length(intervals):
         if not intervals:
@@ -2926,7 +2932,7 @@ def parse_sam_per_reference_stats(sam_file: Path, min_identity: float = 0.0):
     for sam_header in stats_by_ref:
         intervals = stats_by_ref[sam_header].pop("coverage_intervals", [])
         stats_by_ref[sam_header]["covered_positions"] = merged_covered_length(intervals)
-    
+
     return stats_by_ref, ref_lengths, ref_headers
 
 def extract_accession_from_header(header: str) -> str:
@@ -3698,20 +3704,47 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         logger.info(f"Running minimap2 (single pass against indexed DB, {threads} threads, -p {minimap_p:.2f} for alignment filtering)...")
     else:
         logger.info(f"Running minimap2 (single pass against indexed DB, {threads} threads, will filter by identity >= {min_identity}% during SAM parsing)...")
+    # Stream minimap2 SAM output directly into the parser to avoid writing/reading huge SAM files.
+    # This is typically the dominant cost on larger samples.
+    from collections import deque
+    import threading
+
+    stderr_tail = deque(maxlen=200)
+
+    def _drain_stderr(stderr_fh):
+        try:
+            for l in stderr_fh:
+                stderr_tail.append(l.rstrip("\n"))
+        except Exception:
+            pass
+
     try:
-        with open(aln_sam, "w") as out:
-            subprocess.run(minimap_cmd, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
-    except subprocess.CalledProcessError as e:
-        logger.error(f"minimap2 failed:\n{e.stderr}")
+        proc = subprocess.Popen(
+            minimap_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+    except Exception as e:
+        logger.error(f"Failed to start minimap2: {e}")
         sys.exit(1)
 
-    stats_by_ref, ref_lengths, ref_headers = parse_sam_per_reference_stats(aln_sam, min_identity=min_identity)
+    t = threading.Thread(target=_drain_stderr, args=(proc.stderr,), daemon=True)
+    t.start()
+    stats_by_ref, ref_lengths, ref_headers = parse_sam_per_reference_stats_from_lines(proc.stdout, min_identity=min_identity)
+    proc.stdout.close()
+    rc = proc.wait()
+    try:
+        proc.stderr.close()
+    except Exception:
+        pass
+    if rc != 0:
+        err = "\n".join(stderr_tail)
+        logger.error(f"minimap2 failed (exit {rc}). Last stderr lines:\n{err}")
+        sys.exit(1)
     if not stats_by_ref:
         logger.warning("No reads mapped to any reference.")
-        # Clean up SAM file before returning
-        if aln_sam.exists():
-            aln_sam.unlink()
-            logger.info(f"Removed SAM file (no reads mapped): {aln_sam.name}")
         # Return empty/default values for all 5 return values
         return None, None, [], [], []
 
@@ -3797,7 +3830,7 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
                     organism_key = accession if accession else "unknown"
         
         # Extract segment information to keep segmented viruses separate
-        segment = extract_segment_from_description(description, accession=accession, database_path=segment_database_path)
+        segment = extract_segment_from_description(description, accession=accession, database_path=segment_database_path, fetch_from_ncbi=False)
         
         # Include segment in aggregation key if present (prevents different segments from being aggregated)
         if segment:
@@ -4249,7 +4282,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     for stat in curated_stats_dedup:
         organism = stat.get("organism", "").strip()
         accession = stat.get("accession", "")
-        segment = extract_segment_from_description(stat.get("description", ""), accession=accession, database_path=segment_database_path)
+        segment = extract_segment_from_description(stat.get("description", ""), accession=accession, database_path=segment_database_path, fetch_from_ncbi=False)
         if segment:
             if organism not in segments_found:
                 segments_found[organism] = []
@@ -4472,7 +4505,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             # Extract segment information
             accession = stat.get("accession", "")
             description = stat.get("description", "")
-            segment = extract_segment_from_description(description, accession=accession, database_path=segment_database_path)
+            segment = extract_segment_from_description(description, accession=accession, database_path=segment_database_path, fetch_from_ncbi=False)
             
             # Format segment for display (e.g., "L-segment", "S-segment", "1-segment", etc.)
             segment_display = ""
