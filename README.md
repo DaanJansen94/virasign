@@ -152,6 +152,8 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
   - **{accession}.bam**: BAM alignment file (indexed with {accession}.bam.bai)
   - **{accession}_mapped_reads.fastq.gz**: Reads that mapped to that specific reference (gzip-compressed FASTQ)
 
+---
+
 ## HTML Output example
 
 Example HTML output for one sample:
