@@ -2872,6 +2872,10 @@ def parse_sam_per_reference_stats_from_lines(lines, min_identity: float = 0.0):
         flag = int(fields[1])
         if flag & 0x4:  # unmapped
             continue
+        # Only count primary alignments: ignore secondary (0x100) and supplementary (0x800).
+        # This makes "mapped_reads" correspond to unique reads rather than split/alternative alignments.
+        if flag & 0x100 or flag & 0x800:
+            continue
 
         sam_header = fields[2]
         pos = int(fields[3]) - 1  # Convert to 0-based
@@ -3033,12 +3037,16 @@ def extract_selected_references(database_fasta: Path, selected_headers: list, ou
                 logger.warning(f"  - {m}")
     return found_count
 
-def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, output_sam: Path, min_identity: float = 80.0, threads: int = 1) -> dict:
+def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, output_sam: Path, min_identity: float = 80.0, threads: int = 1, stream_per_reference_outputs: bool = False, curated_descriptions: list = None, sample_dir: Path = None) -> dict:
     """
     Re-map all reads to the selected references to get accurate mapped_reads counts.
     Creates minimap2 index for the selected references database for speed.
     For low-input samples (< 100k reads), uses secondary alignments to better detect multi-mapping reads.
     Returns a dictionary mapping reference descriptions to updated stats (mapped_reads, avg_identity, etc.).
+
+    If `stream_per_reference_outputs=True`, this function will additionally stream remap alignments
+    into per-reference BAM files (via samtools) without writing per-reference SAM files.
+    In this mode, `curated_descriptions` and `sample_dir` must be provided.
     """
     
     # Count references in the selected FASTA
@@ -3351,6 +3359,215 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     ])
     
     logger.info(f"Re-mapping all reads to selected references using indexed database (will filter by identity >= {min_identity}% during SAM parsing, {'with secondary alignments' if use_secondary else 'primary alignments only'})...")
+
+    if stream_per_reference_outputs:
+        if not curated_descriptions or sample_dir is None:
+            raise ValueError("stream_per_reference_outputs requires curated_descriptions and sample_dir")
+
+        # Stream minimap2 SAM output and simultaneously:
+        # - compute per-reference stats (identity, depth, breadth)
+        # - stream alignments into per-reference BAMs via samtools (no per-reference SAM files)
+        curated_accessions = [s.get("accession", "") for s in curated_descriptions if s.get("accession", "")]
+        curated_accessions_set = set(curated_accessions)
+
+        # Stats accumulators keyed by SAM reference name
+        stats_by_ref = {}
+        ref_lengths = {}
+
+        def cigar_aligned_bases(cigar: str) -> tuple:
+            num = ""
+            total = 0
+            aligned_m = 0
+            for ch in cigar:
+                if ch.isdigit():
+                    num += ch
+                    continue
+                if not num:
+                    continue
+                n = int(num)
+                num = ""
+                if ch in ("M", "=", "X"):
+                    aligned_m += n
+                    total += n
+                elif ch in ("D", "N"):
+                    total += n
+            return total, aligned_m
+
+        sam_header_lines = []
+        bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam, ref_bai_path)
+
+        def _start_bam_pipe(accession: str):
+            acc_dir = sample_dir / accession
+            acc_dir.mkdir(parents=True, exist_ok=True)
+            ref_bam = acc_dir / f"{accession}.bam"
+            # Remove existing
+            if ref_bam.exists():
+                ref_bam.unlink()
+            bai = acc_dir / f"{accession}.bam.bai"
+            if bai.exists():
+                bai.unlink()
+
+            view_cmd = ["samtools", "view", "-bS", "-"]
+            sort_cmd = ["samtools", "sort", "-o", str(ref_bam), "-"]
+            view_p = subprocess.Popen(view_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                sort_p = subprocess.Popen(sort_cmd, stdin=view_p.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            finally:
+                if view_p.stdout:
+                    view_p.stdout.close()
+
+            assert view_p.stdin is not None
+            for h in sam_header_lines:
+                view_p.stdin.write(h)
+
+            bam_pipes[accession] = {"view_p": view_p, "sort_p": sort_p, "stdin": view_p.stdin, "ref_bam": ref_bam}
+
+        try:
+            proc = subprocess.Popen(minimap_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        except Exception as e:
+            logger.error(f"Failed to start minimap2 re-mapping: {e}")
+            return {}
+
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if not line:
+                continue
+            if line.startswith("@SQ"):
+                sam_header_lines.append(line)
+                parts = line.strip().split("\t")
+                header = None
+                length = None
+                for part in parts:
+                    if part.startswith("SN:"):
+                        header = part[3:]
+                    elif part.startswith("LN:"):
+                        length = int(part[3:])
+                if header and length:
+                    ref_lengths[header] = length
+                continue
+            if line.startswith("@"):
+                sam_header_lines.append(line)
+                continue
+            if not line.strip():
+                continue
+
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 11:
+                continue
+            flag = int(fields[1])
+            if flag & 0x4:
+                continue
+            # Only count primary alignments
+            if flag & 0x100 or flag & 0x800:
+                continue
+            sam_header = fields[2]
+            pos = int(fields[3]) - 1
+            cigar = fields[5]
+            accession = extract_accession_from_header(sam_header)
+            if accession and accession not in curated_accessions_set:
+                continue
+
+            s = stats_by_ref.get(sam_header)
+            if s is None:
+                s = {"mapped_reads": 0, "aligned_bases": 0, "matches": 0, "coverage_intervals": []}
+                stats_by_ref[sam_header] = s
+
+            ref_consumed, aligned_m = cigar_aligned_bases(cigar)
+            nm = 0
+            for opt in fields[11:]:
+                if opt.startswith("NM:i:"):
+                    try:
+                        nm = int(opt.split(":")[2])
+                    except Exception:
+                        nm = 0
+                    break
+            matches = aligned_m - nm
+            alignment_identity = (matches / aligned_m * 100) if aligned_m > 0 else 0.0
+            if alignment_identity < min_identity:
+                continue
+
+            s["mapped_reads"] += 1
+            s["aligned_bases"] += aligned_m
+            s["matches"] += matches
+            if ref_consumed > 0:
+                s["coverage_intervals"].append((pos, pos + ref_consumed))
+
+            if accession:
+                if accession not in bam_pipes:
+                    _start_bam_pipe(accession)
+                bam_pipes[accession]["stdin"].write(line)
+
+        proc.stdout.close()
+        rc = proc.wait()
+        stderr = ""
+        try:
+            if proc.stderr:
+                stderr = proc.stderr.read()
+        except Exception:
+            pass
+        if rc != 0:
+            logger.error(f"minimap2 re-mapping failed:\n{stderr}")
+            return {}
+
+        # Finalize BAMs
+        for accession, pipe in bam_pipes.items():
+            stdin = pipe["stdin"]
+            view_p = pipe["view_p"]
+            sort_p = pipe["sort_p"]
+            ref_bam = pipe["ref_bam"]
+            try:
+                stdin.close()
+                view_p.stdin = None
+            except Exception:
+                pass
+            view_p.wait()
+            sort_p.wait()
+            subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
+
+        # Compute covered_positions from intervals and build updated_stats using selected_refs_fasta header map
+        def merged_covered_length(intervals):
+            if not intervals:
+                return 0
+            intervals.sort()
+            total = 0
+            cur_start, cur_end = intervals[0]
+            for start, end in intervals[1:]:
+                if start <= cur_end:
+                    if end > cur_end:
+                        cur_end = end
+                else:
+                    total += cur_end - cur_start
+                    cur_start, cur_end = start, end
+            total += cur_end - cur_start
+            return total
+
+        selected_header_map = build_header_mapping(selected_refs_fasta)
+        updated_stats = {}
+        for sam_header, s in stats_by_ref.items():
+            aligned_i = s["aligned_bases"]
+            matches_i = s["matches"]
+            identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0.0
+            acc = extract_accession_from_header(sam_header)
+            desc = selected_header_map.get(acc, sam_header)
+            ref_len = ref_lengths.get(sam_header, 0)
+            covered_pos = merged_covered_length(s.get("coverage_intervals", []))
+            if ref_len and ref_len > 0:
+                coverage_depth = aligned_i / ref_len
+                coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0
+            else:
+                coverage_depth = 0.0
+                coverage_breadth = 0.0
+            updated_stats[desc] = {
+                "mapped_reads": s["mapped_reads"],
+                "avg_identity": identity,
+                "coverage_depth": coverage_depth,
+                "coverage_breadth": coverage_breadth,
+            }
+
+        logger.info(f"Re-mapping complete (streamed). Updated stats for {len(updated_stats)} references.")
+        return updated_stats
+
+    # Default (legacy): write remapped SAM to disk, then parse
     try:
         with open(output_sam, "w") as out:
             subprocess.run(minimap_cmd, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
@@ -3418,7 +3635,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     logger.debug(f"Updated stats keys: {list(updated_stats.keys())[:3]}...")  # Debug: show first few keys
     return updated_stats
 
-def create_per_reference_outputs(sample_name: str, curated_descriptions: list, selected_refs_fasta: Path, remap_sam: Path, sample_fastq: Path, sample_dir: Path):
+def create_per_reference_outputs(sample_name: str, curated_descriptions: list, selected_refs_fasta: Path, remap_sam: Path, sample_fastq: Path, sample_dir: Path, min_identity: float = 0.0):
     """
     Create per-reference folders with SAM, BAM, reference FASTA, and mapped reads FASTQ.
     For each reference in curated_descriptions.json, creates a folder named after its accession.
@@ -3441,50 +3658,129 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
     # Build a mapping of description -> accession for quick lookup
     desc_to_acc = {stat.get("description", ""): stat.get("accession", "") for stat in curated_descriptions}
     
-    # Read remapped SAM file and group by reference
+    # Stream remapped SAM once and:
+    # - build read-id sets (for mapped FASTQ extraction)
+    # - build per-reference coordinate-sorted BAMs via samtools WITHOUT writing per-reference SAMs
     logger.info("Reading remapped SAM file...")
-    sam_by_reference = {}  # accession -> list of SAM lines
     read_ids_by_reference = {}  # accession -> set of read IDs
-    
-    with open(remap_sam, 'r') as f:
+    curated_accessions = [stat.get("accession", "") for stat in curated_descriptions if stat.get("accession", "")]
+    curated_accessions_set = set(curated_accessions)
+    sam_header_lines = []
+    bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam)
+
+    def _start_bam_pipe(accession: str):
+        acc_dir = sample_dir / accession
+        acc_dir.mkdir(parents=True, exist_ok=True)
+
+        ref_bam = acc_dir / f"{accession}.bam"
+        ref_bai = acc_dir / f"{accession}.bam.bai"
+        if ref_bam.exists():
+            ref_bam.unlink()
+        if ref_bai.exists():
+            ref_bai.unlink()
+
+        # SAM(stdin) -> BAM -> sort -> BAM
+        view_cmd = ["samtools", "view", "-bS", "-"]
+        sort_cmd = ["samtools", "sort", "-o", str(ref_bam), "-"]
+
+        view_p = subprocess.Popen(view_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            sort_p = subprocess.Popen(sort_cmd, stdin=view_p.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        finally:
+            if view_p.stdout:
+                view_p.stdout.close()
+
+        assert view_p.stdin is not None
+        for h in sam_header_lines:
+            view_p.stdin.write(h)
+
+        bam_pipes[accession] = {
+            "view_p": view_p,
+            "sort_p": sort_p,
+            "stdin": view_p.stdin,
+            "ref_bam": ref_bam,
+        }
+
+    def _cigar_aligned_bases(cigar: str) -> tuple:
+        """Return (reference_consumed, aligned_M_bases) for a CIGAR string."""
+        num = ""
+        total = 0
+        aligned_m = 0
+        for ch in cigar:
+            if ch.isdigit():
+                num += ch
+                continue
+            if not num:
+                continue
+            n = int(num)
+            num = ""
+            if ch in ("M", "=", "X"):
+                aligned_m += n
+                total += n
+            elif ch in ("D", "N"):
+                total += n
+        return total, aligned_m
+
+    with open(remap_sam, "r") as f:
         for line in f:
-            if line.startswith('@'):
-                # Header line - store for later use
+            if not line:
+                continue
+            if line.startswith("@"):
+                sam_header_lines.append(line)
                 continue
             if not line.strip():
                 continue
-            
-            parts = line.split('\t')
-            if len(parts) < 3:
+
+            parts = line.split("\t")
+            if len(parts) < 11:
                 continue
-            
-            # Get reference name from SAM line (3rd field)
+
+            # Skip non-primary alignments so FASTQ/BAM match reported mapped_reads
+            try:
+                flag = int(parts[1])
+            except Exception:
+                continue
+            if flag & 0x4:
+                continue
+            if flag & 0x100 or flag & 0x800:
+                continue
+
             ref_name = parts[2]
-            if ref_name == '*':
+            if ref_name == "*":
                 continue
-            
-            # Find accession for this reference description
-            accession = None
-            for desc, acc in desc_to_acc.items():
-                if ref_name in desc or desc in ref_name:
-                    accession = acc
+
+            # Apply the same per-alignment identity filter as used for stats.
+            # This keeps the per-reference BAM and mapped FASTQ consistent with reported mapped_reads.
+            cigar = parts[5]
+            ref_consumed, aligned_m = _cigar_aligned_bases(cigar)
+            nm = 0
+            for opt in parts[11:]:
+                if opt.startswith("NM:i:"):
+                    try:
+                        nm = int(opt.split(":")[2])
+                    except Exception:
+                        nm = 0
                     break
-            
-            if not accession:
-                # Try to extract accession from ref_name directly
-                accession = extract_accession_from_header(ref_name)
-            
-            if accession:
-                if accession not in sam_by_reference:
-                    sam_by_reference[accession] = []
-                    read_ids_by_reference[accession] = set()
-                sam_by_reference[accession].append(line)
-                # Get read ID (1st field) - handle /1, /2 suffixes for paired-end reads
-                read_id = parts[0].split('/')[0]  # Remove /1, /2 suffix if present
-                read_ids_by_reference[accession].add(read_id)
-    
-    logger.info(f"Found alignments for {len(sam_by_reference)} reference(s)")
-    
+            matches = aligned_m - nm
+            alignment_identity = (matches / aligned_m * 100) if aligned_m > 0 else 0.0
+            if alignment_identity < min_identity:
+                continue
+
+            accession = extract_accession_from_header(ref_name)
+            if not accession or accession not in curated_accessions_set:
+                continue
+
+            if accession not in read_ids_by_reference:
+                read_ids_by_reference[accession] = set()
+            read_id = parts[0].split("/")[0]
+            read_ids_by_reference[accession].add(read_id)
+
+            if accession not in bam_pipes:
+                _start_bam_pipe(accession)
+            bam_pipes[accession]["stdin"].write(line)
+
+    logger.info(f"Found alignments for {len(bam_pipes)} reference(s)")
+
     # Process each curated reference
     for stat in curated_descriptions:
         accession = stat.get("accession", "")
@@ -3505,133 +3801,93 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
         if not extract_fasta_record(selected_refs_fasta, description, ref_fasta):
             logger.warning(f"  Could not extract reference FASTA for {accession}")
         
-        # 2. Filter SAM file for this reference
-        if accession in sam_by_reference:
-            sam_lines = sam_by_reference[accession]
-            ref_sam = acc_dir / f"{accession}.sam"
-            
-            # Write SAM header first (from original remapped.sam)
-            with open(remap_sam, 'r') as f_in:
-                with open(ref_sam, 'w') as f_out:
-                    for line in f_in:
-                        if line.startswith('@'):
-                            f_out.write(line)
-                        else:
-                            break
-            
-            # Write alignments for this reference
-            with open(ref_sam, 'a') as f:
-                for line in sam_lines:
-                    f.write(line)
-            
-            logger.info(f"  Created {ref_sam.name} ({len(sam_lines)} alignments)")
-            
-            # 3. Convert SAM to coordinate-sorted BAM (+ index) for easy visualization
-            # Note: `samtools index` requires coordinate-sorted BAM.
-            # The sorted BAM will replace any existing BAM file with the same name.
-            ref_bam = acc_dir / f"{accession}.bam"
+        # 2/3. Finalize streamed BAM for this accession (+ index)
+        if accession in bam_pipes:
+            pipe = bam_pipes[accession]
+            view_p = pipe["view_p"]
+            sort_p = pipe["sort_p"]
+            stdin = pipe["stdin"]
+            ref_bam = pipe["ref_bam"]
             ref_bai = acc_dir / f"{accession}.bam.bai"
             try:
-                # Check if samtools is available
-                subprocess.run(['samtools', '--version'], check=True, capture_output=True)
+                stdin.close()
+                # Avoid subprocess.communicate() trying to flush a closed stdin.
+                view_p.stdin = None
+            except Exception:
+                pass
 
-                # Remove existing BAM and BAI files if they exist (will be replaced with sorted version)
-                if ref_bam.exists():
-                    ref_bam.unlink()
-                if ref_bai.exists():
-                    ref_bai.unlink()
+            view_err = ""
+            sort_err = ""
+            try:
+                if view_p.stderr:
+                    view_err = view_p.stderr.read()
+            except Exception:
+                pass
+            try:
+                if sort_p.stderr:
+                    sort_err = sort_p.stderr.read()
+            except Exception:
+                pass
 
-                # Create coordinate-sorted BAM (samtools sort writes directly to output file, replacing if exists):
-                # samtools view -bS ref.sam | samtools sort -o ref.bam -
-                # The -o flag writes directly to ref.bam (replaces existing file)
-                view_cmd = ['samtools', 'view', '-bS', str(ref_sam)]
-                sort_cmd = ['samtools', 'sort', '-o', str(ref_bam), '-']
+            view_rc = view_p.wait()
+            sort_rc = sort_p.wait()
 
-                view_p = subprocess.Popen(view_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                try:
-                    sort_p = subprocess.Popen(sort_cmd, stdin=view_p.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                finally:
-                    # Allow view_p to receive SIGPIPE if sort exits early
-                    if view_p.stdout:
-                        view_p.stdout.close()
+            if view_rc != 0:
+                raise subprocess.CalledProcessError(view_rc, view_p.args, output=None, stderr=view_err)
+            if sort_rc != 0:
+                raise subprocess.CalledProcessError(sort_rc, sort_p.args, output=None, stderr=sort_err)
 
-                _, view_err = view_p.communicate()
-                _, sort_err = sort_p.communicate()
-
-                if view_p.returncode != 0:
-                    raise subprocess.CalledProcessError(view_p.returncode, view_cmd, output=None, stderr=view_err)
-                if sort_p.returncode != 0:
-                    raise subprocess.CalledProcessError(sort_p.returncode, sort_cmd, output=None, stderr=sort_err)
-
-                # Verify BAM file was created and is sorted
-                if not ref_bam.exists():
-                    raise FileNotFoundError(f"Sorted BAM file was not created: {ref_bam}")
-
-                # Index BAM (creates .bai next to the BAM, replaces existing index)
-                subprocess.run(['samtools', 'index', str(ref_bam)], check=True, capture_output=True)
-
-                if ref_bai.exists():
-                    logger.info(f"  Created {ref_bam.name} and {ref_bai.name}")
-                else:
-                    # Some samtools versions might name differently or write elsewhere; still log success.
-                    logger.info(f"  Created {ref_bam.name} and indexed it")
-                # Remove SAM file since we have BAM
-                ref_sam.unlink()
-                logger.info(f"  Removed {ref_sam.name} (BAM file available)")
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                logger.warning(f"  Could not create BAM file (samtools not available or failed)")
-                # Still remove SAM file to save space (we have the data in FASTQ and can recreate if needed)
-                if ref_sam.exists():
-                    ref_sam.unlink()
-                    logger.info(f"  Removed {ref_sam.name} (to save space, BAM creation failed but data available in FASTQ)")
-            
-            # 4. Extract reads from original FASTQ that mapped ONLY to this reference
-            if accession in read_ids_by_reference:
-                # Get read IDs that mapped to THIS specific reference
-                read_ids_for_this_ref = read_ids_by_reference[accession]
-                
-                # Count how many reads mapped to this reference
-                logger.info(f"  Extracting {len(read_ids_for_this_ref)} read(s) that mapped to {accession}...")
-                
-                ref_fastq = acc_dir / f"{accession}_mapped_reads.fastq"
-                
-                # Read original FASTQ and extract ONLY reads that mapped to this reference
-                sample_fastq_path = Path(sample_fastq)
-                is_gzipped = sample_fastq_path.suffix == '.gz'
-                
-                read_count = 0
-                with open(ref_fastq, 'w') as f_out:
-                    if is_gzipped:
-                        import gzip
-                        f_in = gzip.open(sample_fastq_path, 'rt')
-                    else:
-                        f_in = open(sample_fastq_path, 'r')
-                    
-                    with f_in:
-                        current_read_id = None
-                        current_read_lines = []
-                        for line in f_in:
-                            if line.startswith('@'):
-                                # Save previous read if it mapped to THIS reference
-                                if current_read_id and current_read_id in read_ids_for_this_ref:
-                                    f_out.writelines(current_read_lines)
-                                    read_count += 1
-                                # Start new read
-                                # Handle both @read_id and @read_id/1 format
-                                read_id_line = line.strip()[1:]  # Remove @
-                                current_read_id = read_id_line.split()[0].split('/')[0]  # Get read ID (handle /1, /2 suffixes)
-                                current_read_lines = [line]
-                            else:
-                                current_read_lines.append(line)
-                        
-                        # Don't forget the last read
-                        if current_read_id and current_read_id in read_ids_for_this_ref:
-                            f_out.writelines(current_read_lines)
-                            read_count += 1
-                
-                logger.info(f"  Created {ref_fastq.name} ({read_count} reads mapped to {accession} only)")
+            subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
+            if ref_bai.exists():
+                logger.info(f"  Created {ref_bam.name} and {ref_bai.name}")
+            else:
+                logger.info(f"  Created {ref_bam.name} and indexed it")
         else:
             logger.warning(f"  No alignments found for {accession} in remapped SAM")
+
+        # 4. Extract reads from original FASTQ that mapped ONLY to this reference (original behavior)
+        if accession in read_ids_by_reference:
+            read_ids_for_this_ref = read_ids_by_reference[accession]
+            logger.info(f"  Extracting {len(read_ids_for_this_ref)} read(s) that mapped to {accession}...")
+
+            ref_fastq = acc_dir / f"{accession}_mapped_reads.fastq"
+            sample_fastq_path = Path(sample_fastq)
+            is_gzipped = sample_fastq_path.suffix == ".gz"
+
+            read_count = 0
+            with open(ref_fastq, "w") as f_out:
+                if is_gzipped:
+                    import gzip
+                    f_in = gzip.open(sample_fastq_path, "rt")
+                else:
+                    f_in = open(sample_fastq_path, "r")
+
+                with f_in:
+                    # Read FASTQ in 4-line records.
+                    # Don't treat any line starting with '@' as a new record, because '@' can appear
+                    # at the start of quality lines.
+                    while True:
+                        header = f_in.readline()
+                        if not header:
+                            break
+                        seq = f_in.readline()
+                        plus = f_in.readline()
+                        qual = f_in.readline()
+                        if not seq or not plus or not qual:
+                            # Truncated/invalid FASTQ; stop.
+                            break
+                        if not header.startswith("@"):
+                            continue
+                        read_id_line = header.strip()[1:]
+                        read_id = read_id_line.split()[0].split("/")[0]
+                        if read_id in read_ids_for_this_ref:
+                            f_out.write(header)
+                            f_out.write(seq)
+                            f_out.write(plus)
+                            f_out.write(qual)
+                            read_count += 1
+
+            logger.info(f"  Created {ref_fastq.name} ({read_count} reads mapped to {accession} only)")
     
     logger.info(f"Per-reference outputs created in {sample_dir}")
     
@@ -4342,7 +4598,10 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 selected_refs_fasta,
                 remap_sam,
                 min_identity=min_identity,
-                threads=threads
+                threads=threads,
+                stream_per_reference_outputs=True,
+                curated_descriptions=curated_stats_dedup,
+                sample_dir=sample_dir
             )
             
             # Update curated_stats_dedup with accurate counts
@@ -4610,7 +4869,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 db_selected_refs = db_dir / f"{sample_name}_selected_references.fasta"
                 db_remap_sam = db_dir / f"{sample_name}_remapped.sam"
                 if db_selected_refs.exists() and db_remap_sam.exists():
-                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir)
+                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, min_identity=min_identity)
                     
                     # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                     if db_selected_refs.exists():
@@ -4631,7 +4890,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
             remap_sam = sample_dir / f"{sample_name}_remapped.sam"
             if selected_refs_fasta.exists() and remap_sam.exists():
-                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir)
+                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, min_identity=min_identity)
     
                 # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                 if selected_refs_fasta.exists():
@@ -6771,6 +7030,14 @@ Examples:
         dest="list_blinding",
         help="List all available blinding abbreviations and exit."
     )
+
+    parser.add_argument(
+        "--no-html",
+        dest="generate_html",
+        action="store_false",
+        default=True,
+        help="Disable HTML report generation (results_summary_*.html). Default: HTML enabled."
+    )
     
     if args is None:
         args = parser.parse_args()
@@ -7204,8 +7471,11 @@ Examples:
     print("All samples processed successfully!")
     print("=" * 60)
     
-    # Generate HTML visualization of results
-    generate_html_visualization(output_dir)
+    # Generate HTML visualization of results (optional)
+    if getattr(args, "generate_html", True):
+        generate_html_visualization(output_dir)
+    else:
+        logger.info("HTML report generation disabled (--no-html)")
 
 if __name__ == "__main__":
     main()

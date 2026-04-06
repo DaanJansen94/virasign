@@ -106,6 +106,7 @@ virasign --help
 - `--coverage_depth_threshold`: Minimum coverage depth threshold (default: `1.0`)
 - `--coverage_breadth_threshold`: Minimum coverage breadth threshold (default: `0.1`)
 - `-t, --threads`: Number of threads for minimap2 (default: `1`)
+- `--no-html`: Disable interactive HTML report generation. Default: HTML enabled.
 - `--enable-clustering`: Enable clustering for RVDB database (default: clustering disabled)
 - `--cluster_identity`: Identity threshold for RVDB clustering (default: `0.98`, i.e., 98%). Only used if clustering is enabled with `--enable-clustering`
 
