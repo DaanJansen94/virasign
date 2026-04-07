@@ -64,8 +64,6 @@ virasign -i input_dir [options]
 virasign -i input_dir -o output_dir -t threads [options]
 ```
 
-**Note**: The first run with Virasign will take a lot longer than subsequent runs, as it performs a one-time automatic download of the required database. The database argument (`-d/--database`) is optional and defaults to `RVDB` if not specified. The output argument (`-o/--output`) is also optional - if not specified, results will be saved to `Virasign_output/` in the current directory.
-
 ### Command-Line Options
 
 To see all available options:
