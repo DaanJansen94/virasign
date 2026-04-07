@@ -75,23 +75,33 @@ virasign --help
 - `-i, --input`: Input directory containing FASTQ files
 
 #### Optional Arguments
-- `-o, --output`: Output directory for results. If not specified, creates `Virasign_output/` folder in the current directory. Use `.` to explicitly create `Virasign_output/` in current directory.
+- **Input / output**
+  - `-o, --output`: Output directory. Default: creates `Virasign_output/`.
 
-- `-d, --database`: Database name (`RefSeq`, `RVDB` (default), or accession number)
-- `--rvdb-version`: RVDB database version to download (e.g., `30.0`, `31.0`, `29.0`). Default: `31.0`. Only applies when using RVDB database. See [available versions](https://rvdb.dbi.udel.edu/previous-release) for the complete list.
-- `-a, --accession`: NCBI accession number(s) to download and merge with database
-- `-b, --blind`: Blind specific viral species from analysis (not reported in any output files). Useful for blinding yourself from common incidental findings that require mandatory reporting (e.g., Hepatitis viruses, HIV, HTLV, EBV, CMV, HPV). Can specify abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full official viral species names (e.g., `'Orthohepadnavirus hominoidei'`, `'Human immunodeficiency virus'`). Multiple species can be specified comma-separated (e.g., `-b HEP,HIV,HTLV,EBV,CMV,HPV` or `-b 'Orthohepadnavirus hominoidei,Human immunodeficiency virus'`). You can mix abbreviations and full species names in the same command. Blinded species will not appear in any intermediate or final output files, ensuring complete blinding.
+- **Choose what to search against (database)**
+  - `-d, --database`: Which database(s) to use: `RVDB` (default), `RefSeq`, a comma-separated list (e.g. `RVDB,RefSeq`), or a single accession (e.g. `OZ254622.1`).
+  - `--rvdb-version`: Which RVDB release to download when `-d` includes `RVDB` (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
+  - `-a, --accession`: Extra NCBI accessions to download and include in the run (merged with the selected database).
 
-- `--blinding`: List all available blinding abbreviations and exit. Useful for quick reference of which viruses can be blinded using abbreviations.
+- **Filtering / calling thresholds (controls what is reported)**
+  - `--min_identity`: Minimum average identity (%).
+  - `--min_mapped_reads`: Minimum mapped reads (default: `100`).
+  - `--coverage_depth_threshold`: Minimum coverage depth (default: `1.0`).
+  - `--coverage_breadth_threshold`: Minimum coverage breadth (default: `0.1`).
 
-- `--min_identity`: Minimum average identity percentage
-- `--min_mapped_reads`: Minimum number of mapped reads (default: `100`)
-- `--coverage_depth_threshold`: Minimum coverage depth threshold (default: `1.0`)
-- `--coverage_breadth_threshold`: Minimum coverage breadth threshold (default: `0.1`)
-- `-t, --threads`: Number of threads for minimap2 (default: `1`)
-- `--no-html`: Disable interactive HTML report generation. Default: HTML enabled.
-- `--enable-clustering`: Enable clustering for RVDB database (default: clustering disabled)
-- `--cluster_identity`: Identity threshold for RVDB clustering (default: `0.98`, i.e., 98%). Only used if clustering is enabled with `--enable-clustering`
+- **Reporting**
+  - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
+
+- **Performance**
+  - `-t, --threads`: Threads for minimap2 (default: `1`).
+
+- **Blinding (hide specific viruses completely)**
+  - `-b, --blind`: Blind specific viral species from the analysis (not reported in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names (Human immunodeficiency virus, Orthohepadnavirus hominoidei).
+  - `--blinding`: List available blinding abbreviations and exit.
+
+- **RVDB clustering (optional)**
+  - `--enable-clustering`: Enable clustering for RVDB (default: off).
+  - `--cluster_identity`: Identity threshold for clustering (default: `0.98`). Only used with `--enable-clustering`.
 
 ---
 
