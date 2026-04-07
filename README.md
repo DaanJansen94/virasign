@@ -130,14 +130,7 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 | `.virasign.log` | Detailed run log (hidden file in the output directory) |
 | `results_summary_*.html` | Interactive HTML report (see example below) |
 | `*_final_selected_references.json` | Summary per sample (metadata/stats; not the sequences themselves) |
-
-**Per-virus folder** (`{accession}/`) — reference FASTA, BAM, and mapped reads:
-
-| File | Description |
-|------|-------------|
-| `{accession}.fasta` | Reference sequence |
-| `{accession}.bam` | Alignments (indexed: `{accession}.bam.bai`) |
-| `{accession}_mapped_reads.fastq.gz` | Reads mapped to that reference (gzip FASTQ) |
+| `NC_004296.1/` | Per-virus outputs: `NC_004296.1.fasta`, `NC_004296.1.bam`, `NC_004296.1_mapped_reads.fastq.gz` |
 
 ---
 
