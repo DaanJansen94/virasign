@@ -19,18 +19,6 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 ## Installation
 
 ### Prerequisites
-First, install conda if you haven't already:
-```bash
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh
-```
-
-Then, ensure you have the required channels:
-```bash
-conda config --add channels defaults
-conda config --add channels bioconda
-conda config --add channels conda-forge
-```
 
 ### Option 1: Using Conda (Recommended)
 Install [virasign via Conda](https://anaconda.org/bioconda/virasign):
@@ -40,29 +28,22 @@ conda activate virasign
 ```
 
 ### Option 2: From Source Code
-1. Create and activate a new conda environment:
-   ```bash
-   conda create -n virasign python=3.9 -y
-   conda activate virasign
-   conda install -c conda-forge -c bioconda minimap2=2.24 seqtk=1.3 curl "samtools>=1.17" mmseqs2=15.6f452 -y
-   ```
+```bash
+conda create -n virasign python=3.9 -y
+conda activate virasign
+conda install -c conda-forge -c bioconda minimap2=2.24 seqtk=1.3 curl "samtools>=1.17" mmseqs2=15.6f452 -y
+git clone https://github.com/DaanJansen94/virasign.git
+cd virasign
+pip install .
+```
 
-2. Install virasign:
-   ```bash
-   git clone https://github.com/DaanJansen94/virasign.git  
-   cd virasign
-   pip install .
-   ```
-
-3. Re-installation (when updates are available):
-   ```bash
-   conda activate virasign  # Make sure you're in the right environment
-   cd virasign
-   git pull  # Get the latest updates from GitHub
-   pip uninstall virasign
-   pip install .
-   ```
-   Note: Any time you modify the code or pull updates from GitHub, you need to reinstall the package using these commands for the changes to take effect.
+Update later:
+```bash
+conda activate virasign
+cd virasign
+git pull
+pip install .
+```
 
 ---
 
