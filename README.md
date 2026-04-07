@@ -143,8 +143,6 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 
 ## HTML Output example
 
-Example HTML output for one sample:
-
 ![HTML Output Example](html_example.png)
 
 ---
