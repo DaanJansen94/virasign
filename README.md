@@ -62,6 +62,8 @@ virasign -i input_dir [options]
 virasign -i input_dir -o output_dir -t threads [options]
 ```
 
+---
+
 ### Command-Line Options
 
 To see all available options:
@@ -90,6 +92,8 @@ virasign --help
 - `--no-html`: Disable interactive HTML report generation. Default: HTML enabled.
 - `--enable-clustering`: Enable clustering for RVDB database (default: clustering disabled)
 - `--cluster_identity`: Identity threshold for RVDB clustering (default: `0.98`, i.e., 98%). Only used if clustering is enabled with `--enable-clustering`
+
+---
 
 ### Examples
 
