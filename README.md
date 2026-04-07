@@ -171,19 +171,3 @@ Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification
 ```
 
 ---
-
-## License
-
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - see the [LICENSE](LICENSE) file for details.
-
----
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
----
-
-## Support
-
-If you encounter any problems or have questions, please open an issue on GitHub.
