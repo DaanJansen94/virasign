@@ -37,7 +37,7 @@ cd virasign
 pip install .
 ```
 
-Update later:
+Update to newest code (if applicable):
 ```bash
 conda activate virasign
 cd virasign
