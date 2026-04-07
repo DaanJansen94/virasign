@@ -18,8 +18,6 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 
 ## Installation
 
-### Prerequisites
-
 ### Option 1: Using Conda (Recommended)
 Install [virasign via Conda](https://anaconda.org/bioconda/virasign):
 ```bash
