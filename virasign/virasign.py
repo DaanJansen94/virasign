@@ -610,6 +610,26 @@ def get_virasign_databases_dir() -> Path:
     databases_dir.mkdir(parents=True, exist_ok=True)
     return databases_dir
 
+
+def resolve_databases_storage_dir(db_dir_parent) -> Path:
+    """
+    Root directory that contains RVDB/, RefSeq/, Custom/.
+
+    Without --db-dir: ./Databases (under cwd).
+    With --db-dir X: X/Databases (created if missing).
+    With --db-dir X/.../Databases: use that path as the root (no extra Databases segment).
+    """
+    if db_dir_parent:
+        base = Path(db_dir_parent).expanduser()
+        if base.name.lower() == "databases":
+            out = base
+        else:
+            out = base / "Databases"
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+    return get_virasign_databases_dir()
+
+
 def download_rvdb_database(databases_dir: Path, force_download: bool = False, rvdb_version: str = "C-RVDBv31.0.fasta.gz", enable_clustering: bool = False, cluster_identity: float = 0.98) -> Path:
     """
     Download and prepare RVDB database with complete genomes only, optionally cluster at specified identity.
@@ -1794,6 +1814,59 @@ def build_taxonomy_database_from_ncbi_download(database_dir: Path, database_fast
         raise  # Re-raise to indicate there was an issue
     
     return accession_to_organism, accession_to_species
+
+
+def ensure_taxonomy_resources(database_fasta_path: Path) -> Path:
+    """
+    Ensure taxonomy_cache/ under the database FASTA parent has NCBI dumps + SQLite accession lookup.
+    Same logic as the first step of save_results(); use with --prepare-db so offline taxonomy is ready before any sample run.
+    """
+    database_fasta_path = Path(database_fasta_path)
+    database_dir = database_fasta_path.parent
+    database_path = get_taxonomy_database_path(database_dir)
+
+    database_exists = database_path.exists()
+    database_empty = False
+    if database_exists:
+        try:
+            if database_path.suffix == ".db":
+                conn = sqlite3.connect(str(database_path))
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM accession_to_organism")
+                count = cursor.fetchone()[0]
+                conn.close()
+                database_empty = count == 0
+            else:
+                with open(database_path, "r") as f:
+                    data = json.load(f)
+                    database_empty = len(data) == 0
+        except (sqlite3.Error, json.JSONDecodeError, Exception) as e:
+            logger.debug(f"Error checking taxonomy database: {e}")
+            database_empty = True
+
+    if not database_exists or database_empty:
+        if database_empty:
+            logger.info("=" * 60)
+            logger.info("Comprehensive taxonomy database exists but is empty. Rebuilding...")
+        else:
+            logger.info("=" * 60)
+            logger.info("Comprehensive taxonomy database not found.")
+            logger.info("Downloading NCBI pre-made taxonomy files (one-time download, ~few GB)...")
+            logger.info(f"Files will be stored in: {database_dir / 'taxonomy_cache'}")
+            logger.info("This will work offline forever after this download completes.")
+            logger.info("=" * 60)
+        try:
+            build_taxonomy_database_from_ncbi_download(database_dir, database_fasta=database_fasta_path)
+            logger.info("Taxonomy database built successfully from NCBI files!")
+            database_path = get_taxonomy_database_path(database_dir)
+        except Exception as e:
+            logger.error(f"Failed to build taxonomy database: {e}")
+            logger.warning("Continuing without comprehensive taxonomy database (will use API calls)")
+    else:
+        logger.info(f"Using existing comprehensive taxonomy database: {database_path}")
+
+    return database_path
+
 
 def fetch_organism_from_ncbi(accession: str, cache_path: Path = None, database_path: Path = None, max_retries: int = 3) -> str:
     """
@@ -4534,7 +4607,6 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     
     # Get taxonomy paths (stored in database directory, not output directory)
     cache_path = get_taxonomy_cache_path(database_dir)
-    database_path = get_taxonomy_database_path(database_dir)
     segment_database_path = get_segment_database_path(database_dir)
     
     # Get NCBI taxonomy file paths for offline species lookup
@@ -4542,47 +4614,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     nodes_file = ncbi_dir / "nodes.dmp"
     names_file = ncbi_dir / "names.dmp"
     
-    # Check if comprehensive database exists and is not empty, if not build it from NCBI pre-made files
-    database_exists = database_path.exists()
-    database_empty = False
-    if database_exists:
-        try:
-            # Check SQLite database
-            if database_path.suffix == '.db':
-                conn = sqlite3.connect(str(database_path))
-                cursor = conn.cursor()
-                cursor.execute('SELECT COUNT(*) FROM accession_to_organism')
-                count = cursor.fetchone()[0]
-                conn.close()
-                database_empty = (count == 0)
-            else:
-                # Check JSON database (legacy)
-                with open(database_path, 'r') as f:
-                    data = json.load(f)
-                    database_empty = len(data) == 0
-        except (sqlite3.Error, json.JSONDecodeError, Exception) as e:
-            logger.debug(f"Error checking database: {e}")
-            database_empty = True
-    
-    if not database_exists or database_empty:
-        if database_empty:
-            logger.info("="*60)
-            logger.info("Comprehensive taxonomy database exists but is empty. Rebuilding...")
-        else:
-            logger.info("="*60)
-            logger.info("Comprehensive taxonomy database not found.")
-            logger.info("Downloading NCBI pre-made taxonomy files (one-time download, ~few GB)...")
-            logger.info(f"Files will be stored in: {database_dir / 'taxonomy_cache'}")
-            logger.info("This will work offline forever after this download completes.")
-            logger.info("="*60)
-        try:
-            build_taxonomy_database_from_ncbi_download(database_dir, database_fasta=database_fasta_path)
-            logger.info("Taxonomy database built successfully from NCBI files!")
-            # Reload the database path after building
-            database_path = get_taxonomy_database_path(database_dir)
-        except Exception as e:
-            logger.error(f"Failed to build taxonomy database: {e}")
-            logger.warning("Continuing without comprehensive taxonomy database (will use API calls)")
+    database_path = ensure_taxonomy_resources(database_fasta_path)
     
     # sample_dir is already set at the beginning of save_results (line 2149)
     # Don't overwrite it here - output_dir is already the final directory
@@ -7069,7 +7101,7 @@ Examples:
         dest="db_dir",
         type=str,
         default=None,
-        help="Where Virasign stores downloaded databases (default: ./Databases)."
+        help="Parent directory (Virasign uses <path>/Databases/) or the storage root if <path> ends with Databases/ (default: . → ./Databases).",
     )
 
     parser.add_argument(
@@ -7301,7 +7333,7 @@ Examples:
     # Can return a single Path or a list of Paths if multiple databases specified
     # Also handles downloading and merging accessions if provided
     try:
-        databases_dir = Path(args.db_dir) if getattr(args, "db_dir", None) else get_virasign_databases_dir()
+        databases_dir = resolve_databases_storage_dir(getattr(args, "db_dir", None))
         database_result = resolve_database_path(
             args.database, 
             accessions=accessions_list,
@@ -7385,13 +7417,21 @@ Examples:
         print("Prepared database FASTA(s):")
         for p in database_fasta_paths:
             print(f"  - {p}")
+            fp = Path(p)
             try:
-                idx = ensure_minimap2_index(Path(p))
+                idx = ensure_minimap2_index(fp)
                 print(f"    index: {idx}")
             except SystemExit:
                 raise
             except Exception as e:
                 print(f"    index: failed ({e})")
+            try:
+                tax_db = ensure_taxonomy_resources(fp)
+                print(f"    taxonomy sqlite: {tax_db}")
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"    taxonomy: failed ({e})")
         return 0
     
     # Find samples

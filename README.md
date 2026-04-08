@@ -85,7 +85,7 @@ virasign --help
 
 - **Database download / storage (optional)**
   - `--prepare-db`: Download/unpack/index the selected database(s).
-  - `--db-dir`: Where to store downloaded databases (default: `./Databases`).
+  - `--db-dir`: `<path>/Databases/` for storage, or pass a path whose last component is `Databases` to use it as the root (default: `./Databases`).
 
 - **Viral identification thresholds (controls what is reported)**
   - `--min_identity`: Min read alignment identity (%) (default: RVDB `80`, RefSeq `95`).
