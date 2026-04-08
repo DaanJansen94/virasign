@@ -84,7 +84,7 @@ virasign --help
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
 
 - **Viral identification thresholds (controls what is reported)**
-  - `--min_identity`: Minimum alignment identity (%) of reads mapping to a reference.
+  - `--min_identity`: Min read alignment identity (%) (default: RVDB `80`, RefSeq `95`).
   - `--min_mapped_reads`: Minimum number of reads that must map to a reference for it to be reported (default: `100`).
   - `--coverage_depth_threshold`: Minimum average coverage depth across the reference (default: `1.0`).
   - `--coverage_breadth_threshold`: Minimum fraction of the reference covered by ≥1 read (default: `0.1`).

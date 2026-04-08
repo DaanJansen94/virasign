@@ -3037,7 +3037,7 @@ def extract_selected_references(database_fasta: Path, selected_headers: list, ou
                 logger.warning(f"  - {m}")
     return found_count
 
-def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, output_sam: Path, min_identity: float = 80.0, threads: int = 1, stream_per_reference_outputs: bool = False, curated_descriptions: list = None, sample_dir: Path = None) -> dict:
+def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, output_sam: Path, min_identity: float = 80.0, threads: int = 1, stream_per_reference_outputs: bool = False, curated_descriptions: list = None, sample_dir: Path = None, gzip_fastq: bool = True) -> dict:
     """
     Re-map all reads to the selected references to get accurate mapped_reads counts.
     Creates minimap2 index for the selected references database for speed.
@@ -3396,6 +3396,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         sam_header_lines = []
         bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam, ref_bai_path)
         samtools_threads = max(1, min(int(threads or 1), 16))
+        read_ids_by_reference = {}  # accession -> set(read_id)
 
         def _start_bam_pipe(accession: str):
             acc_dir = sample_dir / accession
@@ -3497,6 +3498,12 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                 if accession not in bam_pipes:
                     _start_bam_pipe(accession)
                 bam_pipes[accession]["stdin"].write(line)
+                # Collect read IDs for mapped-reads FASTQ extraction.
+                # Strip any /1 or /2 suffixes for compatibility with downstream naming.
+                read_id = fields[0].split("/")[0]
+                if accession not in read_ids_by_reference:
+                    read_ids_by_reference[accession] = set()
+                read_ids_by_reference[accession].add(read_id)
 
         proc.stdout.close()
         rc = proc.wait()
@@ -3531,6 +3538,54 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                     subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
                 else:
                     raise
+
+        # Create per-reference mapped reads FASTQ files directly from the original input FASTQ.
+        # This keeps streaming mode fast while still producing the expected *_mapped_reads.fastq(.gz) outputs.
+        sample_fastq_path = Path(sample_fastq)
+        input_is_gzipped = sample_fastq_path.suffix == ".gz"
+
+        for accession, read_ids_for_this_ref in read_ids_by_reference.items():
+            if not read_ids_for_this_ref:
+                continue
+            acc_dir = sample_dir / accession
+            acc_dir.mkdir(parents=True, exist_ok=True)
+            ref_fastq = acc_dir / (
+                f"{accession}_mapped_reads.fastq.gz" if gzip_fastq else f"{accession}_mapped_reads.fastq"
+            )
+
+            if gzip_fastq:
+                f_out_ctx = gzip.open(ref_fastq, "wt", compresslevel=6, encoding="utf-8", newline="\n")
+            else:
+                f_out_ctx = open(ref_fastq, "w", encoding="utf-8", newline="\n")
+
+            written = 0
+            with f_out_ctx as f_out:
+                if input_is_gzipped:
+                    f_in = gzip.open(sample_fastq_path, "rt")
+                else:
+                    f_in = open(sample_fastq_path, "r", encoding="utf-8", errors="replace")
+
+                with f_in:
+                    while True:
+                        header = f_in.readline()
+                        if not header:
+                            break
+                        seq = f_in.readline()
+                        plus = f_in.readline()
+                        qual = f_in.readline()
+                        if not seq or not plus or not qual:
+                            break
+                        if not header.startswith("@"):
+                            continue
+                        read_id = header[1:].split()[0].split("/")[0]
+                        if read_id in read_ids_for_this_ref:
+                            f_out.write(header)
+                            f_out.write(seq)
+                            f_out.write(plus)
+                            f_out.write(qual)
+                            written += 1
+
+            logger.info(f"  Wrote {written:,} mapped read(s) to {ref_fastq}")
 
         # Compute covered_positions from intervals and build updated_stats using selected_refs_fasta header map
         def merged_covered_length(intervals):
@@ -4632,7 +4687,8 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 threads=threads,
                 stream_per_reference_outputs=True,
                 curated_descriptions=curated_stats_dedup,
-                sample_dir=sample_dir
+                sample_dir=sample_dir,
+                gzip_fastq=gzip_fastq
             )
             
             # Update curated_stats_dedup with accurate counts
