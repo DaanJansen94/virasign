@@ -95,6 +95,7 @@ virasign --help
 
 - **Performance**
   - `-t, --threads`: Threads used for the run (default: `1`).
+  - `-r, --ram`: minimap2 memory setting in GB (default: `8`; e.g. `-r 1`).
 
 - **Blinding (hide specific viruses completely)**
   - `-b, --blind`: Blind specific viral species from the analysis (not reported in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names (Human immunodeficiency virus, Orthohepadnavirus hominoidei).
