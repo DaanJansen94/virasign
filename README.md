@@ -91,6 +91,7 @@ virasign --help
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
+  - `--no-gzip-fastq`: Write per-virus mapped reads as plain `.fastq` (default: `.fastq.gz`).
 
 - **Performance**
   - `-t, --threads`: Threads used for the run (default: `1`).

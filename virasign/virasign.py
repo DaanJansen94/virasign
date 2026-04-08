@@ -3643,7 +3643,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     logger.debug(f"Updated stats keys: {list(updated_stats.keys())[:3]}...")  # Debug: show first few keys
     return updated_stats
 
-def create_per_reference_outputs(sample_name: str, curated_descriptions: list, selected_refs_fasta: Path, remap_sam: Path, sample_fastq: Path, sample_dir: Path, threads: int = 1, min_identity: float = 0.0):
+def create_per_reference_outputs(sample_name: str, curated_descriptions: list, selected_refs_fasta: Path, remap_sam: Path, sample_fastq: Path, sample_dir: Path, threads: int = 1, gzip_fastq: bool = True, min_identity: float = 0.0):
     """
     Create per-reference folders with SAM, BAM, reference FASTA, and mapped reads FASTQ.
     For each reference in curated_descriptions.json, creates a folder named after its accession.
@@ -3867,12 +3867,19 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             read_ids_for_this_ref = read_ids_by_reference[accession]
             logger.info(f"  Extracting {len(read_ids_for_this_ref)} read(s) that mapped to {accession}...")
 
-            ref_fastq = acc_dir / f"{accession}_mapped_reads.fastq.gz"
+            ref_fastq = acc_dir / (
+                f"{accession}_mapped_reads.fastq.gz" if gzip_fastq else f"{accession}_mapped_reads.fastq"
+            )
             sample_fastq_path = Path(sample_fastq)
             is_gzipped = sample_fastq_path.suffix == ".gz"
 
             read_count = 0
-            with gzip.open(ref_fastq, "wt", compresslevel=6, encoding="utf-8", newline="\n") as f_out:
+            if gzip_fastq:
+                f_out_ctx = gzip.open(ref_fastq, "wt", compresslevel=6, encoding="utf-8", newline="\n")
+            else:
+                f_out_ctx = open(ref_fastq, "w", encoding="utf-8", newline="\n")
+
+            with f_out_ctx as f_out:
                 if is_gzipped:
                     f_in = gzip.open(sample_fastq_path, "rt")
                 else:
@@ -4885,7 +4892,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 db_selected_refs = db_dir / f"{sample_name}_selected_references.fasta"
                 db_remap_sam = db_dir / f"{sample_name}_remapped.sam"
                 if db_selected_refs.exists() and db_remap_sam.exists():
-                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, threads=threads, min_identity=min_identity)
+                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, threads=threads, gzip_fastq=args.gzip_fastq, min_identity=min_identity)
                     
                     # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                     if db_selected_refs.exists():
@@ -4906,7 +4913,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
             remap_sam = sample_dir / f"{sample_name}_remapped.sam"
             if selected_refs_fasta.exists() and remap_sam.exists():
-                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, min_identity=min_identity)
+                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, gzip_fastq=args.gzip_fastq, min_identity=min_identity)
     
                 # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                 if selected_refs_fasta.exists():
@@ -7065,6 +7072,14 @@ Examples:
         action="store_false",
         default=True,
         help="Disable HTML report generation (results_summary_*.html). Default: HTML enabled."
+    )
+
+    parser.add_argument(
+        "--no-gzip-fastq",
+        dest="gzip_fastq",
+        action="store_false",
+        default=True,
+        help="Write per-virus mapped reads as plain .fastq (no gzip). Default: write .fastq.gz."
     )
     
     if args is None:
