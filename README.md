@@ -101,7 +101,7 @@ virasign --help
 
 - **RVDB clustering (optional)**: Cluster RVDB to reduce database size and speed up runtime.
   - `--enable-clustering`: Enable clustering for RVDB (default: off).
-  - `--cluster_identity`: Identity threshold for clustering (default: `0.98`). Only used with `--enable-clustering`.
+  - `--cluster_identity`: Clustering identity (default: `0.98`; only with `--enable-clustering`).
 
 ---
 
