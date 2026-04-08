@@ -4465,6 +4465,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
             sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads,
             coverage_depth_threshold, coverage_breadth_threshold, threads,
             gzip_fastq=gzip_fastq,
+            minimap2_I=minimap2_I,
             blinded_species=blinded_species,
             organism_variations=organism_variations
         )
@@ -4495,6 +4496,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, sample_dir,
         database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold,
         coverage_breadth_threshold, threads, gzip_fastq=gzip_fastq,
+        minimap2_I=minimap2_I,
         blinded_species=blinded_species, organism_variations=organism_variations
     )
     
@@ -4509,7 +4511,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     
     return confident_names
 
-def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, blinded_species=None, organism_variations=None):
+def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None):
     """Save mapping statistics and best reference to JSON file and save best reference sequence as FASTA."""
     confident_names = []
     # output_dir is already the sample directory (or database-specific subdirectory if multiple databases)
