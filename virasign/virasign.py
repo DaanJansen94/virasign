@@ -1169,7 +1169,7 @@ def is_accession_number(text: str) -> bool:
     pattern = r'^[A-Z]{1,2}_?\d+$'
     return bool(re.match(pattern, base_text.upper()))
 
-def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = False, cluster_identity: float = 0.98, rvdb_version: str = None) -> Path:
+def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = False, cluster_identity: float = 0.98, rvdb_version: str = None, databases_dir: Path = None) -> Path:
     """
     Resolve database argument to actual file path.
     Supports:
@@ -1182,7 +1182,8 @@ def resolve_database_path(database_arg: str, accessions: list = None, enable_clu
     If accessions are provided, they will be downloaded and merged with the database.
     """
     database_arg = database_arg.strip()
-    databases_dir = get_virasign_databases_dir()
+    databases_dir = Path(databases_dir) if databases_dir is not None else get_virasign_databases_dir()
+    databases_dir.mkdir(parents=True, exist_ok=True)
     
     # Check if database_arg is a single accession number
     if is_accession_number(database_arg):
@@ -7062,6 +7063,22 @@ Examples:
         dest="database",
         help="Path to reference database FASTA file, or database name (RVDB, RefSeq, or comma-separated: RVDB,RefSeq). Database names will be automatically downloaded to Databases/ directory. Default: RVDB"
     )
+
+    parser.add_argument(
+        "--db-dir",
+        dest="db_dir",
+        type=str,
+        default=None,
+        help="Where Virasign stores downloaded databases (default: ./Databases)."
+    )
+
+    parser.add_argument(
+        "--prepare-db",
+        dest="prepare_db",
+        action="store_true",
+        default=False,
+        help="Only download/unpack/index the selected database(s) and exit (no sample processing)."
+    )
     
     parser.add_argument(
         "-o", "--output",
@@ -7191,62 +7208,67 @@ Examples:
         print(list_blinding_abbreviations())
         sys.exit(0)
     
-    # Validate that input is provided (unless --blinding was used)
-    if not args.input:
+    # Validate that input is provided (unless --blinding or --prepare-db was used)
+    if not args.input and not getattr(args, "prepare_db", False):
         parser.error("the following arguments are required: -i/--input")
     
     # Set default for enable_clustering (defaults to False if --enable-clustering not specified)
     if not hasattr(args, 'enable_clustering'):
         args.enable_clustering = False
     
-    # Set up output directory structure
-    # If --output not specified, create Virasign_output folder in current directory
-    # If --output . (current directory), create Virasign_output folder
-    # Otherwise use the specified output directory
-    # Handle case where current directory was deleted
-    try:
-        current_dir = Path.cwd()
-    except (OSError, FileNotFoundError):
-        # Current directory was deleted, use os.getcwd() with error handling
-        try:
-            current_dir = Path(os.getcwd())
-        except (OSError, FileNotFoundError):
-            # Fallback to home directory or /tmp
-            current_dir = Path(os.environ.get('HOME', '/tmp'))
-            print(f"Warning: Current working directory was deleted, using {current_dir} as base", file=sys.stderr)
-    
-    if args.output is None or args.output == ".":
-        # If output not specified or set to ".", create Virasign_output in current directory
-        output_dir = current_dir / "Virasign_output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        if args.output is None:
-            # Log that we're using default output directory
-            print(f"Output directory not specified, using default: {output_dir}")
+    # Set up output directory and logging.
+    # In --prepare-db mode we should NOT create/clean Virasign_output; just log to CWD.
+    if getattr(args, "prepare_db", False):
+        setup_logging(Path.cwd(), verbose=True)
+        output_dir = Path.cwd()
     else:
-        output_dir = Path(args.output)
-        output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Clean output directory (remove all old sample directories and files, including log file)
-    # Do this BEFORE setup_logging so the log file is overwritten
-    if output_dir.exists():
-        import shutil
-        items_removed = 0
-        for item in output_dir.iterdir():
-            if item.is_dir():
-                shutil.rmtree(item)
-                items_removed += 1
-            else:
-                item.unlink()
-                items_removed += 1
-        if items_removed > 0:
-            # Use print since logger isn't set up yet
-            print(f"Cleaned output directory: removed {items_removed} old item(s) from {output_dir}")
-    
-    # Set up logging (log file goes in output_dir, same as sample outputs)
-    # This will create a fresh log file
-    # Use verbose=False to suppress console output (we'll use progress bars instead)
-    setup_logging(output_dir, verbose=False)
-    logger.info(f"Cleaned output directory: {output_dir} (removed old sample directories and files)")
+        # If --output not specified, create Virasign_output folder in current directory
+        # If --output . (current directory), create Virasign_output folder
+        # Otherwise use the specified output directory
+        # Handle case where current directory was deleted
+        try:
+            current_dir = Path.cwd()
+        except (OSError, FileNotFoundError):
+            # Current directory was deleted, use os.getcwd() with error handling
+            try:
+                current_dir = Path(os.getcwd())
+            except (OSError, FileNotFoundError):
+                # Fallback to home directory or /tmp
+                current_dir = Path(os.environ.get('HOME', '/tmp'))
+                print(f"Warning: Current working directory was deleted, using {current_dir} as base", file=sys.stderr)
+
+        if args.output is None or args.output == ".":
+            # If output not specified or set to ".", create Virasign_output in current directory
+            output_dir = current_dir / "Virasign_output"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            if args.output is None:
+                # Log that we're using default output directory
+                print(f"Output directory not specified, using default: {output_dir}")
+        else:
+            output_dir = Path(args.output)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clean output directory (remove all old sample directories and files, including log file)
+        # Do this BEFORE setup_logging so the log file is overwritten
+        if output_dir.exists():
+            import shutil
+            items_removed = 0
+            for item in output_dir.iterdir():
+                if item.is_dir():
+                    shutil.rmtree(item)
+                    items_removed += 1
+                else:
+                    item.unlink()
+                    items_removed += 1
+            if items_removed > 0:
+                # Use print since logger isn't set up yet
+                print(f"Cleaned output directory: removed {items_removed} old item(s) from {output_dir}")
+
+        # Set up logging (log file goes in output_dir, same as sample outputs)
+        # This will create a fresh log file
+        # Use verbose=False to suppress console output (we'll use progress bars instead)
+        setup_logging(output_dir, verbose=False)
+        logger.info(f"Cleaned output directory: {output_dir} (removed old sample directories and files)")
     
     # Parse accessions (either comma-separated string OR text file, not both)
     accessions_list = None
@@ -7279,12 +7301,14 @@ Examples:
     # Can return a single Path or a list of Paths if multiple databases specified
     # Also handles downloading and merging accessions if provided
     try:
+        databases_dir = Path(args.db_dir) if getattr(args, "db_dir", None) else get_virasign_databases_dir()
         database_result = resolve_database_path(
             args.database, 
             accessions=accessions_list,
             enable_clustering=args.enable_clustering,
             cluster_identity=args.cluster_identity,
-            rvdb_version=getattr(args, 'rvdb_version', None)
+            rvdb_version=getattr(args, 'rvdb_version', None),
+            databases_dir=databases_dir
         )
         if isinstance(database_result, list):
             database_fasta_paths = database_result
@@ -7354,6 +7378,21 @@ Examples:
     logger.info("Precomputing shared database context...")
     for database_fasta_path in database_fasta_paths:
         prepare_database_context(Path(database_fasta_path))
+
+    # Prepare DB only mode: download/unpack/index completed, no sample processing.
+    if getattr(args, "prepare_db", False):
+        print("Database preparation complete.")
+        print("Prepared database FASTA(s):")
+        for p in database_fasta_paths:
+            print(f"  - {p}")
+            try:
+                idx = ensure_minimap2_index(Path(p))
+                print(f"    index: {idx}")
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"    index: failed ({e})")
+        return 0
     
     # Find samples
     input_dir = Path(args.input)
