@@ -87,7 +87,7 @@ virasign --help
   - `--min_identity`: Minimum alignment identity (%) of reads mapping to a reference.
   - `--min_mapped_reads`: Minimum number of reads that must map to a reference for it to be reported (default: `100`).
   - `--coverage_depth_threshold`: Minimum average coverage depth across the reference (default: `1.0`).
-  - `--coverage_breadth_threshold`: Minimum fraction of the reference covered by at least 1 read (default: `0.1`).
+  - `--coverage_breadth_threshold`: Minimum fraction of the reference covered by ≥1 read (default: `0.1`).
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
