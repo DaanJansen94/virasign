@@ -83,7 +83,7 @@ virasign --help
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
 
-- **Filtering thresholds (controls what is reported)**
+- **Viral identification thresholds (controls what is reported)**
   - `--min_identity`: Minimum alignment identity (%) of reads mapping to a reference.
   - `--min_mapped_reads`: Minimum number of reads that must map to a reference for it to be reported (default: `100`).
   - `--coverage_depth_threshold`: Minimum average coverage depth across the reference (default: `1.0`).
