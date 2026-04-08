@@ -3395,6 +3395,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
 
         sam_header_lines = []
         bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam, ref_bai_path)
+        samtools_threads = max(1, min(int(threads or 1), 16))
 
         def _start_bam_pipe(accession: str):
             acc_dir = sample_dir / accession
@@ -3407,8 +3408,8 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             if bai.exists():
                 bai.unlink()
 
-            view_cmd = ["samtools", "view", "-bS", "-"]
-            sort_cmd = ["samtools", "sort", "-o", str(ref_bam), "-"]
+            view_cmd = ["samtools", "view", "-@", str(samtools_threads), "-bS", "-"]
+            sort_cmd = ["samtools", "sort", "-@", str(samtools_threads), "-o", str(ref_bam), "-"]
             view_p = subprocess.Popen(view_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
                 sort_p = subprocess.Popen(sort_cmd, stdin=view_p.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -3522,7 +3523,14 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                 pass
             view_p.wait()
             sort_p.wait()
-            subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
+            try:
+                subprocess.run(["samtools", "index", "-@", str(samtools_threads), str(ref_bam)], check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as e:
+                stderr = (e.stderr or "").lower()
+                if "invalid option" in stderr or "unrecognized option" in stderr:
+                    subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
+                else:
+                    raise
 
         # Compute covered_positions from intervals and build updated_stats using selected_refs_fasta header map
         def merged_covered_length(intervals):
@@ -3635,7 +3643,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     logger.debug(f"Updated stats keys: {list(updated_stats.keys())[:3]}...")  # Debug: show first few keys
     return updated_stats
 
-def create_per_reference_outputs(sample_name: str, curated_descriptions: list, selected_refs_fasta: Path, remap_sam: Path, sample_fastq: Path, sample_dir: Path, min_identity: float = 0.0):
+def create_per_reference_outputs(sample_name: str, curated_descriptions: list, selected_refs_fasta: Path, remap_sam: Path, sample_fastq: Path, sample_dir: Path, threads: int = 1, min_identity: float = 0.0):
     """
     Create per-reference folders with SAM, BAM, reference FASTA, and mapped reads FASTQ.
     For each reference in curated_descriptions.json, creates a folder named after its accession.
@@ -3667,6 +3675,7 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
     curated_accessions_set = set(curated_accessions)
     sam_header_lines = []
     bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam)
+    samtools_threads = max(1, min(int(threads or 1), 16))
 
     def _start_bam_pipe(accession: str):
         acc_dir = sample_dir / accession
@@ -3680,8 +3689,8 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             ref_bai.unlink()
 
         # SAM(stdin) -> BAM -> sort -> BAM
-        view_cmd = ["samtools", "view", "-bS", "-"]
-        sort_cmd = ["samtools", "sort", "-o", str(ref_bam), "-"]
+        view_cmd = ["samtools", "view", "-@", str(samtools_threads), "-bS", "-"]
+        sort_cmd = ["samtools", "sort", "-@", str(samtools_threads), "-o", str(ref_bam), "-"]
 
         view_p = subprocess.Popen(view_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
@@ -3837,7 +3846,15 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             if sort_rc != 0:
                 raise subprocess.CalledProcessError(sort_rc, sort_p.args, output=None, stderr=sort_err)
 
-            subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
+            try:
+                subprocess.run(["samtools", "index", "-@", str(samtools_threads), str(ref_bam)], check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as e:
+                # Some samtools builds may not support threaded index; fall back gracefully.
+                stderr = (e.stderr or "").lower()
+                if "invalid option" in stderr or "unrecognized option" in stderr:
+                    subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
+                else:
+                    raise
             if ref_bai.exists():
                 logger.info(f"  Created {ref_bam.name} and {ref_bai.name}")
             else:
@@ -4868,7 +4885,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 db_selected_refs = db_dir / f"{sample_name}_selected_references.fasta"
                 db_remap_sam = db_dir / f"{sample_name}_remapped.sam"
                 if db_selected_refs.exists() and db_remap_sam.exists():
-                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, min_identity=min_identity)
+                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, threads=threads, min_identity=min_identity)
                     
                     # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                     if db_selected_refs.exists():
@@ -4889,7 +4906,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
             remap_sam = sample_dir / f"{sample_name}_remapped.sam"
             if selected_refs_fasta.exists() and remap_sam.exists():
-                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, min_identity=min_identity)
+                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, min_identity=min_identity)
     
                 # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                 if selected_refs_fasta.exists():
