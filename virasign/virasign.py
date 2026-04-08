@@ -7038,28 +7038,60 @@ def generate_html_visualization(output_dir: Path):
         
         logger.info(f"Generated HTML visualization for {database_name}: {html_file}")
 
-def find_samples(input_path):
-    """Find FASTQ samples from either an input directory or a single FASTQ file.
 
-    Supports `.fastq`, `.fq`, and gzipped variants (`.fastq.gz`, `.fq.gz`).
-    """
+def is_fastq_file(path: Path) -> bool:
+    """True if path looks like a FASTQ/FASTQ.gz (case-insensitive suffix)."""
+    if not path.is_file():
+        return False
+    n = path.name.lower()
+    return n.endswith((".fastq", ".fastq.gz", ".fq", ".fq.gz"))
+
+
+def infer_sample_name_from_fastq(path: Path) -> str:
+    """Strip .fastq / .fq and optional .gz for output folder names (preserves stem case)."""
+    name = path.name
+    lower = name.lower()
+    for suf in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+        if lower.endswith(suf):
+            return name[: len(name) - len(suf)]
+    return path.stem
+
+
+def resolve_input_path(input_path) -> Path:
+    """Expand user, resolve relative paths against cwd."""
     input_path = Path(input_path)
+    try:
+        input_path = input_path.expanduser()
+        if not input_path.is_absolute():
+            input_path = (Path.cwd() / input_path).resolve()
+        else:
+            input_path = input_path.resolve()
+    except (OSError, RuntimeError):
+        pass
+    return input_path
 
-    if input_path.is_file():
-        name = input_path.name.lower()
-        if name.endswith((".fastq", ".fastq.gz", ".fq", ".fq.gz")):
-            return [input_path]
+
+def find_samples(input_path):
+    """Find FASTQ samples from a directory (non-recursive) or a single FASTQ file.
+
+    Accepts `.fastq`, `.fq`, and gzipped `.fastq.gz`, `.fq.gz` (any letter case).
+    """
+    input_path = resolve_input_path(input_path)
+
+    if not input_path.exists():
         return []
 
-    samples = []
-    for fastq_file in sorted(input_path.glob("*.fastq*")):
-        if fastq_file.is_file():
-            samples.append(fastq_file)
-    for fastq_file in sorted(input_path.glob("*.fq*")):
-        if fastq_file.is_file() and fastq_file not in samples:
-            samples.append(fastq_file)
+    if input_path.is_file():
+        return [input_path] if is_fastq_file(input_path) else []
 
-    return samples
+    if input_path.is_dir():
+        samples = []
+        for f in sorted(input_path.iterdir()):
+            if is_fastq_file(f):
+                samples.append(f)
+        return samples
+
+    return []
 
 def main(args=None):
     """Main entry point for the reference selection pipeline."""
@@ -7070,6 +7102,10 @@ def main(args=None):
 Examples:
   Basic usage with default RVDB database:
     virasign -i input_dir -o output_dir
+
+  One gzipped FASTQ or a folder of FASTQs:
+    virasign -i reads.fastq.gz
+    virasign -i my_fastq_folder
   
   Use specific RVDB version:
     virasign -i input_dir -o output_dir -d RVDB --rvdb-version 31.0
@@ -7084,7 +7120,7 @@ Examples:
         type=str,
         required=False,  # Will be validated after checking for --blinding
         dest="input",
-        help="Input directory containing FASTQ files"
+        help="Folder of FASTQ/FASTQ.gz (or .fq/.fq.gz), or one such file; top-level files only in folders",
     )
     
     parser.add_argument(
@@ -7356,6 +7392,7 @@ Examples:
                 logger.info(f"  (merged with {len(accessions_list)} accession(s))")
     except Exception as e:
         logger.error(f"Failed to resolve database '{args.database}': {e}")
+        print(f"Error: failed to resolve database '{args.database}': {e}", file=sys.stderr)
         sys.exit(1)
     
     # Auto-detect database type and set default identity threshold if not specified
@@ -7439,7 +7476,14 @@ Examples:
     samples = find_samples(input_dir)
     
     if not samples:
-        logger.error(f"No FASTQ files found in {input_dir}")
+        resolved_in = resolve_input_path(input_dir)
+        msg = (
+            f"No FASTQ files found for -i/--input {input_dir!s} (resolved: {resolved_in!s}). "
+            f"Use a directory of .fastq/.fq files (plain or .gz), or one such file. "
+            f"See also {output_dir / '.virasign.log'}."
+        )
+        logger.error(msg)
+        print(f"Error: {msg}", file=sys.stderr)
         sys.exit(1)
     
     logger.info(f"Found {len(samples)} sample(s)")
@@ -7447,12 +7491,8 @@ Examples:
     # Prepare all sample+database combinations for processing
     sample_db_tasks = []
     for sample_file in samples:
-        sample_name = sample_file.stem
-        if sample_name.endswith('.fastq'):
-            sample_name = sample_file.stem[:-6]  # Remove .fastq
-        elif sample_name.endswith('.fq'):
-            sample_name = sample_file.stem[:-3]  # Remove .fq
-        
+        sample_name = infer_sample_name_from_fastq(sample_file)
+
         # If multiple databases, process each separately (no combining)
         for database_fasta_path in database_fasta_paths:
             # Detect database type from path
