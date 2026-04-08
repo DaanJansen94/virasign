@@ -4333,7 +4333,7 @@ def _process_sample_task(task_args):
     """
     (sample_name, sample_file_str, database_fasta_path_str, db_output_dir_str, db_min_identity, 
      db_name, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, 
-     threads, blinded_species, organism_variations) = task_args
+     threads, gzip_fastq, blinded_species, organism_variations) = task_args
     
     # Convert strings back to Path objects
     sample_file = Path(sample_file_str)
@@ -4346,7 +4346,7 @@ def _process_sample_task(task_args):
     logger.info(f"Output directory: {db_output_dir}")
     logger.info(f"Threads: {threads}")
     
-    process_sample(
+    confident_names = process_sample(
         sample_name,
         sample_file,
         str(database_fasta_path),
@@ -4356,12 +4356,13 @@ def _process_sample_task(task_args):
         coverage_depth_threshold=coverage_depth_threshold,
         coverage_breadth_threshold=coverage_breadth_threshold,
         threads=threads,
+        gzip_fastq=gzip_fastq,
         blinded_species=blinded_species,
         organism_variations=organism_variations
     )
-    return sample_name, db_name
+    return sample_name, db_name, confident_names
 
-def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, blinded_species=None, organism_variations=None):
+def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, blinded_species=None, organism_variations=None):
     """
     Process a single sample: map ALL reads to database and find best reference.
     Simple workflow: no rarefaction, no unmapped extraction, no minority detection.
@@ -4402,14 +4403,15 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     if not best_ref:
         logger.warning("No reads mapped to any reference for this sample. Skipping reference selection.")
         # Still save empty results so the user knows the sample was processed
-        save_results(
+        confident_names = save_results(
             sample_name, None, None, all_stats, filtered_stats, curated_stats,
             sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads,
             coverage_depth_threshold, coverage_breadth_threshold, threads,
+            gzip_fastq=gzip_fastq,
             blinded_species=blinded_species,
             organism_variations=organism_variations
         )
-        return None
+        return confident_names
     
     # Select best reference from curated set (using user-specified thresholds)
     if curated_stats:
@@ -4432,7 +4434,12 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     
     # Save results with curated JSON (re-mapping will happen inside save_results after deduplication)
     # Use sample_dir (which is already database-specific if multiple databases)
-    save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads, blinded_species=blinded_species, organism_variations=organism_variations)
+    confident_names = save_results(
+        sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, sample_dir,
+        database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold,
+        coverage_breadth_threshold, threads, gzip_fastq=gzip_fastq,
+        blinded_species=blinded_species, organism_variations=organism_variations
+    )
     
     # Log to file only (not to console)
     logger.info("Sample processing complete!")
@@ -4443,10 +4450,11 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     else:
         logger.info("  - No reads mapped to any reference")
     
-    return best_ref
+    return confident_names
 
-def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, blinded_species=None, organism_variations=None):
+def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, blinded_species=None, organism_variations=None):
     """Save mapping statistics and best reference to JSON file and save best reference sequence as FASTA."""
+    confident_names = []
     # output_dir is already the sample directory (or database-specific subdirectory if multiple databases)
     sample_dir = output_dir
     
@@ -4853,6 +4861,23 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         logger.info(f"DEBUG: Lassa virus AFTER final threshold filtering: {len(lassa_after_final)} entry(ies) in final JSON")
     elif lassa_before_final:
         logger.warning(f"DEBUG: Lassa virus was present before final filtering but is missing from final JSON!")
+
+    # Console/log summary: confident hits based on coverage breadth.
+    # This is an intentionally simple heuristic for quick human review.
+    confident_breadth = 0.20
+    confident = [d for d in curated_descriptions if float(d.get("coverage_breadth", 0.0) or 0.0) >= confident_breadth]
+    confident_names = []
+    for d in confident:
+        name = (d.get("viral_species") or d.get("organism") or "").strip()
+        if name:
+            confident_names.append(name)
+    confident_names = sorted(set(confident_names))
+
+    logger.info(f"Confident-hit heuristic (arbitrary): coverage breadth >= {confident_breadth:.2f}")
+    if confident_names:
+        logger.info(f"CONFIDENT viral hits (breadth >= 20%%): {', '.join(confident_names)}")
+    else:
+        logger.info("CONFIDENT viral hits (breadth >= 20%): none")
     
     if curated_descriptions:
         # Separate by database source if multiple databases were used
@@ -4892,7 +4917,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 db_selected_refs = db_dir / f"{sample_name}_selected_references.fasta"
                 db_remap_sam = db_dir / f"{sample_name}_remapped.sam"
                 if db_selected_refs.exists() and db_remap_sam.exists():
-                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, threads=threads, gzip_fastq=args.gzip_fastq, min_identity=min_identity)
+                    create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, threads=threads, gzip_fastq=gzip_fastq, min_identity=min_identity)
                     
                     # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                     if db_selected_refs.exists():
@@ -4913,7 +4938,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
             remap_sam = sample_dir / f"{sample_name}_remapped.sam"
             if selected_refs_fasta.exists() and remap_sam.exists():
-                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, gzip_fastq=args.gzip_fastq, min_identity=min_identity)
+                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, gzip_fastq=gzip_fastq, min_identity=min_identity)
     
                 # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                 if selected_refs_fasta.exists():
@@ -5197,6 +5222,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         logger.info(f"  Average identity: {best_stats['avg_identity']:.2f}%")
         logger.info(f"  Coverage depth: {best_stats.get('coverage_depth', 0.0):.2f}")
         logger.info(f"  Coverage breadth: {best_stats.get('coverage_breadth', 0.0):.4f}")
+    return confident_names
 
 def generate_html_visualization(output_dir: Path):
     """
@@ -7334,6 +7360,7 @@ Examples:
                 args.coverage_depth_threshold,
                 args.coverage_breadth_threshold,
                 args.threads,  # Will be adjusted based on read count
+                args.gzip_fastq,
                 blinded_species,
                 organism_variations
             ))
@@ -7397,8 +7424,9 @@ Examples:
             task_list = list(task_args)
             task_list[9] = 1  # Override to 1 thread
             print(f"[{i}/{num_tasks}] {task_list[0]}: Running...")
-            _process_sample_task(tuple(task_list))
-            print(f"[{i}/{num_tasks}] {task_list[0]}: ✓ Completed")
+            sample_name, db_name, confident_names = _process_sample_task(tuple(task_list))
+            suffix = f" | CONFIDENT (breadth≥20%): {', '.join(confident_names)}" if confident_names else " | CONFIDENT (breadth≥20%): none"
+            print(f"[{i}/{num_tasks}] {sample_name}: ✓ Completed{suffix}")
     else:
         # Scale up threads per sample if more threads are available
         # First, calculate minimum threads needed based on read counts
@@ -7488,10 +7516,11 @@ Examples:
                     completed_count += 1
                     
                     try:
-                        sample_name, db_name = completed_future.result()
+                        sample_name, db_name, confident_names = completed_future.result()
                         sample_progress[sample_name] = "Completed"
                         logger.info(f"Completed ({completed_count}/{num_tasks}): {sample_name} ({db_name}) - {threads_used} threads freed")
-                        print(f"[{completed_count}/{num_tasks}] {sample_name}: ✓ Completed")
+                        suffix = f" | CONFIDENT (breadth≥20%): {', '.join(confident_names)}" if confident_names else " | CONFIDENT (breadth≥20%): none"
+                        print(f"[{completed_count}/{num_tasks}] {sample_name}: ✓ Completed{suffix}")
                     except Exception as e:
                         sample_progress[task[0]] = "Failed"
                         logger.error(f"Task {task[0]} ({task[5]}) failed: {e}")
