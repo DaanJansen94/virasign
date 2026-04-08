@@ -79,27 +79,27 @@ virasign --help
   - `-o, --output`: Output directory. Default: creates `Virasign_output/`.
 
 - **Choose what to search against (database)**
-  - `-d, --database`: Which database(s) to use: `RVDB` (default), `RefSeq`, a comma-separated list (e.g. `RVDB,RefSeq`), or a single accession (e.g. `OZ254622.1`).
-  - `--rvdb-version`: Which RVDB release to download when `-d` includes `RVDB` (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
-  - `-a, --accession`: Extra NCBI accessions to download and include in the run (merged with the selected database).
+  - `-d, --database`: Database(s) to use: `RVDB` (default), `RefSeq`, `RVDB,RefSeq`, or a single accession (e.g. `OZ254622.1`).
+  - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
+  - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
 
-- **Filtering / calling thresholds (controls what is reported)**
-  - `--min_identity`: Minimum average identity (%).
-  - `--min_mapped_reads`: Minimum mapped reads (default: `100`).
-  - `--coverage_depth_threshold`: Minimum coverage depth (default: `1.0`).
-  - `--coverage_breadth_threshold`: Minimum coverage breadth (default: `0.1`).
+- **Filtering thresholds (controls what is reported)**
+  - `--min_identity`: Minimum alignment identity (%) of reads mapping to a reference.
+  - `--min_mapped_reads`: Minimum number of reads that must map to a reference for it to be reported (default: `100`).
+  - `--coverage_depth_threshold`: Minimum average coverage depth across the reference (default: `1.0`).
+  - `--coverage_breadth_threshold`: Minimum fraction of the reference covered by at least 1 read (default: `0.1`).
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
 
 - **Performance**
-  - `-t, --threads`: Threads for minimap2 (default: `1`).
+  - `-t, --threads`: Threads used for the run (default: `1`).
 
 - **Blinding (hide specific viruses completely)**
   - `-b, --blind`: Blind specific viral species from the analysis (not reported in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names (Human immunodeficiency virus, Orthohepadnavirus hominoidei).
   - `--blinding`: List available blinding abbreviations and exit.
 
-- **RVDB clustering (optional)**
+- **RVDB clustering (optional)**: Cluster RVDB to reduce database size and speed up runtime.
   - `--enable-clustering`: Enable clustering for RVDB (default: off).
   - `--cluster_identity`: Identity threshold for clustering (default: `0.98`). Only used with `--enable-clustering`.
 
