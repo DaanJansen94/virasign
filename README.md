@@ -72,7 +72,7 @@ virasign --help
 ```
 
 #### Required Arguments
-- `-i, --input`: Input directory containing FASTQ files
+- `-i, --input`: A directory of FASTQ files, or a single FASTQ file (`.fastq/.fq`, optionally compressed)
 
 #### Optional Arguments
 - **Input / output**

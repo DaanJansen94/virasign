@@ -6911,15 +6911,27 @@ def generate_html_visualization(output_dir: Path):
         
         logger.info(f"Generated HTML visualization for {database_name}: {html_file}")
 
-def find_samples(input_dir):
-    """Find all FASTQ samples in input directory (compressed or not)."""
-    input_dir = Path(input_dir)
+def find_samples(input_path):
+    """Find FASTQ samples from either an input directory or a single FASTQ file.
+
+    Supports `.fastq`, `.fq`, and gzipped variants (`.fastq.gz`, `.fq.gz`).
+    """
+    input_path = Path(input_path)
+
+    if input_path.is_file():
+        name = input_path.name.lower()
+        if name.endswith((".fastq", ".fastq.gz", ".fq", ".fq.gz")):
+            return [input_path]
+        return []
+
     samples = []
-    
-    for fastq_file in sorted(input_dir.glob("*.fastq*")):
+    for fastq_file in sorted(input_path.glob("*.fastq*")):
         if fastq_file.is_file():
             samples.append(fastq_file)
-    
+    for fastq_file in sorted(input_path.glob("*.fq*")):
+        if fastq_file.is_file() and fastq_file not in samples:
+            samples.append(fastq_file)
+
     return samples
 
 def main(args=None):
