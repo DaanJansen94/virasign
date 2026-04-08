@@ -79,7 +79,7 @@ virasign --help
   - `-o, --output`: Output directory. Default: creates `Virasign_output/`.
 
 - **Choose what to search against (database)**
-  - `-d, --database`: Database(s) to use: `RVDB` (default), `RefSeq`, `RVDB,RefSeq`, or a single accession (e.g. `OZ254622.1`).
+  - `-d, --database`: `RVDB` (default), `RefSeq`, `RVDB,RefSeq`, or an accession (e.g. `OZ254622.1`).
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
 
