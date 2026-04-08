@@ -83,6 +83,10 @@ virasign --help
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
 
+- **Database download / storage (optional)**
+  - `--prepare-db`: Download/unpack/index the selected database(s).
+  - `--db-dir`: Where to store downloaded databases (default: `./Databases`).
+
 - **Viral identification thresholds (controls what is reported)**
   - `--min_identity`: Min read alignment identity (%) (default: RVDB `80`, RefSeq `95`).
   - `--min_mapped_reads`: Minimum number of reads that must map to a reference for it to be reported (default: `100`).
@@ -95,7 +99,7 @@ virasign --help
 
 - **Performance**
   - `-t, --threads`: Threads used for the run (default: `1`).
-  - `-r, --ram`: minimap2 memory setting in GB (default: `8`; e.g. `-r 1`).
+  - `-r, --ram`: minimap2 memory setting in GB (default: `8`).
 
 - **Blinding (hide specific viruses completely)**
   - `-b, --blind`: Blind specific viral species from the analysis (not reported in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names (Human immunodeficiency virus, Orthohepadnavirus hominoidei).
