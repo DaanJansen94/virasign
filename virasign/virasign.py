@@ -3037,7 +3037,7 @@ def extract_selected_references(database_fasta: Path, selected_headers: list, ou
                 logger.warning(f"  - {m}")
     return found_count
 
-def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, output_sam: Path, min_identity: float = 80.0, threads: int = 1, stream_per_reference_outputs: bool = False, curated_descriptions: list = None, sample_dir: Path = None, gzip_fastq: bool = True) -> dict:
+def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, output_sam: Path, min_identity: float = 80.0, threads: int = 1, minimap2_I: str = "8G", stream_per_reference_outputs: bool = False, curated_descriptions: list = None, sample_dir: Path = None, gzip_fastq: bool = True) -> dict:
     """
     Re-map all reads to the selected references to get accurate mapped_reads counts.
     Creates minimap2 index for the selected references database for speed.
@@ -3086,7 +3086,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         "-ax", "map-ont",
         # Don't use -p here - filter by identity during SAM parsing instead
         "-f", "0.0002",
-        "-I", "8G",
+        "-I", str(minimap2_I),
         "--max-chain-skip", "25",
         "-t", str(threads),
     ]
@@ -3147,7 +3147,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                             "-N", "1",  # Primary alignments only (but each ref gets its own primaries)
         "--secondary=no",
         "-f", "0.0002",
-        "-I", "8G",
+        "-I", str(minimap2_I),
         "--max-chain-skip", "25",
         "-t", str(threads),
                             str(ref_index_single),
@@ -3238,7 +3238,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                     "-N", "1",
                     "--secondary=no",
                     "-f", "0.0002",
-                    "-I", "8G",
+                    "-I", str(minimap2_I),
                     "--max-chain-skip", "25",
                     "-t", str(threads),
                     str(ref_index_single),
@@ -3316,7 +3316,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             "-N", "1",  # Primary alignments only
             "--secondary=no",
             "-f", "0.0002",
-            "-I", "8G",
+            "-I", str(minimap2_I),
             "--max-chain-skip", "25",
             "-t", str(threads),
             str(ref_index),
@@ -3980,7 +3980,7 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
         initial_sam.unlink()
         logger.info(f"Removed initial mapping SAM file: {initial_sam.name}")
 
-def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, output_dir: Path, sample_name: str, minimap_p: float = None, min_identity: float = 80.0, min_mapped_reads: int = 100, coverage_depth_threshold: float = 1.0, coverage_breadth_threshold: float = 0.1, threads: int = 1, blinded_species=None, organism_variations=None):
+def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, output_dir: Path, sample_name: str, minimap_p: float = None, min_identity: float = 80.0, min_mapped_reads: int = 100, coverage_depth_threshold: float = 1.0, coverage_breadth_threshold: float = 0.1, threads: int = 1, minimap2_I: str = "8G", blinded_species=None, organism_variations=None):
     """
     Find best reference using minimap2 with indexed database (single-pass mapping).
     Returns best_ref, best_stats, all_stats, filtered_stats, curated_stats.
@@ -4019,7 +4019,7 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         "-N", "1",  # Only report 1 alignment per read (primary alignment only)
         "--secondary=no",  # No secondary alignments
         "-f", "0.0002",  # Filter top 0.02% frequent minimizers (faster, minimal sensitivity loss)
-        "-I", "8G",  # Batch size for better memory efficiency
+        "-I", str(minimap2_I),  # Batch size / memory
         "--max-chain-skip", "25",  # Limit chain extension for speed
         "-t", str(threads),  # Use specified number of threads
     ]
@@ -4388,7 +4388,7 @@ def _process_sample_task(task_args):
     """
     (sample_name, sample_file_str, database_fasta_path_str, db_output_dir_str, db_min_identity, 
      db_name, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, 
-     threads, gzip_fastq, blinded_species, organism_variations) = task_args
+     threads, gzip_fastq, minimap2_I, blinded_species, organism_variations) = task_args
     
     # Convert strings back to Path objects
     sample_file = Path(sample_file_str)
@@ -4412,12 +4412,13 @@ def _process_sample_task(task_args):
         coverage_breadth_threshold=coverage_breadth_threshold,
         threads=threads,
         gzip_fastq=gzip_fastq,
+        minimap2_I=minimap2_I,
         blinded_species=blinded_species,
         organism_variations=organism_variations
     )
     return sample_name, db_name, confident_names
 
-def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, blinded_species=None, organism_variations=None):
+def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None):
     """
     Process a single sample: map ALL reads to database and find best reference.
     Simple workflow: no rarefaction, no unmapped extraction, no minority detection.
@@ -4451,6 +4452,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         coverage_depth_threshold=coverage_depth_threshold,
         coverage_breadth_threshold=coverage_breadth_threshold,
         threads=threads,
+        minimap2_I=minimap2_I,
         blinded_species=blinded_species,
         organism_variations=organism_variations
     )
@@ -4685,6 +4687,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 remap_sam,
                 min_identity=min_identity,
                 threads=threads,
+                minimap2_I=minimap2_I,
                 stream_per_reference_outputs=True,
                 curated_descriptions=curated_stats_dedup,
                 sample_dir=sample_dir,
@@ -7163,11 +7166,22 @@ Examples:
         default=True,
         help="Write per-virus mapped reads as plain .fastq (no gzip). Default: write .fastq.gz."
     )
+
+    parser.add_argument(
+        "-r", "--ram",
+        dest="ram_gb",
+        type=int,
+        default=8,
+        help="RAM (GB) to allocate to minimap2 (-I). Default: 8"
+    )
     
     if args is None:
         args = parser.parse_args()
     else:
         args = parser.parse_args(args)
+
+    # Convert user-friendly RAM setting to minimap2 -I format (e.g. 8 -> '8G').
+    args.minimap2_I = f"{max(1, int(args.ram_gb))}G"
     
     # Handle --blinding flag (list abbreviations and exit)
     # Check this early, before validating required arguments
@@ -7417,6 +7431,7 @@ Examples:
                 args.coverage_breadth_threshold,
                 args.threads,  # Will be adjusted based on read count
                 args.gzip_fastq,
+                args.minimap2_I,
                 blinded_species,
                 organism_variations
             ))
