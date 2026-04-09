@@ -580,27 +580,44 @@ def is_refseq(description: str) -> bool:
     """Check if a reference is from RefSeq based on description."""
     return "|REFSEQ|" in description or description.startswith("acc|REFSEQ|")
 
+def get_taxonomy_dir(base_dir: Path, create: bool = False) -> Path:
+    """
+    Return taxonomy support directory under a database directory.
+
+    New layout:   <db_dir>/taxonomy/
+    Legacy layout:<db_dir>/taxonomy_cache/
+
+    If both exist, prefer the new layout. If neither exists, return the new layout
+    (and optionally create it).
+    """
+    base_dir = Path(base_dir)
+    new_dir = base_dir / "taxonomy"
+    legacy_dir = base_dir / "taxonomy_cache"
+    out = new_dir if new_dir.exists() else (legacy_dir if legacy_dir.exists() else new_dir)
+    if create:
+        out.mkdir(parents=True, exist_ok=True)
+    return out
+
 def get_taxonomy_cache_path(output_dir: Path) -> Path:
     """Get path to individual accession-to-organism JSON cache."""
-    return output_dir / "taxonomy_cache" / "accession_to_organism.json"
+    return get_taxonomy_dir(output_dir, create=True) / "accession_to_organism.json"
 
 def get_taxonomy_database_path(output_dir: Path) -> Path:
     """Get path to comprehensive taxonomy database (SQLite format, faster than JSON)."""
-    return output_dir / "taxonomy_cache" / "accession_to_organism_database.db"
+    return get_taxonomy_dir(output_dir, create=True) / "accession_to_organism_database.db"
 
 def get_segment_database_path(output_dir: Path) -> Path:
     """Get path to segment database (SQLite format, stores accession -> segment mappings)."""
-    cache_dir = output_dir / "taxonomy_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir / "accession_to_segment_database.db"
+    tax_dir = get_taxonomy_dir(output_dir, create=True)
+    return tax_dir / "accession_to_segment_database.db"
 
 def get_taxonomy_database_json_path(output_dir: Path) -> Path:
     """Get path to comprehensive taxonomy database JSON (legacy/fallback)."""
-    return output_dir / "taxonomy_cache" / "accession_to_organism_database.json"
+    return get_taxonomy_dir(output_dir, create=True) / "accession_to_organism_database.json"
 
 def get_ncbi_files_dir(database_dir: Path) -> Path:
     """Get directory for downloaded NCBI taxonomy dump files."""
-    return database_dir / "taxonomy_cache" / "ncbi_files"
+    return get_taxonomy_dir(database_dir, create=True) / "ncbi_files"
 
 def get_virasign_databases_dir() -> Path:
     """Get path to virasign Databases directory (where downloaded databases are stored)."""
@@ -1253,6 +1270,7 @@ def resolve_database_path(
     rvdb_version: str = None,
     databases_dir: Path = None,
     allow_named_database_download: bool = False,
+    force_named_database_rebuild: bool = False,
 ) -> Path:
     """
     Resolve database argument to actual file path.
@@ -1415,6 +1433,7 @@ def resolve_database_path(
                 logger.info(f"Using default RVDB version: {rvdb_filename}")
             fasta_file = download_rvdb_database(
                 databases_dir,
+                force_download=force_named_database_rebuild,
                 rvdb_version=rvdb_filename,
                 enable_clustering=enable_clustering,
                 cluster_identity=cluster_identity,
@@ -1422,7 +1441,11 @@ def resolve_database_path(
             )
             fasta_files.append(fasta_file)
         elif db_name == 'refseq':
-            fasta_file = download_refseq_database(databases_dir, allow_download=allow_named_database_download)
+            fasta_file = download_refseq_database(
+                databases_dir,
+                force_download=force_named_database_rebuild,
+                allow_download=allow_named_database_download,
+            )
             fasta_files.append(fasta_file)
         else:
             raise ValueError(f"Unknown database name: {db_name}. Supported: 'RVDB', 'RefSeq', or an accession number (e.g., 'OZ254622.1')")
@@ -1887,14 +1910,22 @@ def build_taxonomy_database_from_ncbi_download(database_dir: Path, database_fast
     return accession_to_organism, accession_to_species
 
 
-def ensure_taxonomy_resources(database_fasta_path: Path) -> Path:
+def ensure_taxonomy_resources(database_fasta_path: Path, force_rebuild: bool = False) -> Path:
     """
-    Ensure taxonomy_cache/ under the database FASTA parent has NCBI dumps + SQLite accession lookup.
+    Ensure taxonomy/ under the database FASTA parent has NCBI dumps + SQLite accession lookup
+    (legacy folder taxonomy_cache/ is still supported).
     Same logic as the first step of save_results(); use with --prepare-db so offline taxonomy is ready before any sample run.
     """
     database_fasta_path = Path(database_fasta_path)
     database_dir = database_fasta_path.parent
     database_path = get_taxonomy_database_path(database_dir)
+
+    if force_rebuild:
+        # Remove both new + legacy taxonomy folders to guarantee a clean rebuild into taxonomy/
+        for d in (database_dir / "taxonomy", database_dir / "taxonomy_cache"):
+            if d.exists() and d.is_dir():
+                shutil.rmtree(d)
+        database_path = get_taxonomy_database_path(database_dir)
 
     database_exists = database_path.exists()
     database_empty = False
@@ -1923,7 +1954,7 @@ def ensure_taxonomy_resources(database_fasta_path: Path) -> Path:
             logger.info("=" * 60)
             logger.info("Comprehensive taxonomy database not found.")
             logger.info("Downloading NCBI pre-made taxonomy files (one-time download, ~few GB)...")
-            logger.info(f"Files will be stored in: {database_dir / 'taxonomy_cache'}")
+            logger.info(f"Files will be stored in: {get_taxonomy_dir(database_dir, create=False)}")
             logger.info("This will work offline forever after this download completes.")
             logger.info("=" * 60)
         try:
@@ -7164,6 +7195,15 @@ def find_samples(input_path):
 
     return []
 
+class VirasignArgumentParser(argparse.ArgumentParser):
+    """Argparse with small help formatting tweaks for Virasign."""
+
+    def format_help(self) -> str:
+        text = super().format_help()
+        # Insert a clear Options header before the first group.
+        text = text.replace("\nGeneral:\n", "\nOptions\n-------\n\nGeneral:\n", 1)
+        return text
+
 def main(args=None):
     """Main entry point for the reference selection pipeline."""
 
@@ -7173,177 +7213,237 @@ def main(args=None):
     except Exception:
         virasign_version = "unknown"
 
-    parser = argparse.ArgumentParser(
+    parser = VirasignArgumentParser(
         description=f"Virasign v{virasign_version}: viral taxonomic classification and reference selection tool for nanopore sequencing data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
         epilog="""
-Examples:
-  Basic usage with default RVDB database:
-    virasign -i input_dir
-  
-  Use specific RVDB version:
-    virasign -i input_dir -o output_dir -d RVDB --rvdb-version 31.0
-  
-  Use both databases with custom accessions:
-    virasign -i input_dir -d RVDB,RefSeq -o output_dir -a PX852146.1,NC_123456.1 -t 16
+Examples
+--------
+  1) Basic run (default database: RVDB):
+     virasign -i input_dir
+
+  2) Choose RVDB version:
+     virasign -i input_dir -o output_dir -d RVDB --rvdb-version 31.0
+
+  3) RVDB + RefSeq + extra accessions:
+     virasign -i input_dir -d RVDB,RefSeq -o output_dir -a PX852146.1,NC_123456.1 -t 16
         """
     )
 
-    # Version flag (standard CLI behavior: print and exit)
-    parser.add_argument(
+    general = parser.add_argument_group("General")
+    io = parser.add_argument_group("Input / output")
+    db_prep = parser.add_argument_group("Database preparation (optional)")
+    choose_db = parser.add_argument_group("Choose database (auto-downloads on first run)")
+    thresholds = parser.add_argument_group("Viral identification thresholds (controls what is reported)")
+    reporting = parser.add_argument_group("Reporting")
+    performance = parser.add_argument_group("Performance")
+    blinding = parser.add_argument_group("Blinding (hide specific viruses completely)")
+    clustering = parser.add_argument_group("RVDB clustering (optional)")
+
+    # General
+    general.add_argument(
+        "-h",
+        "--help",
+        action="help",
+        help="Show this help message.",
+    )
+    general.add_argument(
         "-v",
         "--version",
         action="version",
         version=f"%(prog)s {virasign_version}",
-        help="Show installed Virasign version and exit.",
+        help="Show installed Virasign version.",
     )
-    
-    parser.add_argument(
-        "-i", "--input",
+
+    # Input / output
+    io.add_argument(
+        "-i",
+        "--input",
         type=str,
-        required=False,  # Will be validated after checking for --blinding
+        required=False,  # validated later (prepare-db mode)
         dest="input",
-        help="Folder of FASTQ/FASTQ.gz (or .fq/.fq.gz), or one such file; top-level files only in folders",
-    )
-    
-    parser.add_argument(
-        "-d", "--database",
-        type=str,
-        required=False,
-        default="RVDB",
-        dest="database",
-        help="Path to reference database FASTA file, or database name (RVDB, RefSeq, or comma-separated: RVDB,RefSeq). Named databases use --db-dir as storage root (default: ./Databases). Default: RVDB"
+        metavar="",
+        help="Reads file or folder (FASTQ/FASTQ.gz).",
     )
 
-    parser.add_argument(
-        "--db-dir",
-        dest="db_dir",
-        type=str,
-        default=None,
-        help="Base directory for database storage. Virasign will create/use a Databases/ subfolder here (default without this flag: ./Databases). Example: --db-dir /data/project -> stores in /data/project/Databases/.",
-    )
-
-    parser.add_argument(
-        "--prepare-db",
-        dest="prepare_db",
-        action="store_true",
-        default=False,
-        help="Download/unpack/index RVDB and/or RefSeq (and taxonomy side data) into the storage from --db-dir, then exit. "
-        "Use this if you want to prepare databases ahead of time without running samples (named databases are otherwise auto-downloaded on first use).",
-    )
-    
-    parser.add_argument(
-        "-o", "--output",
+    io.add_argument(
+        "-o",
+        "--output",
         type=str,
         required=False,
         default=None,
         dest="output",
-        help="Output directory for results. If not specified, creates 'Virasign_output' folder in the current directory"
-    )
-    
-    parser.add_argument(
-        "--min_identity",
-        type=float,
-        default=None,  # Will be set based on database type
-        help="Minimum average identity percentage (default: 90.0 for RefSeq, 80.0 for other databases)"
-    )
-    
-    parser.add_argument(
-        "--min_mapped_reads",
-        type=int,
-        default=100,
-        help="Minimum number of mapped reads (default: 100)"
-    )
-    
-    parser.add_argument(
-        "--coverage_depth_threshold",
-        type=float,
-        default=1.0,
-        help="Minimum coverage depth threshold (default: 1.0)"
-    )
-    
-    parser.add_argument(
-        "--coverage_breadth_threshold",
-        type=float,
-        default=0.1,
-        help="Minimum coverage breadth threshold (default: 0.1)"
-    )
-    
-    parser.add_argument(
-        "-t", "--threads",
-        type=int,
-        default=1,
-        help="Number of threads to use for minimap2 (default: 1)"
-    )
-    
-    parser.add_argument(
-        "-a", "--accession",
-        type=str,
-        default=None,
-        dest="accessions",
-        help="NCBI accession number(s) to download and merge with the database. Either: (1) comma-separated list (e.g., -a PX852146.1,NC_123456.1), or (2) text file with one accession per line (e.g., -a accessions.txt). Optional."
-    )
-    
-    parser.add_argument(
-        "--enable-clustering",
-        action="store_true",
-        dest="enable_clustering",
-        help="Enable clustering for RVDB database (default: clustering disabled). Use --cluster_identity to set identity threshold."
-    )
-    
-    parser.add_argument(
-        "--cluster_identity",
-        type=float,
-        default=0.98,
-        dest="cluster_identity",
-        help="Identity threshold for RVDB clustering (default: 0.98, i.e., 98%%). Only used if clustering is enabled with --enable-clustering."
+        metavar="",
+        help="Output directory (default: ./Virasign_output).",
     )
 
-    parser.add_argument(
+    # Database preparation
+    db_prep.add_argument(
+        "--prepare-db",
+        dest="prepare_db",
+        action="store_true",
+        default=False,
+        help="Prepare databases into --db-dir.",
+    )
+    db_prep.add_argument(
+        "--rebuild",
+        dest="rebuild",
+        action="store_true",
+        default=False,
+        help="Rebuild from scratch.",
+    )
+
+    # Choose database
+    choose_db.add_argument(
+        "-d",
+        "--database",
+        type=str,
+        required=False,
+        default="RVDB",
+        dest="database",
+        metavar="",
+        help="RVDB|RefSeq|RVDB,RefSeq|accession|FASTA (default RVDB).",
+    )
+    choose_db.add_argument(
         "--rvdb-version",
         type=str,
         default=None,
         dest="rvdb_version",
-        help="RVDB database version to download (e.g., '30.0', '31.0', '29.0'). Default: 31.0. Only applies when using RVDB database. Examples: '31.0' downloads C-RVDBv31.0.fasta.gz"
+        metavar="",
+        help="Which RVDB release to download (default: 31.0).",
     )
-    
-    parser.add_argument(
-        "-b", "--blind",
+    choose_db.add_argument(
+        "-a",
+        "--accession",
         type=str,
         default=None,
-        dest="blind",
-        help="Blind specific viral species from analysis (not in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names. Multiple comma-separated (e.g., -b HEP,HIV,HTLV). Use --blinding to see all abbreviations."
+        dest="accessions",
+        metavar="",
+        help="Extra NCBI accessions to include: comma-separated or file (one per line).",
     )
-    
-    parser.add_argument(
-        "--blinding",
-        action="store_true",
-        dest="list_blinding",
-        help="List all available blinding abbreviations and exit."
+    choose_db.add_argument(
+        "--db-dir",
+        dest="db_dir",
+        type=str,
+        default=None,
+        metavar="",
+        help="Database directory (default: ./Databases).",
     )
 
-    parser.add_argument(
+    # Thresholds
+    thresholds.add_argument(
+        "--min_identity",
+        type=float,
+        default=None,
+        metavar="",
+        help="Min read alignment identity percent (default: RVDB 80, RefSeq 95).",
+    )
+    thresholds.add_argument(
+        "--min_mapped_reads",
+        type=int,
+        default=100,
+        metavar="",
+        help="Minimum mapped reads to report a reference (default: 100).",
+    )
+    thresholds.add_argument(
+        "--coverage_depth",
+        type=float,
+        default=1.0,
+        dest="coverage_depth_threshold",
+        metavar="",
+        help="Minimum average coverage depth across the reference (default: 1.0).",
+    )
+    thresholds.add_argument(
+        "--coverage_depth_threshold",
+        type=float,
+        default=argparse.SUPPRESS,
+        dest="coverage_depth_threshold",
+        metavar="",
+        help=argparse.SUPPRESS,
+    )
+    thresholds.add_argument(
+        "--coverage_breadth",
+        type=float,
+        default=0.1,
+        dest="coverage_breadth_threshold",
+        metavar="",
+        help="Minimum fraction of the reference covered by ≥1 read (default: 0.1).",
+    )
+    thresholds.add_argument(
+        "--coverage_breadth_threshold",
+        type=float,
+        default=argparse.SUPPRESS,
+        dest="coverage_breadth_threshold",
+        metavar="",
+        help=argparse.SUPPRESS,
+    )
+
+    # Reporting
+    reporting.add_argument(
         "--no-html",
         dest="generate_html",
         action="store_false",
         default=True,
-        help="Disable HTML report generation (results_summary_*.html). Default: HTML enabled."
+        help="Disable interactive HTML report generation (default: HTML enabled).",
     )
-
-    parser.add_argument(
+    reporting.add_argument(
         "--no-gzip-fastq",
         dest="gzip_fastq",
         action="store_false",
         default=True,
-        help="Write per-virus mapped reads as plain .fastq (no gzip). Default: write .fastq.gz."
+        help="Write per-virus mapped reads as plain .fastq (default: .fastq.gz).",
     )
 
-    parser.add_argument(
-        "-r", "--ram",
+    # Performance
+    performance.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=1,
+        metavar="",
+        help="Threads used for the run (default: 1).",
+    )
+    performance.add_argument(
+        "-r",
+        "--ram",
         dest="ram_gb",
         type=int,
         default=8,
-        help="RAM (GB) to allocate to minimap2 (-I). Default: 8"
+        metavar="",
+        help="minimap2 memory setting in GB (default: 8).",
+    )
+
+    # Blinding (keep detailed help text as-is)
+    blinding.add_argument(
+        "-b", "--blind",
+        type=str,
+        default=None,
+        dest="blind",
+        metavar="",
+        help="Blind specific viral species from analysis (not in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names (Human immunodeficiency virus, Orthohepadnavirus hominoidei). Multiple comma-separated (e.g., -b HEP,HIV,HTLV). Use --blinding to see all abbreviations."
+    )
+    blinding.add_argument(
+        "--blinding",
+        action="store_true",
+        dest="list_blinding",
+        help="List available blinding abbreviations.",
+    )
+
+    # RVDB clustering
+    clustering.add_argument(
+        "--enable-clustering",
+        action="store_true",
+        dest="enable_clustering",
+        help="Enable clustering for RVDB (default: off).",
+    )
+    clustering.add_argument(
+        "--cluster_identity",
+        type=float,
+        default=0.98,
+        dest="cluster_identity",
+        metavar="",
+        help="Clustering identity (default: 0.98; only with --enable-clustering).",
     )
     
     if args is None:
@@ -7363,6 +7463,9 @@ Examples:
     # Validate that input is provided (unless --blinding or --prepare-db was used)
     if not args.input and not getattr(args, "prepare_db", False):
         parser.error("the following arguments are required: -i/--input")
+
+    if getattr(args, "rebuild", False) and not getattr(args, "prepare_db", False):
+        parser.error("--rebuild can only be used together with --prepare-db")
     
     # Set default for enable_clustering (defaults to False if --enable-clustering not specified)
     if not hasattr(args, 'enable_clustering'):
@@ -7466,6 +7569,7 @@ Examples:
             # Auto-download named databases (RVDB/RefSeq) when missing into --db-dir (or ./Databases).
             # Use --prepare-db if you only want to download/prepare and then exit without running samples.
             allow_named_database_download=True,
+            force_named_database_rebuild=getattr(args, "rebuild", False),
         )
         if isinstance(database_result, list):
             database_fasta_paths = database_result
@@ -7552,7 +7656,7 @@ Examples:
             except Exception as e:
                 print(f"    index: failed ({e})")
             try:
-                tax_db = ensure_taxonomy_resources(fp)
+                tax_db = ensure_taxonomy_resources(fp, force_rebuild=getattr(args, "rebuild", False))
                 print(f"    taxonomy sqlite: {tax_db}")
             except SystemExit:
                 raise
