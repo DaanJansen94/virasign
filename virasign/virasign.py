@@ -611,26 +611,66 @@ def get_virasign_databases_dir() -> Path:
     return databases_dir
 
 
+def collapse_redundant_databases_dirs(path: Path) -> Path:
+    """
+    Collapse .../Databases/Databases/... -> .../Databases/... (case-insensitive segments).
+
+    Fixes legacy paths created when --db-dir was mis-parsed, so we do not keep writing
+    into Databases/Databases/ while the user pointed at .../Databases/.
+    """
+    try:
+        p = path.resolve(strict=False)
+    except (OSError, RuntimeError):
+        p = Path(path)
+    parts = list(p.parts)
+    if len(parts) < 2:
+        return p
+    out_parts = [parts[0]]
+    for part in parts[1:]:
+        if part.lower() == "databases" and out_parts[-1].lower() == "databases":
+            continue
+        out_parts.append(part)
+    return Path(*out_parts)
+
+
 def resolve_databases_storage_dir(db_dir_parent) -> Path:
     """
     Root directory that contains RVDB/, RefSeq/, Custom/.
 
     Without --db-dir: ./Databases (under cwd).
-    With --db-dir X: X/Databases (created if missing).
-    With --db-dir X/.../Databases: use that path as the root (no extra Databases segment).
+    With --db-dir: use that path as the storage root exactly — no automatic extra Databases/
+    segment (avoids .../Databases/Databases). Put RVDB/ and RefSeq/ directly under that path.
     """
     if db_dir_parent:
-        base = Path(db_dir_parent).expanduser()
-        if base.name.lower() == "databases":
-            out = base
-        else:
-            out = base / "Databases"
+        raw = str(db_dir_parent).strip()
+        if not raw:
+            return get_virasign_databases_dir()
+        base = Path(raw).expanduser()
+        try:
+            base = base.resolve(strict=False)
+        except (OSError, RuntimeError):
+            base = Path(os.path.normpath(str(base)))
+        out_before_collapse = base
+        out = collapse_redundant_databases_dirs(out_before_collapse)
+        if str(out) != str(out_before_collapse):
+            logger.info(
+                f"Normalized database path (removed redundant Databases/): "
+                f"{out_before_collapse} -> {out}"
+            )
         out.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Database storage root: {out}")
         return out
     return get_virasign_databases_dir()
 
 
-def download_rvdb_database(databases_dir: Path, force_download: bool = False, rvdb_version: str = "C-RVDBv31.0.fasta.gz", enable_clustering: bool = False, cluster_identity: float = 0.98) -> Path:
+def download_rvdb_database(
+    databases_dir: Path,
+    force_download: bool = False,
+    rvdb_version: str = "C-RVDBv31.0.fasta.gz",
+    enable_clustering: bool = False,
+    cluster_identity: float = 0.98,
+    allow_download: bool = True,
+) -> Path:
     """
     Download and prepare RVDB database with complete genomes only, optionally cluster at specified identity.
     
@@ -640,18 +680,19 @@ def download_rvdb_database(databases_dir: Path, force_download: bool = False, rv
         rvdb_version: RVDB version filename (e.g., "C-RVDBv30.0.fasta.gz" or "C-RVDBvCurrent.fasta.gz")
         enable_clustering: Whether to cluster sequences (default: True)
         cluster_identity: Identity threshold for clustering, e.g., 0.98 for 98% (default: 0.98)
+        allow_download: If False, missing DB raises FileNotFoundError (sample runs); use True with --prepare-db.
     
     Returns path to RVDB database (e.g., RVDBv30.0_complete.fasta)
     """
     rvdb_dir = databases_dir / "RVDB"
     rvdb_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Extract version number from filename (e.g., "C-RVDBv30.0.fasta.gz" -> "v30.0")
     version_match = rvdb_version.replace("C-RVDB", "").replace(".fasta.gz", "")
     version_suffix = version_match if version_match else "Current"
-    
+
     output_fasta = rvdb_dir / f"RVDB{version_suffix}_complete.fasta"
-    
+
     # Check if already exists
     if output_fasta.exists() and not force_download:
         logger.info(f"RVDB database already exists: {output_fasta}")
@@ -690,6 +731,13 @@ def download_rvdb_database(databases_dir: Path, force_download: bool = False, rv
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
         return output_fasta
+
+    if not allow_download:
+        raise FileNotFoundError(
+            f"RVDB not found at {output_fasta}. "
+            "Download it first with: virasign --prepare-db -d RVDB [--db-dir <path>] "
+            "(use the same --db-dir when you later run samples; sample runs do not download RVDB)."
+        )
     
     compressed_file = rvdb_dir / rvdb_version
     temp_fasta = rvdb_dir / rvdb_version.replace(".gz", "")
@@ -900,16 +948,17 @@ def download_rvdb_database(databases_dir: Path, force_download: bool = False, rv
     
     return output_fasta
 
-def download_refseq_database(databases_dir: Path, force_download: bool = False) -> Path:
+def download_refseq_database(databases_dir: Path, force_download: bool = False, allow_download: bool = True) -> Path:
     """
     Download and prepare RefSeq viral database.
+    allow_download: If False, missing DB raises FileNotFoundError (sample runs); use True with --prepare-db.
     Returns path to viral_refseq_complete.fna
     """
     refseq_dir = databases_dir / "RefSeq"
     refseq_dir.mkdir(parents=True, exist_ok=True)
-    
+
     output_fasta = refseq_dir / "viral_refseq_complete.fna"
-    
+
     # Check if already exists
     if output_fasta.exists() and not force_download:
         logger.info(f"RefSeq database already exists: {output_fasta}")
@@ -933,6 +982,13 @@ def download_refseq_database(databases_dir: Path, force_download: bool = False) 
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
         return output_fasta
+
+    if not allow_download:
+        raise FileNotFoundError(
+            f"RefSeq database not found at {output_fasta}. "
+            "Download it first with: virasign --prepare-db -d RefSeq [--db-dir <path>] "
+            "(use the same --db-dir when you later run samples; sample runs do not download RefSeq)."
+        )
     
     logger.info("Downloading RefSeq viral database (this may take a while, ~few GB)...")
     
@@ -1189,17 +1245,26 @@ def is_accession_number(text: str) -> bool:
     pattern = r'^[A-Z]{1,2}_?\d+$'
     return bool(re.match(pattern, base_text.upper()))
 
-def resolve_database_path(database_arg: str, accessions: list = None, enable_clustering: bool = False, cluster_identity: float = 0.98, rvdb_version: str = None, databases_dir: Path = None) -> Path:
+def resolve_database_path(
+    database_arg: str,
+    accessions: list = None,
+    enable_clustering: bool = False,
+    cluster_identity: float = 0.98,
+    rvdb_version: str = None,
+    databases_dir: Path = None,
+    allow_named_database_download: bool = False,
+) -> Path:
     """
     Resolve database argument to actual file path.
     Supports:
     - File paths: '/path/to/database.fasta' -> returns Path
-    - Database names: 'RVDB', 'RefSeq', 'refseq' -> downloads and returns Path
+    - Database names: 'RVDB', 'RefSeq', 'refseq' -> returns Path (downloads if missing when allow_named_database_download)
     - Multiple databases: 'RVDB,RefSeq' -> combines and returns Path
     - Accession numbers: 'OZ254622.1' -> downloads and uses as database
     - Text file with accessions: '/path/to/accessions.txt' -> downloads all and merges
     
     If accessions are provided, they will be downloaded and merged with the database.
+    Named RVDB/RefSeq downloads only run when allow_named_database_download is True.
     """
     database_arg = database_arg.strip()
     databases_dir = Path(databases_dir) if databases_dir is not None else get_virasign_databases_dir()
@@ -1348,10 +1413,16 @@ def resolve_database_path(database_arg: str, accessions: list = None, enable_clu
                 # Default to v31.0
                 rvdb_filename = "C-RVDBv31.0.fasta.gz"
                 logger.info(f"Using default RVDB version: {rvdb_filename}")
-            fasta_file = download_rvdb_database(databases_dir, rvdb_version=rvdb_filename, enable_clustering=enable_clustering, cluster_identity=cluster_identity)
+            fasta_file = download_rvdb_database(
+                databases_dir,
+                rvdb_version=rvdb_filename,
+                enable_clustering=enable_clustering,
+                cluster_identity=cluster_identity,
+                allow_download=allow_named_database_download,
+            )
             fasta_files.append(fasta_file)
         elif db_name == 'refseq':
-            fasta_file = download_refseq_database(databases_dir)
+            fasta_file = download_refseq_database(databases_dir, allow_download=allow_named_database_download)
             fasta_files.append(fasta_file)
         else:
             raise ValueError(f"Unknown database name: {db_name}. Supported: 'RVDB', 'RefSeq', or an accession number (e.g., 'OZ254622.1')")
@@ -6385,7 +6456,7 @@ def generate_html_visualization(output_dir: Path):
                                     if (dataReads !== null && dataReads !== '' && !isNaN(parseFloat(dataReads))) {{
                                         cellValue = parseFloat(dataReads);
                                     }} else {{
-                                        const cellText = cells[colIndex].textContent.replace(/[,\s]/g, '').trim();
+                                        const cellText = cells[colIndex].textContent.replace(/[,\\s]/g, '').trim();
                                         cellValue = parseFloat(cellText);
                                         if (isNaN(cellValue)) {{
                                             const altReads = row.dataset.reads;
@@ -7129,7 +7200,7 @@ Examples:
         required=False,
         default="RVDB",
         dest="database",
-        help="Path to reference database FASTA file, or database name (RVDB, RefSeq, or comma-separated: RVDB,RefSeq). Database names will be automatically downloaded to Databases/ directory. Default: RVDB"
+        help="Path to reference database FASTA file, or database name (RVDB, RefSeq, or comma-separated: RVDB,RefSeq). Named databases use --db-dir as storage root (default: ./Databases). Default: RVDB"
     )
 
     parser.add_argument(
@@ -7137,7 +7208,7 @@ Examples:
         dest="db_dir",
         type=str,
         default=None,
-        help="Parent directory (Virasign uses <path>/Databases/) or the storage root if <path> ends with Databases/ (default: . → ./Databases).",
+        help="Database storage root: folder that will contain RVDB/, RefSeq/, Custom/ (no extra Databases/ is appended; default without this flag: ./Databases).",
     )
 
     parser.add_argument(
@@ -7145,7 +7216,8 @@ Examples:
         dest="prepare_db",
         action="store_true",
         default=False,
-        help="Only download/unpack/index the selected database(s) and exit (no sample processing)."
+        help="Download/unpack/index RVDB and/or RefSeq (and taxonomy side data) into the storage from --db-dir, then exit. "
+        "Use this if you want to prepare databases ahead of time without running samples (named databases are otherwise auto-downloaded on first use).",
     )
     
     parser.add_argument(
@@ -7306,11 +7378,13 @@ Examples:
                 print(f"Warning: Current working directory was deleted, using {current_dir} as base", file=sys.stderr)
 
         if args.output is None or args.output == ".":
-            # If output not specified or set to ".", create Virasign_output in current directory
-            output_dir = current_dir / "Virasign_output"
+            # Default: ./Virasign_output — unless cwd is already Virasign_output (avoid nesting).
+            if current_dir.name.lower() == "virasign_output":
+                output_dir = current_dir
+            else:
+                output_dir = current_dir / "Virasign_output"
             output_dir.mkdir(parents=True, exist_ok=True)
             if args.output is None:
-                # Log that we're using default output directory
                 print(f"Output directory not specified, using default: {output_dir}")
         else:
             output_dir = Path(args.output)
@@ -7371,12 +7445,15 @@ Examples:
     try:
         databases_dir = resolve_databases_storage_dir(getattr(args, "db_dir", None))
         database_result = resolve_database_path(
-            args.database, 
+            args.database,
             accessions=accessions_list,
             enable_clustering=args.enable_clustering,
             cluster_identity=args.cluster_identity,
-            rvdb_version=getattr(args, 'rvdb_version', None),
-            databases_dir=databases_dir
+            rvdb_version=getattr(args, "rvdb_version", None),
+            databases_dir=databases_dir,
+            # Auto-download named databases (RVDB/RefSeq) when missing into --db-dir (or ./Databases).
+            # Use --prepare-db if you only want to download/prepare and then exit without running samples.
+            allow_named_database_download=True,
         )
         if isinstance(database_result, list):
             database_fasta_paths = database_result
