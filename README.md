@@ -72,20 +72,21 @@ virasign --help
 ```
 
 #### Required Arguments
-- `-i, --input`: A reads file (`.fastq`/`.fq`, plain or `.gz`) or a folder of reads files (top level only; no subfolders).
+- `-i, --input`: A reads file (`.fastq`) or a folder of reads files.
 
 #### Optional Arguments
 - **Output**
   - `-o, --output`: Output directory (default: creates `Virasign_output/`).
 
 - **Database preparation (optional)**
-  - `--prepare-db`: Download/unpack/index the selected database(s) into `--db-dir`, then exit (default: off).
+  - `--prepare-db`: Download/unpack/index the selected database(s) into `--db-dir` (default: off).
   - `--db-dir`: Database storage directory (default: `./Databases`).
 
 - **Choose database (auto-downloads on first run)**
-  - `-d, --database`: Database name `RVDB`, `RefSeq`, `RVDB,RefSeq`, or an accession (e.g. `OZ254622.1`) (default: `RVDB`).
+  - `-d, --database`: Database name `RVDB,RefSeq`, or an accession (e.g. `OZ254622.1`) (default: `RVDB`).
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
+  - `--db-dir`: Reuse an existing database folder (e.g. if RVDB/RefSeq is already downloaded there).
 
 - **Viral identification thresholds (controls what is reported)**
   - `--min_identity`: Min read alignment identity (%) (default: RVDB `80`, RefSeq `95`).
