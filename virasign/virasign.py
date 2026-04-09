@@ -4161,8 +4161,10 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
         
         # 1. Extract reference FASTA
         ref_fasta = acc_dir / f"{accession}.fasta"
-        if not extract_fasta_record(selected_refs_fasta, description, ref_fasta):
-            logger.warning(f"  Could not extract reference FASTA for {accession}")
+        if not extract_fasta_record_by_accession(selected_refs_fasta, accession, ref_fasta):
+            # Fallback: older logic (exact header match), in case accession parsing fails for a rare header
+            if not extract_fasta_record(selected_refs_fasta, description, ref_fasta):
+                logger.warning(f"  Could not extract reference FASTA for {accession}")
         
         # 2/3. Finalize streamed BAM for this accession (+ index)
         if accession in bam_pipes:
@@ -4679,6 +4681,41 @@ def extract_fasta_record(database_fasta: Path, target_header: str, out_fasta: Pa
                         out.write(line)
     return found
 
+
+def extract_fasta_record_by_accession(database_fasta: Path, accession: str, out_fasta: Path) -> bool:
+    """
+    Stream-scan a FASTA and write the record whose header contains `accession` (as parsed by
+    extract_accession_from_header) to `out_fasta`.
+    Returns True if found.
+    """
+    accession = (accession or "").strip()
+    if not accession:
+        return False
+
+    database_fasta = Path(database_fasta)
+    if str(database_fasta).endswith(".gz"):
+        import gzip
+        fh = gzip.open(database_fasta, "rt")
+    else:
+        fh = open(database_fasta, "r")
+
+    found = False
+    write = False
+    with fh:
+        with open(out_fasta, "w") as out:
+            for line in fh:
+                if line.startswith(">"):
+                    header = line[1:].strip()
+                    header_acc = extract_accession_from_header(header)
+                    write = (header_acc == accession)
+                    if write:
+                        out.write(line)
+                        found = True
+                else:
+                    if write:
+                        out.write(line)
+    return found
+
 def _process_sample_task(task_args):
     """
     Wrapper function for parallel processing of samples.
@@ -5078,6 +5115,57 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             logger.warning("Could not extract final selected references. Skipping re-mapping.")
     else:
         logger.warning("No curated references meeting thresholds after deduplication. Skipping re-mapping.")
+        # Fallback: still generate per-reference outputs for the best reference (if available).
+        # This is especially useful for custom databases where coverage thresholds may be too strict
+        # but users still want BAM/FASTQ/FASTA for the best hit.
+        try:
+            if best_ref and isinstance(best_ref, dict) and best_ref.get("accession") and best_ref.get("description"):
+                fallback_accession = best_ref["accession"]
+                fallback_desc = best_ref["description"]
+                logger.info(f"Fallback output: remapping to best reference only: {fallback_accession}")
+
+                selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
+                # Extract best reference sequence from the original database FASTA.
+                best_ref_fasta = sample_dir / f"{fallback_accession}.fasta"
+                if not extract_fasta_record_by_accession(database_fasta_path, fallback_accession, best_ref_fasta):
+                    # Last resort: try matching exact header if accession parsing fails
+                    extract_fasta_record(database_fasta_path, fallback_desc, best_ref_fasta)
+                if best_ref_fasta.exists() and best_ref_fasta.stat().st_size > 0:
+                    merge_fasta_files([best_ref_fasta], selected_refs_fasta)
+                    try:
+                        best_ref_fasta.unlink()
+                    except Exception:
+                        pass
+
+                    # Build minimap2 index for the small selected reference set and remap reads.
+                    ensure_minimap2_index(selected_refs_fasta)
+                    remap_sam = sample_dir / f"{sample_name}_remapped.sam"
+                    cmd = [
+                        "minimap2",
+                        "-a",
+                        "-t",
+                        str(max(1, int(threads or 1))),
+                        "-I",
+                        str(minimap2_I),
+                        str(selected_refs_fasta),
+                        str(sample_fastq),
+                    ]
+                    with open(remap_sam, "w") as out_sam:
+                        subprocess.run(cmd, check=True, stdout=out_sam, stderr=subprocess.PIPE, text=True)
+
+                    create_per_reference_outputs(
+                        sample_name,
+                        [{"accession": fallback_accession, "description": fallback_desc}],
+                        selected_refs_fasta,
+                        remap_sam,
+                        sample_fastq,
+                        sample_dir,
+                        threads=threads,
+                        gzip_fastq=gzip_fastq,
+                        min_identity=min_identity,
+                    )
+        except Exception as e:
+            logger.warning(f"Fallback output failed: {e}")
         # Clean up initial SAM file even if no curated references
         initial_sam = sample_dir / f"{sample_name}.sam"
         if initial_sam.exists():
