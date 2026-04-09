@@ -1217,6 +1217,106 @@ def download_accession_from_ncbi(accession: str, output_dir: Path = None) -> Pat
         logger.error(f"Failed to download accession {accession}: {e}")
         raise
 
+
+def download_species_database_from_ncbi(
+    species_name: str,
+    output_fasta: Path,
+    retmax: int = 5000,
+    batch_size: int = 500,
+) -> Path:
+    """
+    Download a FASTA database for a given viral species/organism name from NCBI nuccore.
+
+    Uses E-utilities esearch (usehistory) + efetch in batches.
+    The search term is restricted to complete genomes/sequences to keep DB size manageable.
+    """
+    species_name = (species_name or "").strip().strip('"').strip("'")
+    if not species_name:
+        raise ValueError("Species name is empty.")
+
+    output_fasta = Path(output_fasta)
+    output_fasta.parent.mkdir(parents=True, exist_ok=True)
+
+    term = (
+        f"\"{species_name}\"[Organism] AND "
+        f"(\"complete genome\"[Title] OR \"complete sequence\"[Title] OR complete[Title])"
+    )
+    logger.info(f"Searching NCBI for species database: {species_name}")
+
+    search_params = {
+        "db": "nuccore",
+        "term": term,
+        "retmode": "json",
+        "usehistory": "y",
+        "retmax": str(int(retmax)),
+    }
+    search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    full_search_url = f"{search_url}?{urllib.parse.urlencode(search_params)}"
+
+    with urllib.request.urlopen(full_search_url, timeout=60) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    esr = data.get("esearchresult", {})
+    count = int(esr.get("count", 0) or 0)
+    webenv = esr.get("webenv")
+    query_key = esr.get("querykey")
+    idlist = esr.get("idlist") or []
+
+    if count == 0:
+        raise ValueError(f"No NCBI nuccore records found for species '{species_name}'.")
+
+    if count > int(retmax):
+        logger.warning(
+            f"NCBI search found {count} records but retmax={retmax}; "
+            f"database will be truncated to the first {retmax} records."
+        )
+
+    if not webenv or not query_key:
+        # Fallback: fetch by idlist (rare)
+        logger.warning("NCBI usehistory not available; falling back to direct id list fetch.")
+        ids = idlist
+        if not ids:
+            raise ValueError("NCBI search returned no IDs to fetch.")
+        fetch_params = {"db": "nuccore", "id": ",".join(ids), "rettype": "fasta", "retmode": "text"}
+        fetch_url = f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?{urllib.parse.urlencode(fetch_params)}"
+        tmp = output_fasta.with_suffix(output_fasta.suffix + ".tmp")
+        with urllib.request.urlopen(fetch_url, timeout=120) as resp, open(tmp, "wb") as out:
+            out.write(resp.read())
+        if tmp.stat().st_size == 0:
+            tmp.unlink()
+            raise ValueError("NCBI returned empty FASTA for species query.")
+        tmp.replace(output_fasta)
+        logger.info(f"Saved species database FASTA: {output_fasta}")
+        return output_fasta
+
+    fetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    tmp = output_fasta.with_suffix(output_fasta.suffix + ".tmp")
+    max_to_fetch = min(count, int(retmax))
+    with open(tmp, "wb") as out:
+        for retstart in range(0, max_to_fetch, int(batch_size)):
+            fetch_params = {
+                "db": "nuccore",
+                "query_key": str(query_key),
+                "WebEnv": str(webenv),
+                "rettype": "fasta",
+                "retmode": "text",
+                "retstart": str(retstart),
+                "retmax": str(int(batch_size)),
+            }
+            full_fetch_url = f"{fetch_url}?{urllib.parse.urlencode(fetch_params)}"
+            with urllib.request.urlopen(full_fetch_url, timeout=120) as resp:
+                chunk = resp.read()
+                if chunk:
+                    out.write(chunk)
+
+    if tmp.stat().st_size == 0:
+        tmp.unlink()
+        raise ValueError("NCBI returned empty FASTA for species query.")
+
+    tmp.replace(output_fasta)
+    logger.info(f"Saved species database FASTA: {output_fasta}")
+    return output_fasta
+
 def merge_fasta_files(fasta_files: list, output_fasta: Path) -> Path:
     """
     Merge multiple FASTA files into a single file.
@@ -1287,6 +1387,25 @@ def resolve_database_path(
     database_arg = database_arg.strip()
     databases_dir = Path(databases_dir) if databases_dir is not None else get_virasign_databases_dir()
     databases_dir.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_species_database(species_name: str) -> Path:
+        species_name = (species_name or "").strip().strip('"').strip("'")
+        if not species_name:
+            raise ValueError("Species name is empty.")
+        species_dir = databases_dir / "Custom" / "Species"
+        species_dir.mkdir(parents=True, exist_ok=True)
+        out_fasta = species_dir / f"species_{safe_stem(species_name)}.fasta"
+        if out_fasta.exists() and not force_named_database_rebuild:
+            logger.info(f"Using existing species database: {out_fasta}")
+            return out_fasta
+        logger.info(f"Building species database for: {species_name}")
+        return download_species_database_from_ncbi(species_name, out_fasta)
+
+    # Species database shortcut: species:<name>
+    lowered = database_arg.lower()
+    if lowered.startswith("species:") or lowered.startswith("organism:"):
+        species_name = database_arg.split(":", 1)[1].strip()
+        return _resolve_species_database(species_name)
     
     # Check if database_arg is a single accession number
     if is_accession_number(database_arg):
@@ -1326,49 +1445,46 @@ def resolve_database_path(
         # FASTA files typically have extensions: .fasta, .fa, .fna, .fas, .faa, .fq, .fastq
         fasta_extensions = {'.fasta', '.fa', '.fna', '.fas', '.faa', '.fq', '.fastq', '.gz'}
         if db_path.suffix.lower() not in fasta_extensions:
-            # It's likely a text file with accessions
-            logger.info(f"Reading accessions from file: {db_path}")
-            accession_list = []
-            with open(db_path, 'r') as f:
+            # Text file with either accessions OR species names (one per line, comments allowed)
+            logger.info(f"Reading database entries from file: {db_path}")
+            items = []
+            with open(db_path, "r") as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#'):  # Skip empty lines and comments
-                        accession_list.append(line)
-            
-            if not accession_list:
-                raise ValueError(f"No accessions found in file: {db_path}")
-            
-            logger.info(f"Found {len(accession_list)} accession(s) in file")
-            
-            # Download all accessions to Custom directory
+                    if not line or line.startswith("#"):
+                        continue
+                    items.append(line)
+
+            if not items:
+                raise ValueError(f"No database entries found in file: {db_path}")
+
+            accessions_in_file = [x for x in items if is_accession_number(x)]
+            species_in_file = [x for x in items if not is_accession_number(x)]
+
             custom_dir = databases_dir / "Custom"
             custom_dir.mkdir(parents=True, exist_ok=True)
-            
-            accession_fasta_files = []
-            for accession in accession_list:
-                try:
-                    acc_fasta = download_accession_from_ncbi(accession.strip(), custom_dir)
-                    accession_fasta_files.append(acc_fasta)
-                except Exception as e:
-                    logger.error(f"Failed to download accession {accession}: {e}")
-                    raise
-            
+
+            fasta_files = []
+            if accessions_in_file:
+                logger.info(f"Found {len(accessions_in_file)} accession(s) in file")
+                for accession in accessions_in_file:
+                    fasta_files.append(download_accession_from_ncbi(accession.strip(), custom_dir))
+
+            if species_in_file:
+                logger.info(f"Found {len(species_in_file)} species/organism name(s) in file")
+                for sp in species_in_file:
+                    fasta_files.append(_resolve_species_database(sp))
+
             # If additional accessions provided via -a, add them
             if accessions:
                 logger.info(f"Downloading {len(accessions)} additional accession(s) from -a argument...")
                 for accession in accessions:
-                    try:
-                        acc_fasta = download_accession_from_ncbi(accession.strip(), custom_dir)
-                        accession_fasta_files.append(acc_fasta)
-                    except Exception as e:
-                        logger.error(f"Failed to download accession {accession}: {e}")
-                        raise
-            
-            # Merge all accessions
+                    fasta_files.append(download_accession_from_ncbi(accession.strip(), custom_dir))
+
             file_stem = db_path.stem
             merged_fasta = custom_dir / f"{file_stem}_database.fasta"
-            result = merge_fasta_files(accession_fasta_files, merged_fasta)
-            logger.info(f"Created merged database from {len(accession_fasta_files)} accession(s): {merged_fasta}")
+            result = merge_fasta_files(fasta_files, merged_fasta)
+            logger.info(f"Created merged database from {len(fasta_files)} entry/entries: {merged_fasta}")
             return result
     
     # Download accessions if provided (will determine target directory after we know which database)
@@ -1448,7 +1564,14 @@ def resolve_database_path(
             )
             fasta_files.append(fasta_file)
         else:
-            raise ValueError(f"Unknown database name: {db_name}. Supported: 'RVDB', 'RefSeq', or an accession number (e.g., 'OZ254622.1')")
+            # If user passed a species name directly (typically contains spaces), treat it as a species database.
+            # This allows: -d "Orthopoxvirus monkeypox" (quotes required for spaces in shells).
+            if " " in database_arg and len(db_names) == 1:
+                return _resolve_species_database(database_arg)
+            raise ValueError(
+                f"Unknown database name: {db_name}. Supported: 'RVDB', 'RefSeq', 'RVDB,RefSeq', "
+                f"an accession (e.g., 'OZ254622.1'), a FASTA path, or a species name (e.g., 'Orthopoxvirus monkeypox')."
+            )
     
     # If accessions provided, merge with each database directly in the database directory
     if accession_fasta_files:
@@ -2735,9 +2858,9 @@ def safe_stem(value: str, max_len: int = 80) -> str:
     """
     # Remove or replace problematic characters
     cleaned = re.sub(r'[^\w\-_\.]', '_', value)
+    suffix = hashlib.md5(cleaned.encode()).hexdigest()[:10]
     # Limit length
     if len(cleaned) > max_len:
-        suffix = hashlib.md5(cleaned.encode()).hexdigest()[:10]
         cleaned = cleaned[:max_len-10]
     return f"{cleaned}_{suffix}"
 
@@ -7303,7 +7426,7 @@ Examples
         default="RVDB",
         dest="database",
         metavar="",
-        help="RVDB|RefSeq|RVDB,RefSeq|accession|FASTA (default RVDB).",
+        help="RVDB|RefSeq|RVDB,RefSeq|accession|FASTA|species name (default RVDB).",
     )
     choose_db.add_argument(
         "--rvdb-version",

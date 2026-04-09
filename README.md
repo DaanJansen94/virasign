@@ -94,7 +94,7 @@ virasign --help
   - `-o, --output`: Output directory (default: creates `Virasign_output/`).
 
 - **Choose database (auto-downloads on first run)**
-  - `-d, --database`: Database name `RVDB,RefSeq`, or an accession (e.g. `OZ254622.1`) (default: `RVDB`).
+  - `-d, --database`: `RVDB` (default), `RefSeq`, `RVDB,RefSeq`, an accession (e.g. `OZ254622.1`), or a species name (e.g. `Orthopoxvirus monkeypox`).
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
   - `--db-dir`: Reuse an existing database folder (optional; example: `/path/to/Databases/`).
@@ -143,6 +143,13 @@ virasign -i input_dir -d RVDB,RefSeq --rvdb-version 31.0
 
 # Use a single accession as the database
 virasign -i input_dir -d OZ254622.1 -o output_dir
+
+# Use an organism/species-restricted database (downloads a small custom database)
+virasign -i input_dir -d "Orthopoxvirus monkeypox" -o output_dir
+
+# Use text file with species names as database
+virasign -i input_dir -d species_list.txt -o output_dir
+# (species_list.txt contains one species name per line)
 
 # Use text file with accessions as database
 virasign -i input_dir -d my_accessions.txt -o output_dir
