@@ -45,6 +45,20 @@ pip install .
 
 ---
 
+## Database preparation (optional)
+
+Optional download of the database(s) so you can store them in a location of interest (few GB).
+
+- `--prepare-db`: Download/unpack/index the selected database(s) into `--db-dir`
+- `-d, --database`: Which database(s) to prepare (default: `RVDB`).
+- `--db-dir`: Database storage directory (default: `./Databases`).
+
+```bash
+virasign --prepare-db -d RVDB,RefSeq --db-dir /path/to/Databases/
+```
+
+---
+
 ## Usage
 
 First, make sure your conda environment is activated:
@@ -77,10 +91,6 @@ virasign --help
 #### Optional Arguments
 - **Output**
   - `-o, --output`: Output directory (default: creates `Virasign_output/`).
-
-- **Database preparation (optional)**
-  - `--prepare-db`: Download/unpack/index the selected database(s) into `--db-dir` (default: off).
-  - `--db-dir`: Database storage directory (default: `./Databases`).
 
 - **Choose database (auto-downloads on first run)**
   - `-d, --database`: Database name `RVDB,RefSeq`, or an accession (e.g. `OZ254622.1`) (default: `RVDB`).
