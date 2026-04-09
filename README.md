@@ -52,6 +52,7 @@ Optional download of the database(s) so you can store them in a location of inte
 - `--prepare-db`: Download/unpack/index the selected database(s) into `--db-dir`
 - `-d, --database`: Which database(s) to prepare (default: `RVDB`).
 - `--db-dir`: Database storage directory (default: `./Databases`).
+- `--rebuild`: Remove existing prepared database files and rebuild from scratch (default: off).
 
 ```bash
 virasign --prepare-db -d RVDB,RefSeq --db-dir /path/to/Databases/
@@ -96,13 +97,13 @@ virasign --help
   - `-d, --database`: Database name `RVDB,RefSeq`, or an accession (e.g. `OZ254622.1`) (default: `RVDB`).
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
-  - `--db-dir`: Base directory where Virasign will create/use `Databases/` (optional; example: `/path/to/project/`).
+  - `--db-dir`: Reuse an existing database folder (optional; example: `/path/to/Databases/`).
 
 - **Viral identification thresholds (controls what is reported)**
   - `--min_identity`: Min read alignment identity (%) (default: RVDB `80`, RefSeq `95`).
   - `--min_mapped_reads`: Minimum number of reads that must map to a reference for it to be reported (default: `100`).
-  - `--coverage_depth_threshold`: Minimum average coverage depth across the reference (default: `1.0`).
-  - `--coverage_breadth_threshold`: Minimum fraction of the reference covered by ≥1 read (default: `0.1`).
+  - `--coverage_depth`: Minimum average coverage depth across the reference (default: `1.0`).
+  - `--coverage_breadth`: Minimum fraction of the reference covered by ≥1 read (default: `0.1`).
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
