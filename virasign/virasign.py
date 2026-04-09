@@ -3067,6 +3067,7 @@ def prepare_database_context(database_fasta: Path) -> dict:
         "organism_map": organism_map,
         "db_ref_lengths": db_ref_lengths,
         "db_index": db_index,
+        "num_records": len(db_ref_lengths),
     }
     _DATABASE_CONTEXT_CACHE[db_key] = context
     return context
@@ -4282,7 +4283,21 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
         initial_sam.unlink()
         logger.info(f"Removed initial mapping SAM file: {initial_sam.name}")
 
-def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, output_dir: Path, sample_name: str, minimap_p: float = None, min_identity: float = 80.0, min_mapped_reads: int = 100, coverage_depth_threshold: float = 1.0, coverage_breadth_threshold: float = 0.1, threads: int = 1, minimap2_I: str = "8G", blinded_species=None, organism_variations=None):
+def find_best_reference_with_index(
+    sample_fastq: Path,
+    database_fasta: Path,
+    output_dir: Path,
+    sample_name: str,
+    minimap_p: float = None,
+    min_identity: float = 80.0,
+    min_mapped_reads: int = 100,
+    coverage_depth_threshold: float = 1.0,
+    coverage_breadth_threshold: float = 0.1,
+    threads: int = 1,
+    minimap2_I: str = "8G",
+    blinded_species=None,
+    organism_variations=None,
+):
     """
     Find best reference using minimap2 with indexed database (single-pass mapping).
     Returns best_ref, best_stats, all_stats, filtered_stats, curated_stats.
@@ -4302,6 +4317,16 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     organism_map = db_context["organism_map"]
     db_ref_lengths = db_context["db_ref_lengths"]
     db_index = db_context["db_index"]
+    num_records = int(db_context.get("num_records", 0) or 0)
+
+    effective_breadth_threshold = float(coverage_breadth_threshold)
+    # Auto-adaptive breadth: if DB is very large/redundant, relax breadth to 0.02.
+    if num_records >= 1000 and effective_breadth_threshold > 0.02:
+        logger.info(
+            f"Adaptive breadth (auto): db_records={num_records} -> "
+            f"using coverage_breadth threshold 0.02 (was {coverage_breadth_threshold})"
+        )
+        effective_breadth_threshold = 0.02
     
     aln_sam = sample_dir / f"{sample_name}.sam"
 
@@ -4426,6 +4451,8 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         }
         all_stats.append(stat_entry)
         
+    num_hit_refs_pre_agg = len(all_stats)
+
     # Aggregate by organism/species BEFORE filtering to combine reads that map to multiple references of same species
     # IMPORTANT: For segmented viruses (e.g., Lassa, Influenza), keep segments separate by including segment in key
     # This helps when reads are spread across many references (e.g., many MPOX references)
@@ -4555,6 +4582,20 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     logger.info(f"Aggregated {len(all_stats)} references -> {len(aggregated_all_stats)} organisms/species")
     # Replace all_stats with aggregated version
     all_stats = aggregated_all_stats
+
+    # Adaptive breadth (split-mapping normalization): if many references were hit but collapse to few species,
+    # per-reference breadth in the first pass can be artificially low. In that situation, relax breadth to 0.02.
+    if (
+        num_hit_refs_pre_agg >= 500
+        and len(aggregated_all_stats) <= 50
+        and effective_breadth_threshold > 0.02
+    ):
+        logger.info(
+            f"Adaptive breadth (split mapping): hit_refs={num_hit_refs_pre_agg}, "
+            f"species={len(aggregated_all_stats)} -> using coverage_breadth threshold 0.02 "
+            f"(was {effective_breadth_threshold})"
+        )
+        effective_breadth_threshold = 0.02
     
     # Filter blinded species if specified
     if blinded_species:
@@ -4587,15 +4628,15 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
         if s["avg_identity"] >= min_identity 
         and s.get("coverage_depth", 0.0) >= coverage_depth_threshold 
         and s.get("coverage_depth", 0.0) > 0.0
-        and s.get("coverage_breadth", 0.0) >= coverage_breadth_threshold
+        and s.get("coverage_breadth", 0.0) >= effective_breadth_threshold
     ]
     
     
     filtered_out = initial_count - len(curated_stats)
     if filtered_out > 0:
-        logger.info(f"After strict curation (identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {coverage_breadth_threshold}): {len(curated_stats)} references remain (filtered out {filtered_out})")
+        logger.info(f"After strict curation (identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {effective_breadth_threshold}): {len(curated_stats)} references remain (filtered out {filtered_out})")
     else:
-        logger.info(f"After strict curation (identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {coverage_breadth_threshold}): {len(curated_stats)} references remain")
+        logger.info(f"After strict curation (identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {effective_breadth_threshold}): {len(curated_stats)} references remain")
     
     if not filtered_all_stats:
         logger.warning(f"No references meet the filtering criteria (identity >= {min_identity:.1f}% AND mapped_reads >= {min_mapped_reads})")
@@ -4610,9 +4651,9 @@ def find_best_reference_with_index(sample_fastq: Path, database_fasta: Path, out
     
     # Log curated stats info (handle empty case gracefully)
     if curated_stats:
-        logger.info(f"Curated JSON: {len(curated_stats)} references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {coverage_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= 100) out of {len(all_stats)} total")
+        logger.info(f"Curated JSON: {len(curated_stats)} references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {effective_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= 100) out of {len(all_stats)} total")
     else:
-        logger.info(f"Curated JSON: 0 references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {coverage_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= 100) out of {len(all_stats)} total")
+        logger.info(f"Curated JSON: 0 references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {effective_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= 100) out of {len(all_stats)} total")
         logger.warning("No references meet curated criteria - results may be limited")
     
     # Choose best by mapped read count from filtered results (now working with aggregated stats)
@@ -4791,7 +4832,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         threads=threads,
         minimap2_I=minimap2_I,
         blinded_species=blinded_species,
-        organism_variations=organism_variations
+        organism_variations=organism_variations,
     )
     
     if not best_ref:
