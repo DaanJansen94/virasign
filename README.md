@@ -86,7 +86,7 @@ virasign --help
   - `-d, --database`: Database name `RVDB,RefSeq`, or an accession (e.g. `OZ254622.1`) (default: `RVDB`).
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
-  - `--db-dir`: Reuse an existing database folder (e.g. if RVDB/RefSeq is already downloaded there).
+  - `--db-dir`: Reuse an existing database folder (optional; example: `/path/to/Databases/`).
 
 - **Viral identification thresholds (controls what is reported)**
   - `--min_identity`: Min read alignment identity (%) (default: RVDB `80`, RefSeq `95`).
