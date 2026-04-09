@@ -2974,25 +2974,26 @@ def build_organism_mapping(database_fasta: Path) -> dict:
                 header = line[1:].strip()
                 acc = extract_accession_from_header(header)
                 if acc:
-                    # Try pipe-delimited format first (RVDB/RefSeq): acc|GENBANK|accession|description|organism|VRL|date
-                    # Organism is typically at index 4 (5th part)
-                    parts = header.split("|")
-                    if len(parts) >= 5:
-                        organism = parts[4].strip()
-                        if organism:  # Only add if not empty
-                            organism_map[acc] = organism
-                    elif len(parts) >= 4:
-                        # Fallback: try parts[-2] if format is different
-                        organism = parts[-2].strip()
-                        if organism:
-                            organism_map[acc] = organism
-                    else:
-                        # Simple NCBI format: >accession description
-                        # For custom accessions downloaded from NCBI, the header is usually:
-                        # >accession description
-                        # We can't extract organism from this format reliably, so leave it empty
-                        # The organism will be fetched via NCBI API in enrich_stats_with_organism
-                        pass
+                    # Only parse pipe-delimited organism fields for known RVDB/RefSeq header formats.
+                    # Custom NCBI descriptions can contain '|' (e.g. isolate metadata), which would
+                    # otherwise be mis-parsed as organism.
+                    is_pipe_format = (
+                        header.startswith("acc|")
+                        or "|GENBANK|" in header
+                        or "|REFSEQ|" in header
+                    )
+                    if is_pipe_format:
+                        # RVDB/RefSeq: acc|GENBANK|accession|description|organism|VRL|date
+                        parts = header.split("|")
+                        if len(parts) >= 5:
+                            organism = parts[4].strip()
+                            if organism:
+                                organism_map[acc] = organism
+                        elif len(parts) >= 4:
+                            organism = parts[-2].strip()
+                            if organism:
+                                organism_map[acc] = organism
+                    # Otherwise: leave blank; organism will be filled later by taxonomy resources.
     
     return organism_map
 
