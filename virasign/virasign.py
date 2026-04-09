@@ -638,8 +638,8 @@ def resolve_databases_storage_dir(db_dir_parent) -> Path:
     Root directory that contains RVDB/, RefSeq/, Custom/.
 
     Without --db-dir: ./Databases (under cwd).
-    With --db-dir: use that path as the storage root exactly — no automatic extra Databases/
-    segment (avoids .../Databases/Databases). Put RVDB/ and RefSeq/ directly under that path.
+    With --db-dir: create/use a Databases/ subfolder inside the given base directory,
+    unless the provided path already ends with Databases/ (avoids .../Databases/Databases).
     """
     if db_dir_parent:
         raw = str(db_dir_parent).strip()
@@ -650,7 +650,7 @@ def resolve_databases_storage_dir(db_dir_parent) -> Path:
             base = base.resolve(strict=False)
         except (OSError, RuntimeError):
             base = Path(os.path.normpath(str(base)))
-        out_before_collapse = base
+        out_before_collapse = base / "Databases"
         out = collapse_redundant_databases_dirs(out_before_collapse)
         if str(out) != str(out_before_collapse):
             logger.info(
@@ -7166,17 +7166,20 @@ def find_samples(input_path):
 
 def main(args=None):
     """Main entry point for the reference selection pipeline."""
+
+    # Version string (used in --version and help header)
+    try:
+        from . import __version__ as virasign_version
+    except Exception:
+        virasign_version = "unknown"
+
     parser = argparse.ArgumentParser(
-        description="Select best reference sequence from database for each sample",
+        description=f"Virasign v{virasign_version}: viral taxonomic classification and reference selection tool for nanopore sequencing data",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   Basic usage with default RVDB database:
-    virasign -i input_dir -o output_dir
-
-  One gzipped FASTQ or a folder of FASTQs:
-    virasign -i reads.fastq.gz
-    virasign -i my_fastq_folder
+    virasign -i input_dir
   
   Use specific RVDB version:
     virasign -i input_dir -o output_dir -d RVDB --rvdb-version 31.0
@@ -7184,6 +7187,15 @@ Examples:
   Use both databases with custom accessions:
     virasign -i input_dir -d RVDB,RefSeq -o output_dir -a PX852146.1,NC_123456.1 -t 16
         """
+    )
+
+    # Version flag (standard CLI behavior: print and exit)
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {virasign_version}",
+        help="Show installed Virasign version and exit.",
     )
     
     parser.add_argument(
@@ -7208,7 +7220,7 @@ Examples:
         dest="db_dir",
         type=str,
         default=None,
-        help="Database storage root: folder that will contain RVDB/, RefSeq/, Custom/ (no extra Databases/ is appended; default without this flag: ./Databases).",
+        help="Base directory for database storage. Virasign will create/use a Databases/ subfolder here (default without this flag: ./Databases). Example: --db-dir /data/project -> stores in /data/project/Databases/.",
     )
 
     parser.add_argument(
@@ -7286,7 +7298,7 @@ Examples:
         dest="cluster_identity",
         help="Identity threshold for RVDB clustering (default: 0.98, i.e., 98%%). Only used if clustering is enabled with --enable-clustering."
     )
-    
+
     parser.add_argument(
         "--rvdb-version",
         type=str,
