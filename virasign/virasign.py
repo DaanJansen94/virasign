@@ -6336,41 +6336,71 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                     except Exception as e:
                         logger.warning(f"Nextclade failed: {e}")
                 else:
-                    # Agnostic mode: infer dataset per reference using `nextclade sort`,
-                    # then run Nextclade only for the inferred dataset(s).
+                    # Auto mode: for Mpox, run the canonical dataset directly (gives clade + lineage + outbreak).
+                    # For everything else, fall back to the agnostic `nextclade sort` approach.
+                    did_run_direct = False
                     try:
-                        sort_tsv = sample_dir / f"{sample_name}_nextclade_sort.tsv"
-                        acc_to_ds = _infer_nextclade_datasets_with_sort(selected_refs_fasta, sort_tsv)
-                        if not acc_to_ds:
-                            logger.warning("Nextclade sort did not infer any dataset for selected references. Skipping clade assignment.")
-                        else:
-                            # Normalize Mpox to all-clades when possible (gives consistent Ia/Ib/IIa/IIb output).
-                            for acc, ds in list(acc_to_ds.items()):
-                                if ds.startswith("nextstrain/mpox/"):
-                                    acc_to_ds[acc] = "nextstrain/mpox/all-clades"
-
-                            per_ds_dir = sample_dir / "_nextclade"
-                            ds_to_fasta = _write_nextclade_dataset_fastas(selected_refs_fasta, acc_to_ds, per_ds_dir)
-                            if not ds_to_fasta:
-                                logger.warning("No dataset-specific FASTA could be created for Nextclade. Skipping clade assignment.")
-                            else:
-                                for ds, fasta_path in ds_to_fasta.items():
-                                    out_tsv = sample_dir / f"{sample_name}_nextclade_{safe_stem(ds.replace('/', '_'), max_len=120)}.tsv"
-                                    try:
-                                        acc_to_fields = _run_nextclade_and_get_results(fasta_path, ds, out_tsv)
-                                        nextclade_acc_to_fields.update(acc_to_fields)
-                                    except subprocess.CalledProcessError as e:
-                                        logger.warning(f"Nextclade failed (dataset '{ds}'): {(e.stderr or '').strip()}")
-                                    except Exception as e:
-                                        logger.warning(f"Nextclade failed (dataset '{ds}'): {e}")
-
-                                # If multiple datasets were used, we don't store a single dataset string.
-                                nextclade_dataset_used = None
-                                logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_fields)} reference(s) across {len(ds_to_fasta)} dataset(s)")
+                        mpox_markers = ("mpox", "monkeypox", "orthopoxvirus monkeypox", "orthopoxvirus")
+                        joined = " ".join(
+                            (d.get("description") or "") + " " + (d.get("organism") or "") + " " + (d.get("viral_species") or "")
+                            for d in curated_descriptions
+                            if isinstance(d, dict)
+                        ).lower()
+                        if any(m in joined for m in mpox_markers):
+                            dataset_name = "nextstrain/mpox/all-clades"
+                            out_tsv = sample_dir / f"{sample_name}_nextclade.tsv"
+                            nextclade_acc_to_fields = _run_nextclade_and_get_results(
+                                selected_refs_fasta, dataset_name, out_tsv
+                            )
+                            nextclade_dataset_used = dataset_name
+                            did_run_direct = True
+                            logger.info(
+                                f"Nextclade: assigned clades for {len(nextclade_acc_to_fields)} reference(s) using dataset '{dataset_name}'"
+                            )
                     except subprocess.CalledProcessError as e:
-                        logger.warning(f"Nextclade sort failed: {(e.stderr or '').strip()}")
-                    except Exception as e:
-                        logger.warning(f"Nextclade sort failed: {e}")
+                        logger.warning(
+                            f"Nextclade failed (dataset 'nextstrain/mpox/all-clades'): {(e.stderr or '').strip()}"
+                        )
+                    except Exception:
+                        # Ignore auto-detection failures and continue to sort mode.
+                        pass
+
+                    if not did_run_direct:
+                        # Agnostic mode: infer dataset per reference using `nextclade sort`,
+                        # then run Nextclade only for the inferred dataset(s).
+                        try:
+                            sort_tsv = sample_dir / f"{sample_name}_nextclade_sort.tsv"
+                            acc_to_ds = _infer_nextclade_datasets_with_sort(selected_refs_fasta, sort_tsv)
+                            if not acc_to_ds:
+                                logger.warning("Nextclade sort did not infer any dataset for selected references. Skipping clade assignment.")
+                            else:
+                                # Normalize Mpox to all-clades when possible (gives consistent Ia/Ib/IIa/IIb output).
+                                for acc, ds in list(acc_to_ds.items()):
+                                    if ds.startswith("nextstrain/mpox/"):
+                                        acc_to_ds[acc] = "nextstrain/mpox/all-clades"
+
+                                per_ds_dir = sample_dir / "_nextclade"
+                                ds_to_fasta = _write_nextclade_dataset_fastas(selected_refs_fasta, acc_to_ds, per_ds_dir)
+                                if not ds_to_fasta:
+                                    logger.warning("No dataset-specific FASTA could be created for Nextclade. Skipping clade assignment.")
+                                else:
+                                    for ds, fasta_path in ds_to_fasta.items():
+                                        out_tsv = sample_dir / f"{sample_name}_nextclade_{safe_stem(ds.replace('/', '_'), max_len=120)}.tsv"
+                                        try:
+                                            acc_to_fields = _run_nextclade_and_get_results(fasta_path, ds, out_tsv)
+                                            nextclade_acc_to_fields.update(acc_to_fields)
+                                        except subprocess.CalledProcessError as e:
+                                            logger.warning(f"Nextclade failed (dataset '{ds}'): {(e.stderr or '').strip()}")
+                                        except Exception as e:
+                                            logger.warning(f"Nextclade failed (dataset '{ds}'): {e}")
+
+                                    # If multiple datasets were used, we don't store a single dataset string.
+                                    nextclade_dataset_used = None
+                                    logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_fields)} reference(s) across {len(ds_to_fasta)} dataset(s)")
+                        except subprocess.CalledProcessError as e:
+                            logger.warning(f"Nextclade sort failed: {(e.stderr or '').strip()}")
+                        except Exception as e:
+                            logger.warning(f"Nextclade sort failed: {e}")
 
         # Annotate curated_descriptions with Nextclade clade if available
         if nextclade_acc_to_fields:
@@ -6380,13 +6410,14 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                     f = nextclade_acc_to_fields[acc]
                     if f.get("clade"):
                         d["nextclade_clade"] = f.get("clade")
-                    # Mpox datasets can also emit lineage/outbreak; include when present.
-                    if f.get("lineage"):
-                        d["nextclade_lineage"] = f.get("lineage")
-                    if f.get("outbreak"):
-                        d["nextclade_outbreak"] = f.get("outbreak")
                     if nextclade_dataset_used:
                         d["nextclade_dataset"] = nextclade_dataset_used
+                    # Mpox datasets can also emit lineage/outbreak. For consistent UI/JSON,
+                    # always include these keys for Mpox (use "NA" when missing).
+                    ds_for_row = (d.get("nextclade_dataset") or nextclade_dataset_used or "").strip()
+                    if ds_for_row.startswith("nextstrain/mpox/"):
+                        d["nextclade_lineage"] = (f.get("lineage") or "").strip() or "NA"
+                        d["nextclade_outbreak"] = (f.get("outbreak") or "").strip() or "NA"
 
         with open(curated_json_file, 'w') as f:
             json.dump(curated_descriptions, f, indent=2)
