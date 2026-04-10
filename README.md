@@ -102,9 +102,9 @@ virasign --help
 
 - **Viral identification thresholds (controls what is reported)**
   - `--min_identity`: Min read alignment identity (%) (default: RVDB `80`, RefSeq `95`).
-  - `--min_mapped_reads`: Minimum number of reads that must map to a reference for it to be reported (default: `100`).
-  - `--coverage_depth`: Minimum average coverage depth across the reference (default: `1.0`).
-  - `--coverage_breadth`: Minimum fraction of the reference covered by ≥1 read (default: `0.1`).
+  - `--min_mapped_reads`: Min read number that must map to a reference for it to be reported (default: `100`).
+  - `--coverage_depth`: Min average coverage depth across the reference (default: `1.0`).
+  - `--coverage_breadth`: Min fraction of the reference covered by ≥1 read (default: `0.1`).
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
