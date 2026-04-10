@@ -20,6 +20,7 @@ import xml.etree.ElementTree as ET
 import gzip
 import zipfile
 import sqlite3
+from typing import Optional, Dict, List, Any, Tuple
 
 def setup_logging(output_dir, verbose=True):
     """Set up logging configuration.
@@ -687,6 +688,7 @@ def download_rvdb_database(
     enable_clustering: bool = False,
     cluster_identity: float = 0.98,
     allow_download: bool = True,
+    orthopox_human_only: bool = False,
 ) -> Path:
     """
     Download and prepare RVDB database with complete genomes only, optionally cluster at specified identity.
@@ -701,6 +703,153 @@ def download_rvdb_database(
     
     Returns path to RVDB database (e.g., RVDBv30.0_complete.fasta)
     """
+    def _filter_orthopox_human_only_inplace(fasta_path: Path, metadata_file: Path) -> None:
+        """
+        Remove non-human-associated pox references from a FASTA.
+
+        Keeps: Monkeypox (mpox), Variola, Vaccinia, Akhmeta (akhmetapox).
+        Drops: Cowpox, Camelpox, Ectromelia, and other pox-like labels.
+
+        Only filters sequences whose headers look pox-related; all other viral sequences are preserved.
+        """
+        if not orthopox_human_only:
+            return
+
+        import re
+
+        try:
+            existing_meta = {}
+            if metadata_file.exists():
+                existing_meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+            if bool(existing_meta.get("orthopox_human_only")):
+                # Keep metadata minimal: remove any legacy version key.
+                if "orthopox_human_only_version" in existing_meta:
+                    try:
+                        existing_meta.pop("orthopox_human_only_version", None)
+                        with open(metadata_file, "w", encoding="utf-8") as f:
+                            json.dump(existing_meta, f, indent=2)
+                    except OSError:
+                        pass
+                # Metadata alone isn't enough to guarantee the FASTA matches current filter intent
+                # (e.g. older installs applied a narrower rule-set). Do a quick sanity-check for
+                # disallowed poxvirus entries; only skip if none are found.
+                #
+                # This keeps metadata minimal (boolean only) while still converging to the intended
+                # "human-associated orthopox only" behavior over time.
+                logger.info("Orthopox human-only filter marked applied (metadata). Verifying FASTA contents...")
+                # Compiled below; placeholder until regexes are defined.
+        except Exception:
+            # If metadata can't be read, proceed with filtering.
+            pass
+
+        # Treat Poxviridae (and common poxvirus naming patterns) as pox-related. We still keep a small
+        # allow-list for the human-associated orthopox viruses (Mpox/Variola/Vaccinia/Akhmeta).
+        #
+        # Notes:
+        # - Some records may not include "poxvirus" but do include genus/family keywords.
+        # - We intentionally do NOT match generic "pox" / "pox virus" strings, because many
+        #   non-poxviridae viruses contain "pox" in their common name (e.g. Plum pox virus).
+        pox_related = re.compile(
+            r"("
+            r"\bpoxviridae\b|"
+            # Match "<something>poxvirus" as well as standalone "poxvirus"
+            # (e.g. entomopoxvirus).
+            r"[a-z0-9-]*poxvirus\b|"
+            r"\borthopox\b|\bcapripox\b|\bavipox\b|\bparapox\b|\bsuipox\b|\bmolluscipox\b|\bleporipox\b|\byatapox\b|"
+            r"\bmonkeypox\b|\bmpox\b|\bvariola\b|\bvaccinia\b|\bakhmeta\b|\bakhmetapox\b|"
+            r"\bcowpox\b|\bcamelpox\b|\bectromelia\b|"
+            r"\bfowlpox\b|\bcanarypox\b|\bhorsepox\b|"
+            r"\bgoatpox\b|\bsheeppox\b|\blumpy\s*skin\b|"
+            r"\bpseudocowpox\b|\borf\b|\bswinepox\b|\bmyxoma\b|"
+            # Many Poxviridae species use the pattern "<host>pox virus". We match "<word>pox"
+            # but keep a narrow exception list below (e.g. Plum pox virus).
+            r"\b[a-z][a-z0-9-]*pox\b"
+            r")",
+            re.I,
+        )
+        allow = re.compile(
+            r"(monkeypox|mpox|variola|vaccinia|akhmeta|akhmetapox|orthopoxvirus\s+vaccinia|plum\s+pox\s+virus)",
+            re.I,
+        )
+
+        tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_orthopox_human_only")
+        kept = 0
+        removed = 0
+
+        def _species_label_from_header(h: str) -> str:
+            # RVDB/RefSeq often uses pipe format: acc|...|accession|description|species|...
+            parts = h.split("|")
+            if len(parts) >= 5 and parts[0] == "acc":
+                return parts[4].strip()
+            return h
+
+        # If metadata said "already applied", verify there's nothing to do before skipping.
+        try:
+            if metadata_file.exists():
+                meta_check = json.loads(metadata_file.read_text(encoding="utf-8"))
+            else:
+                meta_check = {}
+            if bool(meta_check.get("orthopox_human_only")):
+                needs_filtering = False
+                with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_chk:
+                    for line in f_chk:
+                        if not line.startswith(">"):
+                            continue
+                        header = line[1:].strip()
+                        label = _species_label_from_header(header)
+                        if pox_related.search(header) or pox_related.search(label):
+                            if not (allow.search(header) or allow.search(label)):
+                                needs_filtering = True
+                                break
+                if not needs_filtering:
+                    logger.info("FASTA verification ok (no disallowed poxvirus entries). Skipping filter.")
+                    return
+                logger.info("Disallowed poxvirus entry found in FASTA; re-applying filter.")
+        except Exception:
+            # If verification fails, proceed with filtering.
+            pass
+
+        with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+            tmp_out, "w", encoding="utf-8", newline="\n"
+        ) as f_out:
+            write = False
+            for line in f_in:
+                if line.startswith(">"):
+                    header = line[1:].strip()
+                    label = _species_label_from_header(header)
+                    if pox_related.search(header) or pox_related.search(label):
+                        write = bool(allow.search(header) or allow.search(label))
+                        if write:
+                            kept += 1
+                        else:
+                            removed += 1
+                    else:
+                        write = True
+                        kept += 1
+                if write:
+                    f_out.write(line)
+
+        tmp_out.replace(fasta_path)
+        logger.info(
+            f"Orthopox human-only filter applied to RVDB: removed {removed:,} pox-like sequence(s), kept {kept:,} total sequence(s)."
+        )
+
+        # Mark in metadata (create minimal metadata if missing).
+        meta = {}
+        try:
+            if metadata_file.exists():
+                meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+        meta["orthopox_human_only"] = True
+        # Keep metadata minimal: only record that the filter was applied.
+        meta.pop("orthopox_human_only_version", None)
+        try:
+            with open(metadata_file, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+        except OSError:
+            pass
+
     rvdb_dir = databases_dir / "RVDB"
     rvdb_dir.mkdir(parents=True, exist_ok=True)
 
@@ -747,6 +896,9 @@ def download_rvdb_database(
             }
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
+
+        # Optional: apply orthopox filter even for existing DB.
+        _filter_orthopox_human_only_inplace(output_fasta, metadata_file)
         return output_fasta
 
     if not allow_download:
@@ -953,11 +1105,15 @@ def download_rvdb_database(
             "sequence_count": clustered_count,
             "clustered": enable_clustering and shutil.which('mmseqs') is not None,
             "cluster_identity": cluster_identity if enable_clustering else None,
+            "orthopox_human_only": bool(orthopox_human_only),
             "note": "Intermediate files (compressed, uncurated, and clustering temp) were removed to save disk space"
         }
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
         logger.info(f"Saved database metadata to {metadata_file}")
+
+        # Apply optional orthopox filtering after we have a stable final FASTA on disk.
+        _filter_orthopox_human_only_inplace(output_fasta, metadata_file)
         
     except Exception as e:
         logger.error(f"Failed to filter RVDB for complete genomes: {e}")
@@ -965,7 +1121,12 @@ def download_rvdb_database(
     
     return output_fasta
 
-def download_refseq_database(databases_dir: Path, force_download: bool = False, allow_download: bool = True) -> Path:
+def download_refseq_database(
+    databases_dir: Path,
+    force_download: bool = False,
+    allow_download: bool = True,
+    orthopox_human_only: bool = False,
+) -> Path:
     """
     Download and prepare RefSeq viral database.
     allow_download: If False, missing DB raises FileNotFoundError (sample runs); use True with --prepare-db.
@@ -998,6 +1159,58 @@ def download_refseq_database(databases_dir: Path, force_download: bool = False, 
             }
             with open(metadata_file, 'w') as f:
                 json.dump(metadata, f, indent=2)
+
+        # Optional: apply orthopox filter to existing DB too.
+        if orthopox_human_only:
+            try:
+                # Simple inlined filter (avoid cross-function dependency).
+                import re
+                pox_related = re.compile(
+                    r"(orthopox|monkeypox|mpox|variola|vaccinia|cowpox|camelpox|ectromelia|akhmeta|akhmet)",
+                    re.I,
+                )
+                allow = re.compile(
+                    r"(monkeypox|mpox|variola|vaccinia|akhmeta|akhmetapox|orthopoxvirus\s+vaccinia)",
+                    re.I,
+                )
+                meta = {}
+                try:
+                    meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+                except Exception:
+                    meta = {}
+                if meta.get("orthopox_human_only"):
+                    logger.info("Orthopox human-only filter already applied to RefSeq (metadata). Skipping.")
+                else:
+                    tmp_out = output_fasta.with_suffix(output_fasta.suffix + ".tmp_orthopox_human_only")
+                    kept = 0
+                    removed = 0
+                    with open(output_fasta, "r", encoding="utf-8", errors="replace") as f_in, open(
+                        tmp_out, "w", encoding="utf-8", newline="\n"
+                    ) as f_out:
+                        write = False
+                        for line in f_in:
+                            if line.startswith(">"):
+                                header = line[1:].strip()
+                                if pox_related.search(header):
+                                    write = bool(allow.search(header))
+                                    if write:
+                                        kept += 1
+                                    else:
+                                        removed += 1
+                                else:
+                                    write = True
+                                    kept += 1
+                            if write:
+                                f_out.write(line)
+                    tmp_out.replace(output_fasta)
+                    meta["orthopox_human_only"] = True
+                    with open(metadata_file, "w", encoding="utf-8") as f:
+                        json.dump(meta, f, indent=2)
+                    logger.info(
+                        f"Orthopox human-only filter applied to RefSeq: removed {removed:,} pox-like sequence(s), kept {kept:,} total sequence(s)."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not apply orthopox human-only filter to RefSeq: {e}")
         return output_fasta
 
     if not allow_download:
@@ -1119,6 +1332,7 @@ def download_refseq_database(databases_dir: Path, force_download: bool = False, 
             "note": "Only part 1 exists (part 2 not available on server)",
             "filtered": False,
             "output_file": str(output_fasta.name),
+            "orthopox_human_only": bool(orthopox_human_only),
             "note": "Complete viral RefSeq genomes"
         }
         
@@ -1132,6 +1346,53 @@ def download_refseq_database(databases_dir: Path, force_download: bool = False, 
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f, indent=2)
         logger.info(f"Saved database metadata to {metadata_file}")
+
+        # Optional orthopox filter after download.
+        if orthopox_human_only:
+            try:
+                import re
+                pox_related = re.compile(
+                    r"(orthopox|monkeypox|mpox|variola|vaccinia|cowpox|camelpox|ectromelia|akhmeta|akhmet)",
+                    re.I,
+                )
+                allow = re.compile(
+                    r"(monkeypox|mpox|variola|vaccinia|akhmeta|akhmetapox|orthopoxvirus\s+vaccinia)",
+                    re.I,
+                )
+                tmp_out = output_fasta.with_suffix(output_fasta.suffix + ".tmp_orthopox_human_only")
+                kept = 0
+                removed = 0
+                with open(output_fasta, "r", encoding="utf-8", errors="replace") as f_in, open(
+                    tmp_out, "w", encoding="utf-8", newline="\n"
+                ) as f_out:
+                    write = False
+                    for line in f_in:
+                        if line.startswith(">"):
+                            header = line[1:].strip()
+                            if pox_related.search(header):
+                                write = bool(allow.search(header))
+                                if write:
+                                    kept += 1
+                                else:
+                                    removed += 1
+                            else:
+                                write = True
+                                kept += 1
+                        if write:
+                            f_out.write(line)
+                tmp_out.replace(output_fasta)
+                try:
+                    meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+                except Exception:
+                    meta = {}
+                meta["orthopox_human_only"] = True
+                with open(metadata_file, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, indent=2)
+                logger.info(
+                    f"Orthopox human-only filter applied to RefSeq: removed {removed:,} pox-like sequence(s), kept {kept:,} total sequence(s)."
+                )
+            except Exception as e:
+                logger.warning(f"Could not apply orthopox human-only filter to RefSeq: {e}")
         
     except Exception as e:
         logger.error(f"Failed to download RefSeq: {e}")
@@ -1371,6 +1632,7 @@ def resolve_database_path(
     databases_dir: Path = None,
     allow_named_database_download: bool = False,
     force_named_database_rebuild: bool = False,
+    orthopox_human_only: bool = False,
 ) -> Path:
     """
     Resolve database argument to actual file path.
@@ -1554,6 +1816,7 @@ def resolve_database_path(
                 enable_clustering=enable_clustering,
                 cluster_identity=cluster_identity,
                 allow_download=allow_named_database_download,
+                orthopox_human_only=orthopox_human_only,
             )
             fasta_files.append(fasta_file)
         elif db_name == 'refseq':
@@ -1561,6 +1824,7 @@ def resolve_database_path(
                 databases_dir,
                 force_download=force_named_database_rebuild,
                 allow_download=allow_named_database_download,
+                orthopox_human_only=orthopox_human_only,
             )
             fasta_files.append(fasta_file)
         else:
@@ -3273,6 +3537,50 @@ def extract_accession_from_header(header: str) -> str:
     
     return ""
 
+
+def _curated_accession_expansion_and_canon(curated_accessions: List[str]) -> Tuple[set, Dict[str, str]]:
+    """
+    Build (expanded_ids, raw_to_canonical) for remap streaming.
+    Minimap2/SAM sequence names may omit the GenBank version suffix (e.g. PP601225 vs PP601225.1);
+    expanded membership avoids dropping alignments, and canonical form keeps BAM/FASTQ folders consistent.
+    """
+    expanded: set = set()
+    to_canon: Dict[str, str] = {}
+    base_pick: Dict[str, str] = {}
+    for c in curated_accessions:
+        c = (c or "").strip()
+        if not c:
+            continue
+        expanded.add(c)
+        base = c.split(".", 1)[0]
+        expanded.add(base)
+        to_canon[c] = c
+        if base not in base_pick:
+            base_pick[base] = c
+    for base, full in base_pick.items():
+        to_canon.setdefault(base, full)
+    return expanded, to_canon
+
+
+def _sam_accession_in_curated(expanded: set, raw: str) -> bool:
+    if not raw or not raw.strip():
+        return False
+    raw = raw.strip()
+    if raw in expanded:
+        return True
+    return raw.split(".", 1)[0] in expanded
+
+
+def _canonical_curated_accession(to_canon: Dict[str, str], raw: str) -> str:
+    if not raw or not raw.strip():
+        return raw or ""
+    raw = raw.strip()
+    if raw in to_canon:
+        return to_canon[raw]
+    base = raw.split(".", 1)[0]
+    return to_canon.get(base, raw)
+
+
 def extract_selected_references(database_fasta: Path, selected_headers: list, out_fasta: Path) -> int:
     """
     Extract multiple reference sequences from database FASTA matching the given headers.
@@ -3338,11 +3646,106 @@ def extract_selected_references(database_fasta: Path, selected_headers: list, ou
                 logger.warning(f"  - {m}")
     return found_count
 
+
+def _updated_stats_from_remapped_sam(
+    output_sam: Path,
+    selected_refs_fasta: Path,
+    min_identity: float,
+) -> Dict[str, dict]:
+    """
+    Parse remapped SAM (same alignment set as sorted BAM) into stats keyed by full FASTA description.
+    """
+    selected_header_map = build_header_mapping(selected_refs_fasta)
+    for acc_key, hdr in list(selected_header_map.items()):
+        if "." in acc_key:
+            selected_header_map.setdefault(acc_key.split(".", 1)[0], hdr)
+    stats_by_ref, ref_lengths, ref_headers = parse_sam_per_reference_stats(Path(output_sam), min_identity=min_identity)
+    updated_stats: Dict[str, dict] = {}
+    for sam_header, s in stats_by_ref.items():
+        aligned_i = s["aligned_bases"]
+        matches_i = s["matches"]
+        identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0.0
+        acc = extract_accession_from_header(sam_header)
+        desc = selected_header_map.get(acc, ref_headers.get(sam_header, sam_header))
+        if desc == sam_header:
+            for full_header, full_desc in selected_header_map.items():
+                if acc in full_header or acc in full_desc:
+                    desc = full_desc
+                    break
+        ref_len = ref_lengths.get(sam_header)
+        if ref_len and ref_len > 0:
+            coverage_depth = aligned_i / ref_len
+            covered_pos = s.get("covered_positions", 0)
+            coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0
+        else:
+            coverage_depth = 0.0
+            coverage_breadth = 0.0
+        updated_stats[desc] = {
+            "mapped_reads": s["mapped_reads"],
+            "avg_identity": identity,
+            "coverage_depth": coverage_depth,
+            "coverage_breadth": coverage_breadth,
+        }
+    return updated_stats
+
+
+def _index_remap_stats_by_accession(updated_stats: Dict[str, dict]) -> Dict[str, dict]:
+    """Accession -> remap row (last wins). Keys include base accession when a versioned accession is present."""
+    by_acc: Dict[str, dict] = {}
+    for desc_key, data in updated_stats.items():
+        a = extract_accession_from_header(desc_key)
+        if not a:
+            continue
+        by_acc[a] = data
+        if "." in a:
+            by_acc.setdefault(a.split(".", 1)[0], data)
+    return by_acc
+
+
+def _lookup_remap_row(by_acc: Dict[str, dict], acc: str) -> Optional[dict]:
+    if not acc:
+        return None
+    acc = acc.strip()
+    if acc in by_acc:
+        return by_acc[acc]
+    base = acc.split(".", 1)[0]
+    if base in by_acc:
+        return by_acc[base]
+    return None
+
+
+def _merge_remap_row_into_stat(
+    stat: dict,
+    updated_data: dict,
+    *,
+    is_low_input: bool,
+    coverage_breadth_threshold: float,
+    log_suffix: str = "",
+) -> bool:
+    """Apply remap counters onto stat. Returns True if applied; False if low-input preservation skipped."""
+    original_breadth = stat.get("coverage_breadth", 0.0)
+    new_breadth = updated_data["coverage_breadth"]
+    if is_low_input and original_breadth >= coverage_breadth_threshold and new_breadth < coverage_breadth_threshold:
+        acc = stat.get("accession", "")
+        logger.warning(
+            f"DEBUG: {acc} remapping dropped breadth from {original_breadth:.4f} to {new_breadth:.4f} "
+            f"(below threshold {coverage_breadth_threshold}). Preserving original stats for low-input sample."
+        )
+        return False
+    old_reads = stat["mapped_reads"]
+    stat["mapped_reads"] = updated_data["mapped_reads"]
+    stat["avg_identity"] = updated_data["avg_identity"]
+    stat["coverage_depth"] = updated_data["coverage_depth"]
+    stat["coverage_breadth"] = updated_data["coverage_breadth"]
+    logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads{log_suffix}")
+    return True
+
+
 def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, output_sam: Path, min_identity: float = 80.0, threads: int = 1, minimap2_I: str = "8G", stream_per_reference_outputs: bool = False, curated_descriptions: list = None, sample_dir: Path = None, gzip_fastq: bool = True) -> dict:
     """
-    Re-map all reads to the selected references to get accurate mapped_reads counts.
+    Re-map all reads to the selected references to get accurate mapped_reads counts and coverage metrics.
     Creates minimap2 index for the selected references database for speed.
-    For low-input samples (< 100k reads), uses secondary alignments to better detect multi-mapping reads.
+    Stats are parsed from the same remapped SAM that is used to build sorted BAMs (breadth/depth match IGV).
     Returns a dictionary mapping reference descriptions to updated stats (mapped_reads, avg_identity, etc.).
 
     If `stream_per_reference_outputs=True`, this function will additionally stream remap alignments
@@ -3357,15 +3760,15 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             if line.startswith('>'):
                 ref_count += 1
     
-    # Count reads in sample to determine if we should use secondary alignments
+    # Count reads in sample: low-input uses one combined disk SAM + parse; large uses stream or disk SAM.
     logger.info(f"Counting reads in sample to determine mapping strategy...")
     total_reads = count_reads(sample_fastq)
-    use_secondary = total_reads < 100000  # Use secondary alignments for low-input samples (< 100k reads)
+    use_secondary = total_reads < 100000  # historical name: "low-input" remap path (<100k reads)
     
     if use_secondary:
-        logger.info(f"Low-input sample detected ({total_reads:,} reads < 100k). Using secondary alignments in re-mapping phase (similar to initial mapping).")
+        logger.info(f"Low-input sample detected ({total_reads:,} reads < 100k).")
     else:
-        logger.info(f"Large sample detected ({total_reads:,} reads >= 100k). Using primary alignments only in re-mapping phase.")
+        logger.info(f"Large sample detected ({total_reads:,} reads >= 100k).")
     
     # Create minimap2 index for selected references (for speed)
     logger.info(f"Creating minimap2 index for {ref_count} selected references (this speeds up re-mapping)...")
@@ -3394,227 +3797,14 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     
     # Add alignment reporting parameters based on read count
     if use_secondary:
-        # Low-input sample: For segmented viruses and multi-reference scenarios,
-        # map to each reference separately to ensure each gets its reads counted correctly.
-        # When mapping to multiple refs together, minimap2 prioritizes best match, causing
-        # lower-identity references (e.g., Lassa 85%) to lose reads to higher-identity ones (e.g., Measles 96%).
-        # By mapping separately, each reference gets primary alignments, preserving read counts.
-        logger.info(f"Low-input sample with secondary alignments: mapping to each reference separately to preserve read counts...")
-        
-        # Map to each reference separately and combine results
-        updated_stats = {}
-        ref_descriptions = {}  # sam_header -> full description
-        
-        # Extract each reference and map separately
-        with open(selected_refs_fasta, 'r') as f:
-            current_ref_lines = []
-            current_header = None
-            
-            for line in f:
-                if line.startswith('>'):
-                    # Process previous reference if exists
-                    if current_header and current_ref_lines:
-                        # Create temporary FASTA for this single reference
-                        import tempfile
-                        temp_fasta = tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False)
-                        temp_fasta.write(current_header)
-                        temp_fasta.writelines(current_ref_lines)
-                        temp_fasta.close()
-                        temp_fasta_path = Path(temp_fasta.name)
-                        
-                        # Extract accession and description
-                        acc = extract_accession_from_header(current_header[1:].strip())
-                        desc = current_header[1:].strip()
-                        ref_descriptions[acc] = desc
-                        
-                        # Debug: Log reference being mapped
-                        if "lassa" in desc.lower() or "AY628204.1" in acc:
-                            logger.info(f"DEBUG: Mapping to Lassa reference separately: {acc}")
-                            # Check reference length
-                            seq_len = sum(len(line.strip()) for line in current_ref_lines if not line.startswith('>'))
-                            logger.info(f"DEBUG: Lassa reference sequence length: {seq_len:,} bp")
-                        
-                        # Create index for this single reference
-                        ref_index_single = ensure_minimap2_index(temp_fasta_path)
-                        
-                        # Map to this single reference (primary alignments only - each ref gets its own primaries)
-                        temp_sam = tempfile.NamedTemporaryFile(mode='w', suffix='.sam', delete=False)
-                        temp_sam.close()
-                        temp_sam_path = Path(temp_sam.name)
-                        
-                        minimap_cmd_single = [
-                            "minimap2",
-                            "-ax", "map-ont",
-                            "-N", "1",  # Primary alignments only (but each ref gets its own primaries)
-        "--secondary=no",
-        "-f", "0.0002",
-        "-I", str(minimap2_I),
-        "--max-chain-skip", "25",
-        "-t", str(threads),
-                            str(ref_index_single),
-                            str(sample_fastq),
-                        ]
-                        
-                        try:
-                            with open(temp_sam_path, "w") as out:
-                                result = subprocess.run(minimap_cmd_single, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
-                            
-                            # Debug: Count alignments in SAM before parsing
-                            if "lassa" in desc.lower() or "AY628204.1" in acc:
-                                sam_line_count = sum(1 for line in open(temp_sam_path) if not line.startswith('@') and line.strip())
-                                logger.info(f"DEBUG: Lassa SAM file has {sam_line_count:,} alignment lines (before identity filtering)")
-                            
-                            # Parse SAM for this single reference
-                            stats_single, ref_lengths_single, ref_headers_single = parse_sam_per_reference_stats(temp_sam_path, min_identity=min_identity)
-                            
-                            # Debug: Log stats after parsing
-                            if "lassa" in desc.lower() or "AY628204.1" in acc:
-                                for sh, s in stats_single.items():
-                                    logger.info(f"DEBUG: Lassa stats after SAM parsing: {s['mapped_reads']:,} reads, "
-                                               f"identity={(s['matches']/s['aligned_bases']*100) if s['aligned_bases'] > 0 else 0:.2f}%")
-                            
-                            # Add to combined stats
-                            for sam_header, s in stats_single.items():
-                                aligned_i = s["aligned_bases"]
-                                matches_i = s["matches"]
-                                identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0
-                                
-                                ref_len = ref_lengths_single.get(sam_header)
-                                if ref_len and ref_len > 0:
-                                    coverage_depth = aligned_i / ref_len
-                                    covered_pos = s.get("covered_positions", 0)
-                                    coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0
-                                else:
-                                    coverage_depth = 0.0
-                                    coverage_breadth = 0.0
-                                
-                                # Use full description as key
-                                updated_stats[desc] = {
-                                    "mapped_reads": s["mapped_reads"],
-                                    "avg_identity": identity,
-                                    "coverage_depth": coverage_depth,
-                                    "coverage_breadth": coverage_breadth,
-                                }
-                            
-                            # Clean up
-                            temp_fasta_path.unlink()
-                            temp_sam_path.unlink()
-                            ref_index_single.unlink() if ref_index_single.exists() else None
-                            
-                        except subprocess.CalledProcessError as e:
-                            logger.warning(f"Failed to map to reference {acc}: {e.stderr}")
-                            # Clean up on error
-                            if temp_fasta_path.exists():
-                                temp_fasta_path.unlink()
-                            if temp_sam_path.exists():
-                                temp_sam_path.unlink()
-                    
-                    # Start new reference
-                    current_header = line
-                    current_ref_lines = []
-                else:
-                    current_ref_lines.append(line)
-            
-            # Process last reference
-            if current_header and current_ref_lines:
-                import tempfile
-                temp_fasta = tempfile.NamedTemporaryFile(mode='w', suffix='.fasta', delete=False)
-                temp_fasta.write(current_header)
-                temp_fasta.writelines(current_ref_lines)
-                temp_fasta.close()
-                temp_fasta_path = Path(temp_fasta.name)
-                
-                acc = extract_accession_from_header(current_header[1:].strip())
-                desc = current_header[1:].strip()
-                ref_descriptions[acc] = desc
-                
-                ref_index_single = ensure_minimap2_index(temp_fasta_path)
-                temp_sam = tempfile.NamedTemporaryFile(mode='w', suffix='.sam', delete=False)
-                temp_sam.close()
-                temp_sam_path = Path(temp_sam.name)
-                
-                minimap_cmd_single = [
-                    "minimap2",
-                    "-ax", "map-ont",
-                    "-N", "1",
-                    "--secondary=no",
-                    "-f", "0.0002",
-                    "-I", str(minimap2_I),
-                    "--max-chain-skip", "25",
-                    "-t", str(threads),
-                    str(ref_index_single),
-                    str(sample_fastq),
-                ]
-                
-                try:
-                    with open(temp_sam_path, "w") as out:
-                        subprocess.run(minimap_cmd_single, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
-                    
-                    stats_single, ref_lengths_single, ref_headers_single = parse_sam_per_reference_stats(temp_sam_path, min_identity=min_identity)
-                    
-                    for sam_header, s in stats_single.items():
-                        aligned_i = s["aligned_bases"]
-                        matches_i = s["matches"]
-                        identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0
-                        
-                        ref_len = ref_lengths_single.get(sam_header)
-                        if ref_len and ref_len > 0:
-                            coverage_depth = aligned_i / ref_len
-                            covered_pos = s.get("covered_positions", 0)
-                            coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0
-                        else:
-                            coverage_depth = 0.0
-                            coverage_breadth = 0.0
-                        
-                        updated_stats[desc] = {
-                            "mapped_reads": s["mapped_reads"],
-                            "avg_identity": identity,
-                            "coverage_depth": coverage_depth,
-                            "coverage_breadth": coverage_breadth,
-                        }
-                    
-                    temp_fasta_path.unlink()
-                    temp_sam_path.unlink()
-                    ref_index_single.unlink() if ref_index_single.exists() else None
-                    
-                except subprocess.CalledProcessError as e:
-                    logger.warning(f"Failed to map to reference {acc}: {e.stderr}")
-                    if temp_fasta_path.exists():
-                        temp_fasta_path.unlink()
-                    if temp_sam_path.exists():
-                        temp_sam_path.unlink()
-        
-        # Build header mapping for description matching
-        selected_header_map = build_header_mapping(selected_refs_fasta)
-        
-        # Create combined SAM file from individual mappings (needed for create_per_reference_outputs)
-        # We'll collect all individual SAM files and combine them
-        individual_sam_files = []
-        with open(selected_refs_fasta, 'r') as f:
-            current_ref_lines = []
-            current_header = None
-            temp_sam_files = []
-            
-            for line in f:
-                if line.startswith('>'):
-                    if current_header and current_ref_lines:
-                        # Find corresponding temp SAM file (we'll need to track these)
-                        # For now, we'll recreate the mapping to get the SAM files
-                        # This is inefficient but ensures correctness
-                        pass
-                    current_header = line
-                    current_ref_lines = []
-                else:
-                    current_ref_lines.append(line)
-        
-        # Actually, a simpler approach: re-map to all references together to create the combined SAM
-        # But use the separate mapping stats we already computed
-        # This is a bit redundant but ensures we have the combined SAM file
-        logger.info("Creating combined SAM file for per-reference outputs...")
+        # Single combined re-map (same SAM as BAM). Legacy per-ref-only stats could disagree with IGV.
+        logger.info(
+            f"Low-input sample ({total_reads:,} reads < 100k): combined re-map; parsing depth/breadth from that SAM."
+        )
         minimap_cmd_combined = [
             "minimap2",
             "-ax", "map-ont",
-            "-N", "1",  # Primary alignments only
+            "-N", "1",
             "--secondary=no",
             "-f", "0.0002",
             "-I", str(minimap2_I),
@@ -3623,15 +3813,16 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             str(ref_index),
             str(sample_fastq),
         ]
+        updated_stats: Dict[str, dict] = {}
         try:
             with open(output_sam, "w") as out:
                 subprocess.run(minimap_cmd_combined, check=True, stdout=out, stderr=subprocess.PIPE, text=True)
+            updated_stats = _updated_stats_from_remapped_sam(output_sam, selected_refs_fasta, min_identity)
         except subprocess.CalledProcessError as e:
-            logger.warning(f"Failed to create combined SAM file: {e.stderr}")
-            # Continue anyway - per-reference outputs might fail but stats are correct
-        
-        logger.info(f"Re-mapping complete (mapped to each reference separately for accurate stats). Updated stats for {len(updated_stats)} references.")
-        
+            logger.warning(f"Failed to create combined remap SAM: {(e.stderr or '').strip()}")
+
+        logger.info(f"Re-mapping complete (low-input). Updated stats for {len(updated_stats)} references.")
+
         # Debug: Log Lassa virus in updated_stats
         lassa_in_updated = [k for k in updated_stats.keys() if "lassa" in k.lower() or "AY628204.1" in k]
         if lassa_in_updated:
@@ -3644,7 +3835,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         else:
             logger.warning(f"DEBUG: Lassa virus NOT found in updated_stats after remapping!")
             logger.warning(f"DEBUG: Available keys in updated_stats: {list(updated_stats.keys())[:5]}")
-        
+
         return updated_stats
     else:
         # Large sample: use primary alignments only to reduce false positives and speed up
@@ -3659,7 +3850,10 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         str(sample_fastq),
     ])
     
-    logger.info(f"Re-mapping all reads to selected references using indexed database (will filter by identity >= {min_identity}% during SAM parsing, {'with secondary alignments' if use_secondary else 'primary alignments only'})...")
+    logger.info(
+        f"Re-mapping all reads to selected references using indexed database "
+        f"(filter alignments by identity >= {min_identity}% during SAM parsing; primary alignments only)."
+    )
 
     if stream_per_reference_outputs:
         if not curated_descriptions or sample_dir is None:
@@ -3669,7 +3863,24 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         # - compute per-reference stats (identity, depth, breadth)
         # - stream alignments into per-reference BAMs via samtools (no per-reference SAM files)
         curated_accessions = [s.get("accession", "") for s in curated_descriptions if s.get("accession", "")]
-        curated_accessions_set = set(curated_accessions)
+        curated_acc_expanded, acc_to_canon = _curated_accession_expansion_and_canon(curated_accessions)
+        acc_to_desc = {s.get("accession", ""): s.get("description", "") for s in curated_descriptions}
+
+        # Ensure each per-reference folder contains <accession>.fasta (consistent output across modes).
+        # This is cheap because selected_refs_fasta contains only the final chosen references.
+        for accession in curated_accessions:
+            if not accession:
+                continue
+            acc_dir = sample_dir / accession
+            acc_dir.mkdir(parents=True, exist_ok=True)
+            ref_fasta = acc_dir / f"{accession}.fasta"
+            extracted = extract_fasta_record_by_accession(selected_refs_fasta, accession, ref_fasta)
+            if not extracted:
+                extracted = extract_fasta_record(selected_refs_fasta, acc_to_desc.get(accession, ""), ref_fasta)
+            if extracted and ref_fasta.exists() and ref_fasta.stat().st_size > 0:
+                logger.info(f"  Created {ref_fasta}")
+            else:
+                logger.warning(f"  Could not extract reference FASTA for {accession}")
 
         # Stats accumulators keyed by SAM reference name
         stats_by_ref = {}
@@ -3766,9 +3977,10 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             sam_header = fields[2]
             pos = int(fields[3]) - 1
             cigar = fields[5]
-            accession = extract_accession_from_header(sam_header)
-            if accession and accession not in curated_accessions_set:
+            accession_raw = extract_accession_from_header(sam_header)
+            if not _sam_accession_in_curated(curated_acc_expanded, accession_raw):
                 continue
+            accession = _canonical_curated_accession(acc_to_canon, accession_raw)
 
             s = stats_by_ref.get(sam_header)
             if s is None:
@@ -3906,13 +4118,17 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             return total
 
         selected_header_map = build_header_mapping(selected_refs_fasta)
+        for acc_key, hdr in list(selected_header_map.items()):
+            if "." in acc_key:
+                selected_header_map.setdefault(acc_key.split(".", 1)[0], hdr)
         updated_stats = {}
         for sam_header, s in stats_by_ref.items():
             aligned_i = s["aligned_bases"]
             matches_i = s["matches"]
             identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0.0
-            acc = extract_accession_from_header(sam_header)
-            desc = selected_header_map.get(acc, sam_header)
+            acc_raw = extract_accession_from_header(sam_header)
+            acc = _canonical_curated_accession(acc_to_canon, acc_raw)
+            desc = selected_header_map.get(acc) or selected_header_map.get(acc_raw, sam_header)
             ref_len = ref_lengths.get(sam_header, 0)
             covered_pos = merged_covered_length(s.get("coverage_intervals", []))
             if ref_len and ref_len > 0:
@@ -3938,49 +4154,8 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     except subprocess.CalledProcessError as e:
         logger.error(f"minimap2 re-mapping failed:\n{e.stderr}")
         return {}
-    
-    # Build header mapping from selected references FASTA to get full descriptions
-    selected_header_map = build_header_mapping(selected_refs_fasta)
-    
-    # Parse SAM to get accurate counts per reference (filter by identity during parsing)
-    stats_by_ref, ref_lengths, ref_headers = parse_sam_per_reference_stats(output_sam, min_identity=min_identity)
-    
-    # Convert to dictionary with descriptions as keys (matching the format from curated_stats_dedup)
-    updated_stats = {}
-    for sam_header, s in stats_by_ref.items():
-        aligned_i = s["aligned_bases"]
-        matches_i = s["matches"]
-        identity = (matches_i / aligned_i * 100) if aligned_i > 0 else 0
-        
-        # Get accession and full description from selected references FASTA
-        acc = extract_accession_from_header(sam_header)
-        # Try to get full description from header map (using accession)
-        desc = selected_header_map.get(acc, ref_headers.get(sam_header, sam_header))
-        
-        # If still not found, try to match by SAM header directly
-        if desc == sam_header:
-            # Try to find in selected_header_map by matching any header that contains this accession
-            for full_header, full_desc in selected_header_map.items():
-                if acc in full_header or acc in full_desc:
-                    desc = full_desc
-                    break
-        
-        ref_len = ref_lengths.get(sam_header)
-        if ref_len and ref_len > 0:
-            coverage_depth = aligned_i / ref_len
-            covered_pos = s.get("covered_positions", 0)
-            coverage_breadth = covered_pos / ref_len if covered_pos > 0 else 0.0
-        else:
-            coverage_depth = 0.0
-            coverage_breadth = 0.0
-        
-        updated_stats[desc] = {
-            "mapped_reads": s["mapped_reads"],
-            "avg_identity": identity,
-            "coverage_depth": coverage_depth,
-            "coverage_breadth": coverage_breadth,
-        }
-    
+
+    updated_stats = _updated_stats_from_remapped_sam(output_sam, selected_refs_fasta, min_identity)
     logger.info(f"Re-mapping complete. Updated stats for {len(updated_stats)} references.")
     
     # Debug: Log Lassa virus in updated_stats
@@ -3998,6 +4173,92 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
     
     logger.debug(f"Updated stats keys: {list(updated_stats.keys())[:3]}...")  # Debug: show first few keys
     return updated_stats
+
+
+def _per_reference_folder_for_row(sample_dir: Path, row: dict) -> Optional[Path]:
+    """
+    Resolve the on-disk folder for a final hit (BAM/FASTA/FASTQ).
+    Matches single-DB layout (sample_dir/<accession>/) and multi-DB layout (sample_dir/RVDB/<accession>/, etc.).
+    """
+    acc = (row.get("accession") or "").strip()
+    if not acc:
+        return None
+    db = (row.get("database_source") or "").strip()
+    candidates: List[Path] = []
+    if db in ("RVDB", "RefSeq", "Custom"):
+        candidates.append(sample_dir / db / acc)
+    candidates.append(sample_dir / acc)
+    for p in candidates:
+        if p.is_dir():
+            return p
+    return None
+
+
+def _nextclade_sidecar_str(value) -> str:
+    """Normalize Nextclade fields for sidecar JSON: missing/empty -> 'NA' for stable downstream parsing."""
+    if value is None:
+        return "NA"
+    s = str(value).strip()
+    return s if s else "NA"
+
+
+def _write_virasign_hit_json_sidecars(
+    sample_dir: Path,
+    sample_name: str,
+    rows: List[dict],
+    gzip_fastq: bool,
+) -> None:
+    """
+    Write ``{accession}.json`` (hit metadata) next to per-reference FASTA/BAM/FASTQ for downstream pipelines.
+    Contains the same hit record as the sample-level final JSON (taxonomy, stats, Nextclade, etc.)
+    plus relative paths to artifacts in this folder.
+    Nextclade clade/dataset are always present on ``hit`` (use 'NA' when disabled, unknown, or no assignment).
+    """
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        acc = (row.get("accession") or "").strip()
+        if not acc:
+            continue
+        acc_dir = _per_reference_folder_for_row(sample_dir, row)
+        if acc_dir is None:
+            continue
+        fastq_name = f"{acc}_mapped_reads.fastq.gz" if gzip_fastq else f"{acc}_mapped_reads.fastq"
+        meta_name = f"{acc}.json"
+        hit_out = {k: v for k, v in row.items()}
+        hit_out["nextclade_clade"] = _nextclade_sidecar_str(hit_out.get("nextclade_clade"))
+        hit_out["nextclade_dataset"] = _nextclade_sidecar_str(hit_out.get("nextclade_dataset"))
+        payload = {
+            "schema_version": 1,
+            "tool": "virasign",
+            "sample_name": sample_name,
+            "hit": hit_out,
+            "artifacts_relative": {
+                "reference_fasta": f"{acc}.fasta",
+                "alignments_bam": f"{acc}.bam",
+                "alignments_bai": f"{acc}.bam.bai",
+                "mapped_reads_fastq": fastq_name,
+                "hit_metadata": meta_name,
+            },
+        }
+        out_path = acc_dir / meta_name
+        try:
+            for legacy in (
+                acc_dir / "virasign_hit.json",
+                acc_dir / f"{acc}_virasign_hit.json",
+                acc_dir / f"virasign_hit.{acc}.json",
+            ):
+                if legacy.exists() and legacy.resolve() != out_path.resolve():
+                    try:
+                        legacy.unlink()
+                    except OSError:
+                        pass
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+            logger.info(f"Wrote per-hit metadata: {out_path}")
+        except OSError as e:
+            logger.warning(f"Could not write {out_path}: {e}")
+
 
 def create_per_reference_outputs(sample_name: str, curated_descriptions: list, selected_refs_fasta: Path, remap_sam: Path, sample_fastq: Path, sample_dir: Path, threads: int = 1, gzip_fastq: bool = True, min_identity: float = 0.0):
     """
@@ -4028,7 +4289,7 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
     logger.info("Reading remapped SAM file...")
     read_ids_by_reference = {}  # accession -> set of read IDs
     curated_accessions = [stat.get("accession", "") for stat in curated_descriptions if stat.get("accession", "")]
-    curated_accessions_set = set(curated_accessions)
+    curated_acc_expanded, acc_to_canon = _curated_accession_expansion_and_canon(curated_accessions)
     sam_header_lines = []
     bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam)
     samtools_threads = max(1, min(int(threads or 1), 16))
@@ -4131,9 +4392,10 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             if alignment_identity < min_identity:
                 continue
 
-            accession = extract_accession_from_header(ref_name)
-            if not accession or accession not in curated_accessions_set:
+            accession_raw = extract_accession_from_header(ref_name)
+            if not _sam_accession_in_curated(curated_acc_expanded, accession_raw):
                 continue
+            accession = _canonical_curated_accession(acc_to_canon, accession_raw)
 
             if accession not in read_ids_by_reference:
                 read_ids_by_reference[accession] = set()
@@ -4163,10 +4425,27 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
         
         # 1. Extract reference FASTA
         ref_fasta = acc_dir / f"{accession}.fasta"
-        if not extract_fasta_record_by_accession(selected_refs_fasta, accession, ref_fasta):
+        extracted = extract_fasta_record_by_accession(selected_refs_fasta, accession, ref_fasta)
+        if not extracted:
             # Fallback: older logic (exact header match), in case accession parsing fails for a rare header
-            if not extract_fasta_record(selected_refs_fasta, description, ref_fasta):
-                logger.warning(f"  Could not extract reference FASTA for {accession}")
+            extracted = extract_fasta_record(selected_refs_fasta, description, ref_fasta)
+
+        # Defensive: ensure we actually produced a non-empty FASTA on disk.
+        # In some environments/filesystems we observed per-reference outputs being created without the FASTA
+        # despite no exception being raised. Retrying here is cheap (selected_refs_fasta is tiny).
+        try:
+            if (not extracted) or (not ref_fasta.exists()) or (ref_fasta.stat().st_size == 0):
+                # Retry accession-based extraction once more.
+                extracted_retry = extract_fasta_record_by_accession(selected_refs_fasta, accession, ref_fasta)
+                extracted = extracted or extracted_retry
+        except Exception:
+            # If something went wrong, keep going with BAM/FASTQ outputs.
+            extracted = False
+
+        if not extracted:
+            logger.warning(f"  Could not extract reference FASTA for {accession}")
+        else:
+            logger.info(f"  Created {ref_fasta.name}")
         
         # 2/3. Finalize streamed BAM for this accession (+ index)
         if accession in bam_pipes:
@@ -4758,6 +5037,258 @@ def extract_fasta_record_by_accession(database_fasta: Path, accession: str, out_
                         out.write(line)
     return found
 
+
+def _is_nextclade_available() -> bool:
+    try:
+        exe = _resolve_nextclade_executable()
+        if not exe:
+            return False
+        subprocess.run([exe, "--version"], check=True, capture_output=True, text=True)
+        return True
+    except Exception:
+        return False
+
+def _resolve_nextclade_executable() -> Optional[str]:
+    """
+    Resolve `nextclade` executable path.
+    Tries PATH first, then the current Python environment's bin directory.
+    """
+    try:
+        exe = shutil.which("nextclade")
+        if exe:
+            return exe
+    except Exception:
+        exe = None
+
+    try:
+        candidate = Path(sys.executable).resolve().parent / "nextclade"
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    except Exception:
+        pass
+    return None
+
+def _auto_nextclade_dataset_name(hints: List[str]) -> Optional[str]:
+    """
+    Try to pick a dataset name from `nextclade dataset list --only-names` using simple substring matching.
+    Returns the best matching dataset name or None.
+    """
+    try:
+        exe = _resolve_nextclade_executable()
+        if not exe:
+            return None
+        p = subprocess.run(
+            [exe, "dataset", "list", "--only-names"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        names = [ln.strip() for ln in (p.stdout or "").splitlines() if ln.strip()]
+    except Exception:
+        return None
+
+    if not names:
+        return None
+
+    hints_l = [h.lower().strip() for h in (hints or []) if h and h.strip()]
+    if not hints_l:
+        return None
+
+    # Fast-path for Mpox: prefer the canonical "all clades" dataset if available.
+    # This covers clade/lineage assignment across clade I/II and subclades when supported.
+    mpox_markers = ("mpox", "monkeypox", "orthopoxvirus monkeypox", "orthopoxvirus")
+    if any(m in " ".join(hints_l) for m in mpox_markers):
+        for preferred in (
+            "nextstrain/mpox/all-clades",
+            "nextstrain/mpox/clade-iib",
+            "nextstrain/mpox/clade-i",
+        ):
+            if preferred in names:
+                return preferred
+
+    # Score by number of hints matched + prefer shorter (more canonical) names.
+    scored: list[tuple[int, int, str]] = []
+    for name in names:
+        nl = name.lower()
+        score = sum(1 for h in hints_l if h in nl)
+        if score > 0:
+            scored.append((score, -len(name), name))
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    return scored[0][2]
+
+def _run_nextclade_and_get_clades(input_fasta: Path, dataset_name: str, out_tsv: Path) -> dict[str, str]:
+    """
+    Run Nextclade CLI on `input_fasta` and return mapping accession -> clade.
+    Accessions are extracted from Nextclade sequence name using `extract_accession_from_header`.
+    """
+    input_fasta = Path(input_fasta)
+    out_tsv = Path(out_tsv)
+    out_tsv.parent.mkdir(parents=True, exist_ok=True)
+
+    exe = _resolve_nextclade_executable()
+    if not exe:
+        raise FileNotFoundError("nextclade executable not found")
+    cmd = [
+        exe,
+        "run",
+        "--dataset-name",
+        dataset_name,
+        "--output-tsv",
+        str(out_tsv),
+        str(input_fasta),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    if not out_tsv.exists() or out_tsv.stat().st_size == 0:
+        return {}
+
+    # Parse TSV
+    acc_to_clade: dict[str, str] = {}
+    with open(out_tsv, "r", encoding="utf-8", errors="replace") as f:
+        header = f.readline().rstrip("\n")
+        if not header:
+            return {}
+        cols = header.split("\t")
+
+        def _find_col(*candidates: str) -> Optional[int]:
+            for c in candidates:
+                if c in cols:
+                    return cols.index(c)
+            return None
+
+        name_i = _find_col("seqName", "name", "sequenceName")
+        clade_i = _find_col("clade", "clade_nextstrain", "cladeGISAID", "clade_gisaid")
+        if name_i is None or clade_i is None:
+            return {}
+
+        for line in f:
+            if not line.strip():
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) <= max(name_i, clade_i):
+                continue
+            seq_name = parts[name_i].strip()
+            clade = parts[clade_i].strip()
+            if not seq_name or not clade:
+                continue
+            acc = extract_accession_from_header(seq_name)
+            if acc:
+                acc_to_clade[acc] = clade
+
+    return acc_to_clade
+
+def _infer_nextclade_datasets_with_sort(input_fasta: Path, out_tsv: Path) -> Dict[str, str]:
+    """
+    Use `nextclade sort` to infer the best dataset per sequence.
+    Returns mapping accession -> dataset_name (dataset can be empty / missing for sequences that don't match anything).
+    """
+    input_fasta = Path(input_fasta)
+    out_tsv = Path(out_tsv)
+    out_tsv.parent.mkdir(parents=True, exist_ok=True)
+
+    exe = _resolve_nextclade_executable()
+    if not exe:
+        raise FileNotFoundError("nextclade executable not found")
+    cmd = [
+        exe,
+        "sort",
+        "--output-results-tsv",
+        str(out_tsv),
+        str(input_fasta),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+    if not out_tsv.exists() or out_tsv.stat().st_size == 0:
+        return {}
+
+    acc_to_dataset: Dict[str, str] = {}
+    with open(out_tsv, "r", encoding="utf-8", errors="replace") as f:
+        header = f.readline().rstrip("\n")
+        if not header:
+            return {}
+        cols = header.split("\t")
+        if "seqName" not in cols or "dataset" not in cols:
+            return {}
+        name_i = cols.index("seqName")
+        ds_i = cols.index("dataset")
+
+        for line in f:
+            if not line.strip():
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) <= max(name_i, ds_i):
+                continue
+            seq_name = parts[name_i].strip()
+            dataset = parts[ds_i].strip()
+            if not seq_name or not dataset:
+                continue
+            acc = extract_accession_from_header(seq_name)
+            if acc:
+                acc_to_dataset[acc] = dataset
+    return acc_to_dataset
+
+def _write_nextclade_dataset_fastas(selected_refs_fasta: Path, acc_to_dataset: Dict[str, str], out_dir: Path) -> Dict[str, Path]:
+    """
+    Given a multi-FASTA and mapping accession -> dataset, create one FASTA per dataset containing
+    only the matching sequences. Returns mapping dataset -> fasta_path.
+    """
+    selected_refs_fasta = Path(selected_refs_fasta)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # dataset -> file handle
+    handles: Dict[str, Any] = {}
+    dataset_to_path: Dict[str, Path] = {}
+
+    def _safe_name(name: str) -> str:
+        return safe_stem(name.replace("/", "_"), max_len=120)
+
+    def _get_handle(dataset: str):
+        if dataset not in handles:
+            p = out_dir / f"{_safe_name(dataset)}.fasta"
+            dataset_to_path[dataset] = p
+            handles[dataset] = open(p, "w", encoding="utf-8", newline="\n")
+        return handles[dataset]
+
+    current_acc: Optional[str] = None
+    current_ds: Optional[str] = None
+
+    with open(selected_refs_fasta, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.startswith(">"):
+                header = line[1:].strip()
+                current_acc = extract_accession_from_header(header)
+                current_ds = acc_to_dataset.get(current_acc or "", "")
+            if current_ds:
+                _get_handle(current_ds).write(line)
+
+    for h in handles.values():
+        try:
+            h.close()
+        except Exception:
+            pass
+
+    # Drop empty files (shouldn't happen, but be defensive)
+    dataset_to_path = {ds: p for ds, p in dataset_to_path.items() if p.exists() and p.stat().st_size > 0}
+    return dataset_to_path
+
+
+def _cleanup_nextclade_intermediates(sample_dir: Path, sample_name: str) -> None:
+    """Remove Nextclade CLI outputs; clades are kept only in JSON and HTML."""
+    sample_dir = Path(sample_dir)
+    nc_dir = sample_dir / "_nextclade"
+    if nc_dir.is_dir():
+        shutil.rmtree(nc_dir, ignore_errors=True)
+        logger.info(f"Removed {nc_dir.name}/ (Nextclade intermediate files)")
+    for p in sorted(sample_dir.glob(f"{sample_name}_nextclade*.tsv")):
+        try:
+            p.unlink()
+            logger.info(f"Removed {p.name} (Nextclade TSV; clades are in JSON/HTML)")
+        except OSError:
+            pass
+
 def _process_sample_task(task_args):
     """
     Wrapper function for parallel processing of samples.
@@ -4766,7 +5297,8 @@ def _process_sample_task(task_args):
     """
     (sample_name, sample_file_str, database_fasta_path_str, db_output_dir_str, db_min_identity, 
      db_name, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, 
-     threads, gzip_fastq, minimap2_I, blinded_species, organism_variations) = task_args
+     threads, gzip_fastq, minimap2_I, blinded_species, organism_variations,
+     nextclade, nextclade_dataset) = task_args
     
     # Convert strings back to Path objects
     sample_file = Path(sample_file_str)
@@ -4792,11 +5324,13 @@ def _process_sample_task(task_args):
         gzip_fastq=gzip_fastq,
         minimap2_I=minimap2_I,
         blinded_species=blinded_species,
-        organism_variations=organism_variations
+        organism_variations=organism_variations,
+        nextclade=bool(nextclade),
+        nextclade_dataset=nextclade_dataset,
     )
     return sample_name, db_name, confident_names
 
-def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None):
+def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
     """
     Process a single sample: map ALL reads to database and find best reference.
     Simple workflow: no rarefaction, no unmapped extraction, no minority detection.
@@ -4845,7 +5379,9 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
             gzip_fastq=gzip_fastq,
             minimap2_I=minimap2_I,
             blinded_species=blinded_species,
-            organism_variations=organism_variations
+            organism_variations=organism_variations,
+            nextclade=nextclade,
+            nextclade_dataset=nextclade_dataset,
         )
         return confident_names
     
@@ -4875,7 +5411,10 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold,
         coverage_breadth_threshold, threads, gzip_fastq=gzip_fastq,
         minimap2_I=minimap2_I,
-        blinded_species=blinded_species, organism_variations=organism_variations
+        blinded_species=blinded_species,
+        organism_variations=organism_variations,
+        nextclade=nextclade,
+        nextclade_dataset=nextclade_dataset,
     )
     
     # Log to file only (not to console)
@@ -4889,7 +5428,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     
     return confident_names
 
-def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None):
+def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
     """Save mapping statistics and best reference to JSON file and save best reference sequence as FASTA."""
     confident_names = []
     # output_dir is already the sample directory (or database-specific subdirectory if multiple databases)
@@ -4976,7 +5515,11 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     if segments_found:
         for organism, segments in segments_found.items():
             logger.info(f"  - {organism}: keeping segments {', '.join(sorted(set(segments)))}")
-    logger.info(f"  - Curated stats: {len(curated_stats_with_organism)} -> {len(curated_stats_dedup)} (deduplicated by VIRAL_SPECIES+SEGMENT, filtered: identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {coverage_breadth_threshold})")
+    logger.info(
+        f"  - Curated stats: {len(curated_stats_with_organism)} -> {len(curated_stats_dedup)} "
+        f"(deduplicated by VIRAL_SPECIES+SEGMENT; identity >= {min_identity}%, depth >= {coverage_depth_threshold} "
+        f"before re-map; breadth >= {coverage_breadth_threshold} applied after re-map for final outputs)"
+    )
     
     # Deduplicate all_stats and filtered_stats by species
     # Create deep copies to avoid sharing references with curated_stats
@@ -4992,17 +5535,22 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     # This will be used for reference_selection.json (should have original counts, not re-mapped)
     curated_stats_dedup_before_filter = copy.deepcopy(curated_stats_dedup)
     
-    # Filter curated_stats_dedup by thresholds again (after deduplication)
-    # This filtered version is used for re-mapping and curated_descriptions.json
+    # Filter curated_stats_dedup by identity/depth for the re-map step (after deduplication).
+    # Do NOT require initial coverage_breadth here: breadth from the first pass against the full DB
+    # can be artifactually low when reads were split across neighbors, while re-mapping to the
+    # selected reference recovers genome-wide breadth (must match BAM/JSON). Final JSON still applies
+    # coverage_breadth_threshold after merge using the remapped stats.
     curated_stats_dedup = [
         s for s in curated_stats_dedup
         if s["avg_identity"] >= min_identity
         and s.get("coverage_depth", 0.0) >= coverage_depth_threshold
-        and s.get("coverage_breadth", 0.0) >= coverage_breadth_threshold
     ]
-    
+
     # Use the pre-filtered version for reference_selection.json (shows all deduplicated references with reads)
     curated_stats_dedup_original = curated_stats_dedup_before_filter
+
+    # When no curated set triggers fallback remap, parsed SAM metrics for final JSON (match BAM)
+    fallback_remap_metrics: Optional[dict] = None
     
     # NOW re-map reads to FINAL deduplicated references for accurate counts
     if curated_stats_dedup:
@@ -5039,87 +5587,52 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             # For low-input samples, preserve original stats if remapping causes breadth to drop below threshold
             total_reads = count_reads(sample_fastq)
             is_low_input = total_reads < 100000
-            
+            by_acc = _index_remap_stats_by_accession(updated_stats)
+            merge_kw = dict(
+                is_low_input=is_low_input,
+                coverage_breadth_threshold=coverage_breadth_threshold,
+            )
+
             for stat in curated_stats_dedup:
                 desc = stat["description"]
-                acc = stat.get("accession", "")
+                acc = stat.get("accession", "") or ""
                 updated = False
                 is_lassa = "lassa" in desc.lower() or "lassa" in stat.get("organism", "").lower() or acc == "AY628204.1"
-                
-                # Store original stats before updating
-                original_breadth = stat.get("coverage_breadth", 0.0)
-                original_reads = stat.get("mapped_reads", 0)
-                original_depth = stat.get("coverage_depth", 0.0)
-                original_identity = stat.get("avg_identity", 0.0)
-                
-                # Try matching by exact description first
-                if desc in updated_stats:
-                    old_reads = stat["mapped_reads"]
-                    new_reads = updated_stats[desc]["mapped_reads"]
-                    new_breadth = updated_stats[desc]["coverage_breadth"]
-                    new_depth = updated_stats[desc]["coverage_depth"]
-                    new_identity = updated_stats[desc]["avg_identity"]
-                    
-                    # For low-input samples: if original breadth met threshold but remapped doesn't,
-                    # preserve original stats to avoid losing valid detections
-                    if is_low_input and original_breadth >= coverage_breadth_threshold and new_breadth < coverage_breadth_threshold:
-                        logger.warning(f"DEBUG: {acc} remapping dropped breadth from {original_breadth:.4f} to {new_breadth:.4f} (below threshold {coverage_breadth_threshold}). Preserving original stats for low-input sample.")
-                        # Keep original stats - don't update
-                        continue
-                    
-                    stat["mapped_reads"] = new_reads
-                    stat["avg_identity"] = new_identity
-                    stat["coverage_depth"] = new_depth
-                    stat["coverage_breadth"] = new_breadth
-                    logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads")
-                    updated = True
-                else:
-                    # Try matching by accession (in case description format differs slightly)
+
+                row = _lookup_remap_row(by_acc, acc)
+                if row is not None:
+                    updated = _merge_remap_row_into_stat(stat, row, **merge_kw)
+
+                if not updated and desc in updated_stats:
+                    updated = _merge_remap_row_into_stat(stat, updated_stats[desc], **merge_kw)
+
+                if not updated:
+                    desc_parts = desc.split("|")
+                    desc_accession = extract_accession_from_header(desc)
+
                     for updated_desc, updated_data in updated_stats.items():
-                        updated_acc = extract_accession_from_header(updated_desc)
-                        if updated_acc == acc and acc:  # Only match if accession is not empty
-                            old_reads = stat["mapped_reads"]
-                            stat["mapped_reads"] = updated_data["mapped_reads"]
-                            stat["avg_identity"] = updated_data["avg_identity"]
-                            stat["coverage_depth"] = updated_data["coverage_depth"]
-                            stat["coverage_breadth"] = updated_data["coverage_breadth"]
-                            logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads (matched by accession)")
-                            updated = True
-                            break
-                    
-                    # If still not matched, try partial description matching (for cases where description format differs)
-                    if not updated:
-                        # Try to find a description that contains the accession or key parts of the description
-                        desc_parts = desc.split("|")
-                        desc_accession = extract_accession_from_header(desc)
-                        
-                        for updated_desc, updated_data in updated_stats.items():
-                            # Check if accessions match
-                            if desc_accession and desc_accession == extract_accession_from_header(updated_desc):
-                                old_reads = stat["mapped_reads"]
-                                stat["mapped_reads"] = updated_data["mapped_reads"]
-                                stat["avg_identity"] = updated_data["avg_identity"]
-                                stat["coverage_depth"] = updated_data["coverage_depth"]
-                                stat["coverage_breadth"] = updated_data["coverage_breadth"]
-                                logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads (matched by accession from description)")
-                                updated = True
+                        if desc_accession and desc_accession == extract_accession_from_header(updated_desc):
+                            updated = _merge_remap_row_into_stat(
+                                stat,
+                                updated_data,
+                                log_suffix=" (matched by accession from description)",
+                                **merge_kw,
+                            )
+                            if updated:
                                 break
-                            
-                            # Try matching by key parts of description (e.g., organism name, segment)
-                            if len(desc_parts) >= 4 and len(updated_desc.split("|")) >= 4:
-                                # Compare key parts: accession and organism/segment info
-                                if (desc_parts[2] if len(desc_parts) > 2 else "") in updated_desc:
-                                    # Additional check: make sure accessions match
-                                    if desc_accession == extract_accession_from_header(updated_desc):
-                                        old_reads = stat["mapped_reads"]
-                                        stat["mapped_reads"] = updated_data["mapped_reads"]
-                                        stat["avg_identity"] = updated_data["avg_identity"]
-                                        stat["coverage_depth"] = updated_data["coverage_depth"]
-                                        stat["coverage_breadth"] = updated_data["coverage_breadth"]
-                                        logger.info(f"  {stat['accession']}: {old_reads:,} -> {stat['mapped_reads']:,} mapped reads (matched by partial description)")
-                            updated = True
-                            break
-                
+
+                        if len(desc_parts) >= 4 and len(updated_desc.split("|")) >= 4:
+                            if (desc_parts[2] if len(desc_parts) > 2 else "") in updated_desc:
+                                if desc_accession == extract_accession_from_header(updated_desc):
+                                    updated = _merge_remap_row_into_stat(
+                                        stat,
+                                        updated_data,
+                                        log_suffix=" (matched by partial description)",
+                                        **merge_kw,
+                                    )
+                                    if updated:
+                                        break
+
                 if not updated:
                     # If not found in updated_stats, keep original stats (don't set to 0)
                     # Debug: Log available updated_stats keys for Lassa virus
@@ -5148,8 +5661,11 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                     logger.info(f"    - avg_identity: {stat['avg_identity']:.2f}%")
                     logger.info(f"    - coverage_depth: {stat['coverage_depth']:.2f}")
                     logger.info(f"    - coverage_breadth: {stat['coverage_breadth']:.4f}")
-            
-            logger.info(f"Re-mapping complete. Updated counts for {len([s for s in curated_stats_dedup if s['description'] in updated_stats])} references.")
+
+            logger.info(
+                f"Re-mapping complete. Parsed stats for {len(updated_stats)} reference description(s); "
+                f"merged into {len(curated_stats_dedup)} curated row(s) by accession/description match."
+            )
             
             # Note: We do NOT update best_ref and best_stats here - keep the original initial mapping stats
             # Only curated_stats_dedup gets updated with re-mapped stats (for curated_descriptions.json)
@@ -5206,6 +5722,18 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                         gzip_fastq=gzip_fastq,
                         min_identity=min_identity,
                     )
+                    try:
+                        fr = _updated_stats_from_remapped_sam(
+                            remap_sam, selected_refs_fasta, min_identity
+                        )
+                        fr_by = _index_remap_stats_by_accession(fr)
+                        row = _lookup_remap_row(fr_by, fallback_accession)
+                        if row is None and len(fr) == 1:
+                            row = next(iter(fr.values()))
+                        if row:
+                            fallback_remap_metrics = row
+                    except Exception as ex:
+                        logger.warning(f"Could not parse fallback remapped SAM for JSON metrics: {ex}")
         except Exception as e:
             logger.warning(f"Fallback output failed: {e}")
         # Clean up initial SAM file even if no curated references
@@ -5219,6 +5747,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     # Note: min_identity is database-specific: 97% for RefSeq (to reduce false positives),
     #       80% for RVDB (which works well with its curated references)
     curated_descriptions = []
+    dropped_after_remap: List[dict] = []
     
     # Debug: Log Lassa virus stats before final filtering
     lassa_before_final = [s for s in curated_stats_dedup if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower() or s.get("accession", "") == "AY628204.1"]
@@ -5233,6 +5762,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         identity = stat.get("avg_identity", 0.0)
         depth = stat.get("coverage_depth", 0.0)
         breadth = stat.get("coverage_breadth", 0.0)
+        accession = (stat.get("accession", "") or "").strip()
         
         # Debug: Log why Lassa virus is being filtered out
         is_lassa = "lassa" in stat.get("organism", "").lower() or "lassa" in stat.get("description", "").lower() or stat.get("accession", "") == "AY628204.1"
@@ -5242,7 +5772,6 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             breadth >= coverage_breadth_threshold):
             
             # Extract segment information
-            accession = stat.get("accession", "")
             description = stat.get("description", "")
             segment = extract_segment_from_description(description, accession=accession, database_path=segment_database_path, fetch_from_ncbi=False)
             
@@ -5293,8 +5822,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 "segment": segment_display if segment_display else None,  # None for non-segmented viruses
                 "database_source": database_source,  # Indicates which database this reference came from
             })
-        elif is_lassa:
-            # Debug: Log why Lassa virus was filtered out
+        else:
             reasons = []
             if identity < min_identity:
                 reasons.append(f"identity {identity:.2f}% < {min_identity}%")
@@ -5302,8 +5830,118 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 reasons.append(f"depth {depth:.2f} < {coverage_depth_threshold}")
             if breadth < coverage_breadth_threshold:
                 reasons.append(f"breadth {breadth:.4f} < {coverage_breadth_threshold}")
-            logger.warning(f"DEBUG: Lassa virus {stat.get('accession')} filtered out from final JSON: {', '.join(reasons)}")
+            dropped_after_remap.append(
+                {
+                    "accession": accession or stat.get("accession", ""),
+                    "mapped_reads": int(stat.get("mapped_reads", 0) or 0),
+                    "avg_identity": float(identity or 0.0),
+                    "coverage_depth": float(depth or 0.0),
+                    "coverage_breadth": float(breadth or 0.0),
+                    "reasons": reasons,
+                }
+            )
+            if is_lassa:
+                logger.warning(
+                    f"DEBUG: Lassa virus {accession or stat.get('accession')} filtered out from final JSON: {', '.join(reasons)}"
+                )
+
+    if dropped_after_remap:
+        logger.info(
+            f"Removed {len(dropped_after_remap)} reference(s) after re-map (failed final thresholds):"
+        )
+        for d in dropped_after_remap:
+            acc = (d.get('accession') or '').strip() or 'NA'
+            reasons = d.get("reasons") or []
+            logger.info(
+                f"  - {acc}: mapped_reads={d.get('mapped_reads', 0):,}, "
+                f"identity={float(d.get('avg_identity', 0.0)):.2f}%, "
+                f"depth={float(d.get('coverage_depth', 0.0)):.2f}, "
+                f"breadth={float(d.get('coverage_breadth', 0.0)):.4f}; "
+                f"{' ; '.join(reasons) if reasons else 'failed thresholds'}"
+            )
+
+        # Ensure on-disk outputs match final JSON/HTML: remove per-accession folders that did not pass.
+        # (These folders may exist because references are created for the remap step before final breadth filtering.)
+        try:
+            import re
+            import shutil
+
+            final_accs = {
+                (d.get("accession") or "").strip() for d in curated_descriptions if isinstance(d, dict)
+            }
+            # Only consider immediate children named like accessions.
+            acc_dir_re = re.compile(r"^[A-Za-z]{1,4}\d+(?:_\d+)?\.\d+$")
+            removed_dirs = 0
+            for child in sample_dir.iterdir():
+                if not child.is_dir():
+                    continue
+                name = child.name
+                if not acc_dir_re.match(name):
+                    continue
+                if name in final_accs:
+                    continue
+                shutil.rmtree(child, ignore_errors=True)
+                removed_dirs += 1
+            if removed_dirs:
+                logger.info(
+                    f"Removed {removed_dirs} per-accession folder(s) that did not pass final thresholds."
+                )
+        except Exception as e:
+            logger.warning(f"Could not remove non-final per-accession folders: {e}")
     
+    # If nothing meets strict thresholds, still emit a minimal "final selected references" entry
+    # for the fallback best reference (so outputs/HTML can still show the primary hit, and Nextclade
+    # can still annotate clades when possible).
+    if not curated_descriptions and best_ref and best_stats:
+        fallback_accession = (best_ref.get("accession", "") or "").strip()
+        fallback_desc = (best_ref.get("description", "") or "").strip()
+        if fallback_accession:
+            if fallback_remap_metrics:
+                fb_row = fallback_remap_metrics
+                fallback_stat = {
+                    "accession": fallback_accession,
+                    "description": fallback_desc,
+                    "mapped_reads": int(fb_row.get("mapped_reads", 0) or 0),
+                    "avg_identity": float(fb_row.get("avg_identity", 0.0) or 0.0),
+                    "coverage_depth": float(fb_row.get("coverage_depth", 0.0) or 0.0),
+                    "coverage_breadth": float(fb_row.get("coverage_breadth", 0.0) or 0.0),
+                }
+            else:
+                fallback_stat = {
+                    "accession": fallback_accession,
+                    "description": fallback_desc,
+                    "mapped_reads": int(best_stats.get("mapped_reads", 0) or 0),
+                    "avg_identity": float(best_stats.get("avg_identity", 0.0) or 0.0),
+                    "coverage_depth": float(best_stats.get("coverage_depth", 0.0) or 0.0),
+                    "coverage_breadth": float(best_stats.get("coverage_breadth", 0.0) or 0.0),
+                }
+            try:
+                enriched = enrich_stats_with_organism(
+                    [fallback_stat],
+                    cache_path=cache_path,
+                    database_path=database_path,
+                    nodes_file=nodes_file,
+                    names_file=names_file,
+                )
+                fallback_stat = enriched[0] if enriched else fallback_stat
+            except Exception:
+                pass
+
+            curated_descriptions.append(
+                {
+                    "accession": fallback_stat.get("accession", fallback_accession),
+                    "description": fallback_stat.get("description", fallback_desc),
+                    "organism": fallback_stat.get("organism", ""),
+                    "viral_species": fallback_stat.get("viral_species", ""),
+                    "mapped_reads": fallback_stat.get("mapped_reads", 0),
+                    "avg_identity": fallback_stat.get("avg_identity", 0.0),
+                    "coverage_depth": fallback_stat.get("coverage_depth", 0.0),
+                    "coverage_breadth": fallback_stat.get("coverage_breadth", 0.0),
+                    "segment": None,
+                    "database_source": actual_database_source or "Unknown",
+                }
+            )
+
     # Debug: Log Lassa virus stats after final filtering
     lassa_after_final = [s for s in curated_descriptions if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower() or s.get("accession", "") == "AY628204.1"]
     if lassa_after_final:
@@ -5379,30 +6017,102 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         else:
             # Single database or already in database-specific folder - save directly in sample_dir
             curated_json_file = sample_dir / f"{sample_name}_final_selected_references.json"
+        # Create per-reference outputs (and optionally Nextclade clade assignment) first,
+        # then write final JSON (so it can include nextclade_clade).
+        selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
+        remap_sam = sample_dir / f"{sample_name}_remapped.sam"
+        nextclade_acc_to_clade: Dict[str, str] = {}
+        nextclade_dataset_used: Optional[str] = None
+
+        if nextclade:
+            if not _is_nextclade_available():
+                logger.warning("Nextclade enabled but 'nextclade' executable not found. Skipping clade assignment.")
+            elif selected_refs_fasta.exists():
+                # If user provides a dataset, run it directly on the selected FASTA.
+                dataset_name = (nextclade_dataset or "").strip() or None
+                if dataset_name:
+                    try:
+                        out_tsv = sample_dir / f"{sample_name}_nextclade.tsv"
+                        nextclade_acc_to_clade = _run_nextclade_and_get_clades(selected_refs_fasta, dataset_name, out_tsv)
+                        nextclade_dataset_used = dataset_name
+                        logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_clade)} reference(s) using dataset '{dataset_name}'")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"Nextclade failed (dataset '{dataset_name}'): {(e.stderr or '').strip()}")
+                    except Exception as e:
+                        logger.warning(f"Nextclade failed: {e}")
+                else:
+                    # Agnostic mode: infer dataset per reference using `nextclade sort`,
+                    # then run Nextclade only for the inferred dataset(s).
+                    try:
+                        sort_tsv = sample_dir / f"{sample_name}_nextclade_sort.tsv"
+                        acc_to_ds = _infer_nextclade_datasets_with_sort(selected_refs_fasta, sort_tsv)
+                        if not acc_to_ds:
+                            logger.warning("Nextclade sort did not infer any dataset for selected references. Skipping clade assignment.")
+                        else:
+                            # Normalize Mpox to all-clades when possible (gives consistent Ia/Ib/IIa/IIb output).
+                            for acc, ds in list(acc_to_ds.items()):
+                                if ds.startswith("nextstrain/mpox/"):
+                                    acc_to_ds[acc] = "nextstrain/mpox/all-clades"
+
+                            per_ds_dir = sample_dir / "_nextclade"
+                            ds_to_fasta = _write_nextclade_dataset_fastas(selected_refs_fasta, acc_to_ds, per_ds_dir)
+                            if not ds_to_fasta:
+                                logger.warning("No dataset-specific FASTA could be created for Nextclade. Skipping clade assignment.")
+                            else:
+                                for ds, fasta_path in ds_to_fasta.items():
+                                    out_tsv = sample_dir / f"{sample_name}_nextclade_{safe_stem(ds.replace('/', '_'), max_len=120)}.tsv"
+                                    try:
+                                        acc_to_cl = _run_nextclade_and_get_clades(fasta_path, ds, out_tsv)
+                                        nextclade_acc_to_clade.update(acc_to_cl)
+                                    except subprocess.CalledProcessError as e:
+                                        logger.warning(f"Nextclade failed (dataset '{ds}'): {(e.stderr or '').strip()}")
+                                    except Exception as e:
+                                        logger.warning(f"Nextclade failed (dataset '{ds}'): {e}")
+
+                                # If multiple datasets were used, we don't store a single dataset string.
+                                nextclade_dataset_used = None
+                                logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_clade)} reference(s) across {len(ds_to_fasta)} dataset(s)")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"Nextclade sort failed: {(e.stderr or '').strip()}")
+                    except Exception as e:
+                        logger.warning(f"Nextclade sort failed: {e}")
+
+        # Annotate curated_descriptions with Nextclade clade if available
+        if nextclade_acc_to_clade:
+            for d in curated_descriptions:
+                acc = (d.get("accession") or "").strip()
+                if acc and acc in nextclade_acc_to_clade:
+                    d["nextclade_clade"] = nextclade_acc_to_clade[acc]
+                    if nextclade_dataset_used:
+                        d["nextclade_dataset"] = nextclade_dataset_used
+
         with open(curated_json_file, 'w') as f:
             json.dump(curated_descriptions, f, indent=2)
-            logger.info(f"Saved final selected references ({len(curated_descriptions)} entries total) to {curated_json_file}")
-            
-            # Create per-reference outputs
-            selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
-            remap_sam = sample_dir / f"{sample_name}_remapped.sam"
-            if selected_refs_fasta.exists() and remap_sam.exists():
-                create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, gzip_fastq=gzip_fastq, min_identity=min_identity)
-    
-                # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
-                if selected_refs_fasta.exists():
-                    selected_refs_fasta.unlink()
-                    logger.info(f"Removed {selected_refs_fasta.name} (references are in per-reference folders)")
-                selected_refs_index = sample_dir / f"{sample_name}_selected_references.fasta.mmi"
-                if selected_refs_index.exists():
-                    selected_refs_index.unlink()
-                    logger.info(f"Removed {selected_refs_index.name}")
-            else:
-                # Remapping didn't complete - clean up initial SAM file anyway
-                initial_sam = sample_dir / f"{sample_name}.sam"
-                if initial_sam.exists():
-                    initial_sam.unlink()
-                    logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (remapping files not found)")
+        logger.info(f"Saved final selected references ({len(curated_descriptions)} entries total) to {curated_json_file}")
+
+        if nextclade:
+            _cleanup_nextclade_intermediates(sample_dir, sample_name)
+
+        if selected_refs_fasta.exists() and remap_sam.exists():
+            create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, gzip_fastq=gzip_fastq, min_identity=min_identity)
+
+            # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
+            if selected_refs_fasta.exists():
+                selected_refs_fasta.unlink()
+                logger.info(f"Removed {selected_refs_fasta.name} (references are in per-reference folders)")
+            selected_refs_index = sample_dir / f"{sample_name}_selected_references.fasta.mmi"
+            if selected_refs_index.exists():
+                selected_refs_index.unlink()
+                logger.info(f"Removed {selected_refs_index.name}")
+        else:
+            # Remapping didn't complete - clean up initial SAM file anyway
+            initial_sam = sample_dir / f"{sample_name}.sam"
+            if initial_sam.exists():
+                initial_sam.unlink()
+                logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (remapping files not found)")
+
+        # Per-accession sidecar (taxonomy, stats, Nextclade, artifact names) for downstream pipelines / HTML parity.
+        _write_virasign_hit_json_sidecars(sample_dir, sample_name, curated_descriptions, gzip_fastq)
     else:
         # No curated descriptions - clean up initial SAM file
         initial_sam = sample_dir / f"{sample_name}.sam"
@@ -6519,6 +7229,7 @@ def generate_html_visualization(output_dir: Path):
                         <input type="text" placeholder="Filter Accession" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Organism" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Filter Clade" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Reads" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('{sample_name}')">
@@ -6535,6 +7246,7 @@ def generate_html_visualization(output_dir: Path):
                                 <th>Accession</th>
                                 <th>Organism</th>
                                 <th>Viral Species</th>
+                                <th>Nextclade Clade</th>
                                 <th>Segment</th>
                                 <th class="stats sortable" data-sort="mapped_reads">Mapped Reads</th>
                                 <th class="stats sortable" data-sort="identity">Identity (%)</th>
@@ -6581,6 +7293,21 @@ def generate_html_visualization(output_dir: Path):
         const allSamples = {json_module.dumps(all_samples_list)};
         let charts = {{}};
         let currentSortOrder = {{}};
+
+        // HTML table: show em dash for missing Nextclade (JSON/sidecars may use "NA" for machines).
+        function isAbsentDisplayValue(v) {{
+            if (v === null || v === undefined) return true;
+            const s = String(v).trim();
+            if (!s) return true;
+            const u = s.toUpperCase();
+            return u === 'NA' || u === 'N/A' || u === 'NONE' || u === 'NULL';
+        }}
+        function cellDashHtml(v) {{
+            return isAbsentDisplayValue(v) ? '—' : String(v).trim();
+        }}
+        function attrOrEmpty(v) {{
+            return isAbsentDisplayValue(v) ? '' : String(v).trim();
+        }}
         
         // Show sample function
         function showSample(sampleName) {{
@@ -6671,8 +7398,12 @@ def generate_html_visualization(output_dir: Path):
                 const accession = ref.accession || 'N/A';
                 const organism = ref.organism || 'Unknown';
                 const species = ref.viral_species || organism || 'N/A';
+                const cladeRaw = ref.nextclade_clade;
+                const cladeDisp = cellDashHtml(cladeRaw);
+                const cladeAttr = attrOrEmpty(cladeRaw);
                 const description = ref.description || 'N/A';
-                const segment = ref.segment || '';
+                const segmentDisp = cellDashHtml(ref.segment);
+                const segmentAttr = attrOrEmpty(ref.segment);
                 const reads = ref.mapped_reads || 0;
                 const identity = ref.avg_identity || 0;
                 const depth = ref.coverage_depth || 0;
@@ -6680,12 +7411,14 @@ def generate_html_visualization(output_dir: Path):
                 
                 html += `
                     <tr data-accession="${{accession}}" data-organism="${{organism}}" data-species="${{species}}" 
-                        data-segment="${{segment}}"
+                        data-clade="${{cladeAttr}}"
+                        data-segment="${{segmentAttr}}"
                         data-reads="${{reads}}" data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}">
                         <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank">${{accession}}</a></td>
                         <td>${{organism}}</td>
                         <td>${{species}}</td>
-                        <td>${{segment || '—'}}</td>
+                        <td>${{cladeDisp}}</td>
+                        <td>${{segmentDisp}}</td>
                         <td class="stats">${{reads.toLocaleString()}}</td>
                         <td class="stats">${{identity.toFixed(2)}}%</td>
                         <td class="stats">${{depth.toFixed(2)}}x</td>
@@ -6726,15 +7459,15 @@ def generate_html_visualization(output_dir: Path):
                     const filterLower = filterValue.toLowerCase();
                     const filterTrimmed = filterValue;
                     
-                    // Columns 4-7 are numeric (reads, identity, depth, breadth)
-                    const isNumericColumn = colIndex >= 4 && colIndex <= 7;
+                    // Columns 5-8 are numeric (reads, identity, depth, breadth) after adding Nextclade Clade column.
+                    const isNumericColumn = colIndex >= 5 && colIndex <= 8;
                     
                     if (isNumericColumn) {{
                         if (filterTrimmed !== '') {{
                             const minValue = parseFloat(filterTrimmed);
                             if (!isNaN(minValue)) {{
                                 let cellValue = null;
-                                if (colIndex === 4) {{
+                                if (colIndex === 5) {{
                                     // Mapped Reads
                                     const dataReads = row.getAttribute('data-reads');
                                     if (dataReads !== null && dataReads !== '' && !isNaN(parseFloat(dataReads))) {{
@@ -6749,13 +7482,13 @@ def generate_html_visualization(output_dir: Path):
                                             }}
                                         }}
                                     }}
-                                }} else if (colIndex === 5) {{
+                                }} else if (colIndex === 6) {{
                                     // Identity
                                     cellValue = parseFloat(row.getAttribute('data-identity') || 0);
-                                }} else if (colIndex === 6) {{
+                                }} else if (colIndex === 7) {{
                                     // Depth
                                     cellValue = parseFloat(row.getAttribute('data-depth') || 0);
-                                }} else if (colIndex === 7) {{
+                                }} else if (colIndex === 8) {{
                                     // Breadth
                                     cellValue = parseFloat(row.getAttribute('data-breadth') || 0) * 100;
                                 }}
@@ -7099,7 +7832,7 @@ def generate_html_visualization(output_dir: Path):
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
-            let csv = 'Accession,Organism,Viral Species,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\\n';
+            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\\n';
             const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
             
             rows.forEach(row => {{
@@ -7547,6 +8280,21 @@ Examples
         help="Rebuild from scratch.",
     )
 
+    db_prep.add_argument(
+        "--orthopox-human-only",
+        dest="orthopox_human_only",
+        action="store_true",
+        default=True,
+        help="When downloading/preparing databases, remove pox/orthopox references except Mpox/Variola/Vaccinia/Akhmeta (keeps all non-pox viruses unchanged). Enabled by default.",
+    )
+
+    db_prep.add_argument(
+        "--keep-all-pox",
+        dest="orthopox_human_only",
+        action="store_false",
+        help="Disable orthopox human-only filtering (keep all pox/orthopox references in downloaded/prepared databases).",
+    )
+
     # Choose database
     choose_db.add_argument(
         "-d",
@@ -7646,6 +8394,29 @@ Examples
         action="store_false",
         default=True,
         help="Write per-virus mapped reads as plain .fastq (default: .fastq.gz).",
+    )
+
+    # Nextclade runs by default when the CLI is installed; flags omitted from --help.
+    parser.add_argument(
+        "--no-nextclade",
+        dest="nextclade",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--nextclade",
+        dest="nextclade",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(nextclade=True)
+    parser.add_argument(
+        "--nextclade-dataset",
+        dest="nextclade_dataset",
+        type=str,
+        default=None,
+        metavar="",
+        help=argparse.SUPPRESS,
     )
 
     # Performance
@@ -7823,6 +8594,7 @@ Examples
             # Use --prepare-db if you only want to download/prepare and then exit without running samples.
             allow_named_database_download=True,
             force_named_database_rebuild=getattr(args, "rebuild", False),
+            orthopox_human_only=getattr(args, "orthopox_human_only", False),
         )
         if isinstance(database_result, list):
             database_fasta_paths = database_result
@@ -8000,7 +8772,9 @@ Examples
                 args.gzip_fastq,
                 args.minimap2_I,
                 blinded_species,
-                organism_variations
+                organism_variations,
+                getattr(args, "nextclade", True),
+                getattr(args, "nextclade_dataset", None),
             ))
     
     # Count reads for each unique sample to determine optimal thread assignment.
