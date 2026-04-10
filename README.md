@@ -52,7 +52,7 @@ Optional download of the database(s) so you can store them in a location of inte
 - `--prepare-db`: Download/unpack/index the selected database(s) into `--db-dir`
 - `-d, --database`: Which database(s) to prepare (default: `RVDB`).
 - `--db-dir`: Database storage directory (default: `./Databases`).
-- `--max-ambiguous-fraction`: Drop references with ≥ this fraction of Ns (default: `0.05`).
+- `--max-ambiguous-fraction`: Drop references with ≥ this fraction of Ns (default: `0.10`).
 - `--rebuild`: Remove existing prepared database files and rebuild from scratch (default: off).
 
 ```bash
