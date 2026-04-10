@@ -29,7 +29,7 @@ conda activate virasign
 ```bash
 conda create -n virasign python=3.9 -y
 conda activate virasign
-conda install -c conda-forge -c bioconda minimap2=2.24 seqtk=1.3 curl "samtools>=1.17" mmseqs2=15.6f452 -y
+conda install -c conda-forge -c bioconda minimap2=2.24 seqtk=1.3 curl "samtools>=1.17" mmseqs2=15.6f452 nextclade -y
 git clone https://github.com/DaanJansen94/virasign.git
 cd virasign
 pip install .
@@ -168,7 +168,7 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 | `.virasign.log` | Detailed run log (hidden file in the output directory) |
 | `results_summary_*.html` | Interactive HTML report (see example below) |
 | `*_final_selected_references.json` | Summary per sample (metadata/stats; not the sequences themselves) |
-| `NC_004296.1`, `NC_006577.2` | Per-virus outputs: `NC_004296.1.fasta`, `NC_004296.1.bam`, `NC_004296.1_mapped_reads.fastq.gz` |
+| `NC_004296.1`, `NC_006577.2` | Per-virus folder: `NC_004296.1.fasta`, `NC_004296.1.bam`, `NC_004296.1_mapped_reads.fastq.gz`, `NC_004296.1.json` (hit metadata for pipelines) |
 
 ---
 
