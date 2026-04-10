@@ -689,6 +689,8 @@ def download_rvdb_database(
     cluster_identity: float = 0.98,
     allow_download: bool = True,
     orthopox_human_only: bool = False,
+    max_ambiguous_fraction: float = 0.05,
+    remove_endogenous: bool = True,
 ) -> Path:
     """
     Download and prepare RVDB database with complete genomes only, optionally cluster at specified identity.
@@ -707,7 +709,7 @@ def download_rvdb_database(
         """
         Remove non-human-associated pox references from a FASTA.
 
-        Keeps: Monkeypox (mpox), Variola, Vaccinia, Akhmeta (akhmetapox).
+        Keeps: Monkeypox (mpox), Variola, Akhmeta (akhmetapox).
         Drops: Cowpox, Camelpox, Ectromelia, and other pox-like labels.
 
         Only filters sequences whose headers look pox-related; all other viral sequences are preserved.
@@ -743,7 +745,7 @@ def download_rvdb_database(
             pass
 
         # Treat Poxviridae (and common poxvirus naming patterns) as pox-related. We still keep a small
-        # allow-list for the human-associated orthopox viruses (Mpox/Variola/Vaccinia/Akhmeta).
+        # allow-list for the human-associated orthopox viruses (Mpox/Variola/Akhmeta).
         #
         # Notes:
         # - Some records may not include "poxvirus" but do include genus/family keywords.
@@ -756,7 +758,7 @@ def download_rvdb_database(
             # (e.g. entomopoxvirus).
             r"[a-z0-9-]*poxvirus\b|"
             r"\borthopox\b|\bcapripox\b|\bavipox\b|\bparapox\b|\bsuipox\b|\bmolluscipox\b|\bleporipox\b|\byatapox\b|"
-            r"\bmonkeypox\b|\bmpox\b|\bvariola\b|\bvaccinia\b|\bakhmeta\b|\bakhmetapox\b|"
+            r"\bmonkeypox\b|\bmpox\b|\bvariola\b|\bakhmeta\b|\bakhmetapox\b|"
             r"\bcowpox\b|\bcamelpox\b|\bectromelia\b|"
             r"\bfowlpox\b|\bcanarypox\b|\bhorsepox\b|"
             r"\bgoatpox\b|\bsheeppox\b|\blumpy\s*skin\b|"
@@ -768,7 +770,7 @@ def download_rvdb_database(
             re.I,
         )
         allow = re.compile(
-            r"(monkeypox|mpox|variola|vaccinia|akhmeta|akhmetapox|orthopoxvirus\s+vaccinia|plum\s+pox\s+virus)",
+            r"(monkeypox|mpox|variola|akhmeta|akhmetapox|plum\s+pox\s+virus)",
             re.I,
         )
 
@@ -844,9 +846,255 @@ def download_rvdb_database(
         meta["orthopox_human_only"] = True
         # Keep metadata minimal: only record that the filter was applied.
         meta.pop("orthopox_human_only_version", None)
+        _write_database_metadata(metadata_file, meta)
+
+    def _filter_high_ambiguous_n_inplace(
+        fasta_path: Path,
+        metadata_file: Path,
+        max_ambiguous_fraction: float = 0.05,
+    ) -> None:
+        """
+        Remove references with too many ambiguous bases (N/n).
+
+        A reference is removed if (N_count / sequence_length) >= max_ambiguous_fraction.
+        """
+        if max_ambiguous_fraction is None:
+            return
         try:
+            max_ambiguous_fraction = float(max_ambiguous_fraction)
+        except (TypeError, ValueError):
+            return
+        if max_ambiguous_fraction < 0:
+            return
+
+        from typing import Optional
+
+        # If metadata says it's applied, verify the FASTA actually complies.
+        try:
+            existing_meta = {}
+            if metadata_file.exists():
+                existing_meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+            if float(existing_meta.get("max_ambiguous_fraction", -1.0)) == float(max_ambiguous_fraction):
+                # Quick scan for any record violating threshold. If none, we can skip.
+                header: Optional[str] = None
+                seq_len = 0
+                n_count = 0
+
+                def _finish_one() -> bool:
+                    nonlocal header, seq_len, n_count
+                    if header is None:
+                        return False
+                    if seq_len <= 0:
+                        return False
+                    return (n_count / float(seq_len)) >= max_ambiguous_fraction
+
+                with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_chk:
+                    for line in f_chk:
+                        if line.startswith(">"):
+                            if _finish_one():
+                                raise ValueError("Ambiguous-base filter marked applied but FASTA still contains >= threshold Ns")
+                            header = line
+                            seq_len = 0
+                            n_count = 0
+                        else:
+                            s = line.strip()
+                            if not s:
+                                continue
+                            seq_len += len(s)
+                            n_count += s.count("N") + s.count("n")
+                    if _finish_one():
+                        raise ValueError("Ambiguous-base filter marked applied but FASTA still contains >= threshold Ns")
+                return
+        except Exception:
+            # If verification fails for any reason, proceed with filtering.
+            pass
+
+        tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_max_ambiguous")
+        kept = 0
+        removed = 0
+
+        from typing import Optional
+
+        def _finalize_record(
+            header_line: Optional[str],
+            seq_len: int,
+            n_count: int,
+            seq_lines: list[str],
+            out_fh,
+        ) -> None:
+            nonlocal kept, removed
+            if header_line is None:
+                return
+            if seq_len <= 0:
+                # Keep pathological/empty records (shouldn't occur in RVDB complete genomes)
+                out_fh.write(header_line)
+                for s in seq_lines:
+                    out_fh.write(s)
+                kept += 1
+                return
+            frac = (n_count / float(seq_len)) if seq_len else 0.0
+            if frac >= max_ambiguous_fraction:
+                removed += 1
+                return
+            out_fh.write(header_line)
+            for s in seq_lines:
+                out_fh.write(s)
+            kept += 1
+
+        header_line: Optional[str] = None
+        seq_len = 0
+        n_count = 0
+        seq_lines: list[str] = []
+
+        with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+            tmp_out, "w", encoding="utf-8", newline="\n"
+        ) as f_out:
+            for line in f_in:
+                if line.startswith(">"):
+                    _finalize_record(header_line, seq_len, n_count, seq_lines, f_out)
+                    header_line = line
+                    seq_len = 0
+                    n_count = 0
+                    seq_lines = []
+                    continue
+
+                seq = line.strip()
+                if not seq:
+                    continue
+                seq_len += len(seq)
+                # Count ambiguous bases: N or n only
+                n_count += seq.count("N") + seq.count("n")
+                seq_lines.append(line if line.endswith("\n") else (line + "\n"))
+
+            _finalize_record(header_line, seq_len, n_count, seq_lines, f_out)
+
+        tmp_out.replace(fasta_path)
+        logger.info(
+            f"Ambiguous-base filter applied to RVDB: removed {removed:,} reference(s) with "
+            f">= {max_ambiguous_fraction:.2%} Ns; kept {kept:,} total reference(s)."
+        )
+
+        # Mark in metadata (create minimal metadata if missing).
+        meta = {}
+        try:
+            if metadata_file.exists():
+                meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+        meta["max_ambiguous_fraction"] = max_ambiguous_fraction
+        _write_database_metadata(metadata_file, meta)
+
+    def _filter_endogenous_inplace(fasta_path: Path, metadata_file: Path) -> None:
+        """
+        Remove likely endogenous viral elements (EVEs / ERVs) based on header keywords.
+        """
+        if not remove_endogenous:
+            return
+
+        import re
+
+        # This is intentionally keyword-based: EVEs/ERVs are typically annotated as such
+        # in the description text. We only filter when the header/label indicates an
+        # endogenous element.
+        endogenous_pat = re.compile(
+            r"(\bendogenous\b|\bendogenous\s+virus\b|\bendogenous\s+retrovirus\b|\bERV\b|\bEVE\b|retroelement|endogenous\s+viral\s+element)",
+            re.I,
+        )
+
+        try:
+            existing_meta = {}
+            if metadata_file.exists():
+                existing_meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+            if bool(
+                existing_meta.get("endogenous_viral_elements_filtered")
+                or existing_meta.get("endogenous_filtered")
+            ):
+                # Verify quickly: if any header still matches, re-filter.
+                needs_filtering = False
+                with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_chk:
+                    for line in f_chk:
+                        if line.startswith(">") and endogenous_pat.search(line[1:]):
+                            needs_filtering = True
+                            break
+                if not needs_filtering:
+                    return
+        except Exception:
+            pass
+
+        tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_endogenous")
+        kept = 0
+        removed = 0
+
+        with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+            tmp_out, "w", encoding="utf-8", newline="\n"
+        ) as f_out:
+            write = False
+            for line in f_in:
+                if line.startswith(">"):
+                    header = line[1:].strip()
+                    if endogenous_pat.search(header):
+                        write = False
+                        removed += 1
+                    else:
+                        write = True
+                        kept += 1
+                if write:
+                    f_out.write(line)
+
+        tmp_out.replace(fasta_path)
+        logger.info(
+            f"Endogenous/EVE filter applied to RVDB: removed {removed:,} reference(s), kept {kept:,} total reference(s)."
+        )
+
+        meta = {}
+        try:
+            if metadata_file.exists():
+                meta = json.loads(metadata_file.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+        meta.pop("endogenous_filtered", None)
+        meta["endogenous_viral_elements_filtered"] = True
+        _write_database_metadata(metadata_file, meta)
+
+    def _write_database_metadata(metadata_file: Path, meta: dict) -> None:
+        """
+        Write DB metadata with stable, human-friendly key ordering.
+        Keeps unknown keys (they are written before the final 'note' field).
+        """
+        try:
+            desired_order = [
+                "database_name",
+                "version",
+                "download_date",
+                "source_url",
+                "filtered",
+                "filter_criteria",
+                "output_file",
+                "sequence_count",
+                "clustered",
+                "cluster_identity",
+                "orthopox_human_only",
+                "max_ambiguous_fraction",
+                "endogenous_viral_elements_filtered",
+                "note",  # always last
+            ]
+
+            out = {}
+            # First write known keys in desired order (if present).
+            for k in desired_order:
+                if k in meta:
+                    out[k] = meta[k]
+            # Then write any remaining keys (stable, alphabetical) except note (handled above).
+            for k in sorted(meta.keys()):
+                if k in out or k == "note":
+                    continue
+                out[k] = meta[k]
+            # Ensure note last if present.
+            if "note" in meta and "note" not in out:
+                out["note"] = meta["note"]
+
             with open(metadata_file, "w", encoding="utf-8") as f:
-                json.dump(meta, f, indent=2)
+                json.dump(out, f, indent=2)
         except OSError:
             pass
 
@@ -899,6 +1147,12 @@ def download_rvdb_database(
 
         # Optional: apply orthopox filter even for existing DB.
         _filter_orthopox_human_only_inplace(output_fasta, metadata_file)
+        # Optional: remove references with high ambiguous N content.
+        _filter_high_ambiguous_n_inplace(
+            output_fasta, metadata_file, max_ambiguous_fraction=max_ambiguous_fraction
+        )
+        # Optional: remove endogenous/EVE/ERV entries.
+        _filter_endogenous_inplace(output_fasta, metadata_file)
         return output_fasta
 
     if not allow_download:
@@ -1103,17 +1357,22 @@ def download_rvdb_database(
             "filter_criteria": filter_criteria,
             "output_file": str(output_fasta.name),
             "sequence_count": clustered_count,
-            "clustered": enable_clustering and shutil.which('mmseqs') is not None,
+            "clustered": enable_clustering and shutil.which("mmseqs") is not None,
             "cluster_identity": cluster_identity if enable_clustering else None,
             "orthopox_human_only": bool(orthopox_human_only),
-            "note": "Intermediate files (compressed, uncurated, and clustering temp) were removed to save disk space"
+            "note": "Intermediate files (compressed, uncurated, and clustering temp) were removed to save disk space",
         }
-        with open(metadata_file, 'w') as f:
-            json.dump(metadata, f, indent=2)
+        _write_database_metadata(metadata_file, metadata)
         logger.info(f"Saved database metadata to {metadata_file}")
 
         # Apply optional orthopox filtering after we have a stable final FASTA on disk.
         _filter_orthopox_human_only_inplace(output_fasta, metadata_file)
+        # Apply ambiguous-base filtering after orthopox filtering.
+        _filter_high_ambiguous_n_inplace(
+            output_fasta, metadata_file, max_ambiguous_fraction=max_ambiguous_fraction
+        )
+        # Apply endogenous/EVE filtering last.
+        _filter_endogenous_inplace(output_fasta, metadata_file)
         
     except Exception as e:
         logger.error(f"Failed to filter RVDB for complete genomes: {e}")
@@ -1170,7 +1429,7 @@ def download_refseq_database(
                     re.I,
                 )
                 allow = re.compile(
-                    r"(monkeypox|mpox|variola|vaccinia|akhmeta|akhmetapox|orthopoxvirus\s+vaccinia)",
+                    r"(monkeypox|mpox|variola|akhmeta|akhmetapox)",
                     re.I,
                 )
                 meta = {}
@@ -1356,7 +1615,7 @@ def download_refseq_database(
                     re.I,
                 )
                 allow = re.compile(
-                    r"(monkeypox|mpox|variola|vaccinia|akhmeta|akhmetapox|orthopoxvirus\s+vaccinia)",
+                    r"(monkeypox|mpox|variola|akhmeta|akhmetapox)",
                     re.I,
                 )
                 tmp_out = output_fasta.with_suffix(output_fasta.suffix + ".tmp_orthopox_human_only")
@@ -1633,6 +1892,8 @@ def resolve_database_path(
     allow_named_database_download: bool = False,
     force_named_database_rebuild: bool = False,
     orthopox_human_only: bool = False,
+    max_ambiguous_fraction: float = 0.05,
+    remove_endogenous: bool = True,
 ) -> Path:
     """
     Resolve database argument to actual file path.
@@ -1817,6 +2078,8 @@ def resolve_database_path(
                 cluster_identity=cluster_identity,
                 allow_download=allow_named_database_download,
                 orthopox_human_only=orthopox_human_only,
+                max_ambiguous_fraction=max_ambiguous_fraction,
+                remove_endogenous=remove_endogenous,
             )
             fasta_files.append(fasta_file)
         elif db_name == 'refseq':
@@ -8285,7 +8548,7 @@ Examples
         dest="orthopox_human_only",
         action="store_true",
         default=True,
-        help="When downloading/preparing databases, remove pox/orthopox references except Mpox/Variola/Vaccinia/Akhmeta (keeps all non-pox viruses unchanged). Enabled by default.",
+        help="When downloading/preparing databases, remove pox/orthopox references except Mpox/Variola/Akhmeta (keeps all non-pox viruses unchanged). Enabled by default.",
     )
 
     db_prep.add_argument(
@@ -8293,6 +8556,22 @@ Examples
         dest="orthopox_human_only",
         action="store_false",
         help="Disable orthopox human-only filtering (keep all pox/orthopox references in downloaded/prepared databases).",
+    )
+
+    db_prep.add_argument(
+        "--max-ambiguous-fraction",
+        dest="max_ambiguous_fraction",
+        type=float,
+        default=0.05,
+        metavar="",
+        help="During database preparation, drop references with >= this fraction of Ns (default: 0.05).",
+    )
+
+    db_prep.add_argument(
+        "--keep-endogenous",
+        dest="remove_endogenous",
+        action="store_false",
+        help="Keep endogenous/EVE/ERV references during database preparation (default: removed).",
     )
 
     # Choose database
@@ -8595,6 +8874,8 @@ Examples
             allow_named_database_download=True,
             force_named_database_rebuild=getattr(args, "rebuild", False),
             orthopox_human_only=getattr(args, "orthopox_human_only", False),
+            max_ambiguous_fraction=getattr(args, "max_ambiguous_fraction", 0.05),
+            remove_endogenous=bool(getattr(args, "remove_endogenous", True)),
         )
         if isinstance(database_result, list):
             database_fasta_paths = database_result
