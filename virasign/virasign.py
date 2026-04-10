@@ -4491,6 +4491,9 @@ def _write_virasign_hit_json_sidecars(
         hit_out = {k: v for k, v in row.items()}
         hit_out["nextclade_clade"] = _nextclade_sidecar_str(hit_out.get("nextclade_clade"))
         hit_out["nextclade_dataset"] = _nextclade_sidecar_str(hit_out.get("nextclade_dataset"))
+        # Mpox datasets can also emit lineage/outbreak; normalize for stable downstream parsing.
+        hit_out["nextclade_lineage"] = _nextclade_sidecar_str(hit_out.get("nextclade_lineage"))
+        hit_out["nextclade_outbreak"] = _nextclade_sidecar_str(hit_out.get("nextclade_outbreak"))
         payload = {
             "schema_version": 1,
             "tool": "virasign",
@@ -5403,9 +5406,9 @@ def _auto_nextclade_dataset_name(hints: List[str]) -> Optional[str]:
     scored.sort(reverse=True)
     return scored[0][2]
 
-def _run_nextclade_and_get_clades(input_fasta: Path, dataset_name: str, out_tsv: Path) -> dict[str, str]:
+def _run_nextclade_and_get_results(input_fasta: Path, dataset_name: str, out_tsv: Path) -> dict[str, dict]:
     """
-    Run Nextclade CLI on `input_fasta` and return mapping accession -> clade.
+    Run Nextclade CLI on `input_fasta` and return mapping accession -> selected fields.
     Accessions are extracted from Nextclade sequence name using `extract_accession_from_header`.
     """
     input_fasta = Path(input_fasta)
@@ -5430,7 +5433,7 @@ def _run_nextclade_and_get_clades(input_fasta: Path, dataset_name: str, out_tsv:
         return {}
 
     # Parse TSV
-    acc_to_clade: dict[str, str] = {}
+    acc_to_fields: dict[str, dict] = {}
     with open(out_tsv, "r", encoding="utf-8", errors="replace") as f:
         header = f.readline().rstrip("\n")
         if not header:
@@ -5445,6 +5448,8 @@ def _run_nextclade_and_get_clades(input_fasta: Path, dataset_name: str, out_tsv:
 
         name_i = _find_col("seqName", "name", "sequenceName")
         clade_i = _find_col("clade", "clade_nextstrain", "cladeGISAID", "clade_gisaid")
+        lineage_i = _find_col("lineage")
+        outbreak_i = _find_col("outbreak")
         if name_i is None or clade_i is None:
             return {}
 
@@ -5452,7 +5457,7 @@ def _run_nextclade_and_get_clades(input_fasta: Path, dataset_name: str, out_tsv:
             if not line.strip():
                 continue
             parts = line.rstrip("\n").split("\t")
-            if len(parts) <= max(name_i, clade_i):
+            if len(parts) <= max(i for i in (name_i, clade_i, lineage_i, outbreak_i) if i is not None):
                 continue
             seq_name = parts[name_i].strip()
             clade = parts[clade_i].strip()
@@ -5460,9 +5465,14 @@ def _run_nextclade_and_get_clades(input_fasta: Path, dataset_name: str, out_tsv:
                 continue
             acc = extract_accession_from_header(seq_name)
             if acc:
-                acc_to_clade[acc] = clade
+                fields = {"clade": clade}
+                if lineage_i is not None:
+                    fields["lineage"] = parts[lineage_i].strip()
+                if outbreak_i is not None:
+                    fields["outbreak"] = parts[outbreak_i].strip()
+                acc_to_fields[acc] = fields
 
-    return acc_to_clade
+    return acc_to_fields
 
 def _infer_nextclade_datasets_with_sort(input_fasta: Path, out_tsv: Path) -> Dict[str, str]:
     """
@@ -6306,7 +6316,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         # then write final JSON (so it can include nextclade_clade).
         selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
         remap_sam = sample_dir / f"{sample_name}_remapped.sam"
-        nextclade_acc_to_clade: Dict[str, str] = {}
+        nextclade_acc_to_fields: Dict[str, Dict[str, str]] = {}
         nextclade_dataset_used: Optional[str] = None
 
         if nextclade:
@@ -6318,9 +6328,9 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 if dataset_name:
                     try:
                         out_tsv = sample_dir / f"{sample_name}_nextclade.tsv"
-                        nextclade_acc_to_clade = _run_nextclade_and_get_clades(selected_refs_fasta, dataset_name, out_tsv)
+                        nextclade_acc_to_fields = _run_nextclade_and_get_results(selected_refs_fasta, dataset_name, out_tsv)
                         nextclade_dataset_used = dataset_name
-                        logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_clade)} reference(s) using dataset '{dataset_name}'")
+                        logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_fields)} reference(s) using dataset '{dataset_name}'")
                     except subprocess.CalledProcessError as e:
                         logger.warning(f"Nextclade failed (dataset '{dataset_name}'): {(e.stderr or '').strip()}")
                     except Exception as e:
@@ -6347,8 +6357,8 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                                 for ds, fasta_path in ds_to_fasta.items():
                                     out_tsv = sample_dir / f"{sample_name}_nextclade_{safe_stem(ds.replace('/', '_'), max_len=120)}.tsv"
                                     try:
-                                        acc_to_cl = _run_nextclade_and_get_clades(fasta_path, ds, out_tsv)
-                                        nextclade_acc_to_clade.update(acc_to_cl)
+                                        acc_to_fields = _run_nextclade_and_get_results(fasta_path, ds, out_tsv)
+                                        nextclade_acc_to_fields.update(acc_to_fields)
                                     except subprocess.CalledProcessError as e:
                                         logger.warning(f"Nextclade failed (dataset '{ds}'): {(e.stderr or '').strip()}")
                                     except Exception as e:
@@ -6356,18 +6366,25 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
 
                                 # If multiple datasets were used, we don't store a single dataset string.
                                 nextclade_dataset_used = None
-                                logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_clade)} reference(s) across {len(ds_to_fasta)} dataset(s)")
+                                logger.info(f"Nextclade: assigned clades for {len(nextclade_acc_to_fields)} reference(s) across {len(ds_to_fasta)} dataset(s)")
                     except subprocess.CalledProcessError as e:
                         logger.warning(f"Nextclade sort failed: {(e.stderr or '').strip()}")
                     except Exception as e:
                         logger.warning(f"Nextclade sort failed: {e}")
 
         # Annotate curated_descriptions with Nextclade clade if available
-        if nextclade_acc_to_clade:
+        if nextclade_acc_to_fields:
             for d in curated_descriptions:
                 acc = (d.get("accession") or "").strip()
-                if acc and acc in nextclade_acc_to_clade:
-                    d["nextclade_clade"] = nextclade_acc_to_clade[acc]
+                if acc and acc in nextclade_acc_to_fields:
+                    f = nextclade_acc_to_fields[acc]
+                    if f.get("clade"):
+                        d["nextclade_clade"] = f.get("clade")
+                    # Mpox datasets can also emit lineage/outbreak; include when present.
+                    if f.get("lineage"):
+                        d["nextclade_lineage"] = f.get("lineage")
+                    if f.get("outbreak"):
+                        d["nextclade_outbreak"] = f.get("outbreak")
                     if nextclade_dataset_used:
                         d["nextclade_dataset"] = nextclade_dataset_used
 
@@ -7515,6 +7532,8 @@ def generate_html_visualization(output_dir: Path):
                         <input type="text" placeholder="Filter Organism" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Clade" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Filter Lineage" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Filter Outbreak" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Reads" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('{sample_name}')">
@@ -7532,6 +7551,8 @@ def generate_html_visualization(output_dir: Path):
                                 <th>Organism</th>
                                 <th>Viral Species</th>
                                 <th>Nextclade Clade</th>
+                                <th>Nextclade Lineage</th>
+                                <th>Nextclade Outbreak</th>
                                 <th>Segment</th>
                                 <th class="stats sortable" data-sort="mapped_reads">Mapped Reads</th>
                                 <th class="stats sortable" data-sort="identity">Identity (%)</th>
@@ -7686,6 +7707,12 @@ def generate_html_visualization(output_dir: Path):
                 const cladeRaw = ref.nextclade_clade;
                 const cladeDisp = cellDashHtml(cladeRaw);
                 const cladeAttr = attrOrEmpty(cladeRaw);
+                const lineageRaw = ref.nextclade_lineage;
+                const lineageDisp = cellDashHtml(lineageRaw);
+                const lineageAttr = attrOrEmpty(lineageRaw);
+                const outbreakRaw = ref.nextclade_outbreak;
+                const outbreakDisp = cellDashHtml(outbreakRaw);
+                const outbreakAttr = attrOrEmpty(outbreakRaw);
                 const description = ref.description || 'N/A';
                 const segmentDisp = cellDashHtml(ref.segment);
                 const segmentAttr = attrOrEmpty(ref.segment);
@@ -7697,12 +7724,16 @@ def generate_html_visualization(output_dir: Path):
                 html += `
                     <tr data-accession="${{accession}}" data-organism="${{organism}}" data-species="${{species}}" 
                         data-clade="${{cladeAttr}}"
+                        data-lineage="${{lineageAttr}}"
+                        data-outbreak="${{outbreakAttr}}"
                         data-segment="${{segmentAttr}}"
                         data-reads="${{reads}}" data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}">
                         <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank">${{accession}}</a></td>
                         <td>${{organism}}</td>
                         <td>${{species}}</td>
                         <td>${{cladeDisp}}</td>
+                        <td>${{lineageDisp}}</td>
+                        <td>${{outbreakDisp}}</td>
                         <td>${{segmentDisp}}</td>
                         <td class="stats">${{reads.toLocaleString()}}</td>
                         <td class="stats">${{identity.toFixed(2)}}%</td>
@@ -7744,15 +7775,16 @@ def generate_html_visualization(output_dir: Path):
                     const filterLower = filterValue.toLowerCase();
                     const filterTrimmed = filterValue;
                     
-                    // Columns 5-8 are numeric (reads, identity, depth, breadth) after adding Nextclade Clade column.
-                    const isNumericColumn = colIndex >= 5 && colIndex <= 8;
+                    // Columns 7-10 are numeric (reads, identity, depth, breadth) after adding
+                    // Nextclade Clade/Lineage/Outbreak columns.
+                    const isNumericColumn = colIndex >= 7 && colIndex <= 10;
                     
                     if (isNumericColumn) {{
                         if (filterTrimmed !== '') {{
                             const minValue = parseFloat(filterTrimmed);
                             if (!isNaN(minValue)) {{
                                 let cellValue = null;
-                                if (colIndex === 5) {{
+                                if (colIndex === 7) {{
                                     // Mapped Reads
                                     const dataReads = row.getAttribute('data-reads');
                                     if (dataReads !== null && dataReads !== '' && !isNaN(parseFloat(dataReads))) {{
@@ -7767,13 +7799,13 @@ def generate_html_visualization(output_dir: Path):
                                             }}
                                         }}
                                     }}
-                                }} else if (colIndex === 6) {{
+                                }} else if (colIndex === 8) {{
                                     // Identity
                                     cellValue = parseFloat(row.getAttribute('data-identity') || 0);
-                                }} else if (colIndex === 7) {{
+                                }} else if (colIndex === 9) {{
                                     // Depth
                                     cellValue = parseFloat(row.getAttribute('data-depth') || 0);
-                                }} else if (colIndex === 8) {{
+                                }} else if (colIndex === 10) {{
                                     // Breadth
                                     cellValue = parseFloat(row.getAttribute('data-breadth') || 0) * 100;
                                 }}
@@ -8117,7 +8149,7 @@ def generate_html_visualization(output_dir: Path):
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
-            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\\n';
+            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Nextclade Lineage,Nextclade Outbreak,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\\n';
             const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
             
             rows.forEach(row => {{
