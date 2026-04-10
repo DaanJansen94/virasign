@@ -689,7 +689,7 @@ def download_rvdb_database(
     cluster_identity: float = 0.98,
     allow_download: bool = True,
     orthopox_human_only: bool = False,
-    max_ambiguous_fraction: float = 0.05,
+    max_ambiguous_fraction: float = 0.10,
     remove_endogenous: bool = True,
 ) -> Path:
     """
@@ -851,7 +851,7 @@ def download_rvdb_database(
     def _filter_high_ambiguous_n_inplace(
         fasta_path: Path,
         metadata_file: Path,
-        max_ambiguous_fraction: float = 0.05,
+        max_ambiguous_fraction: float = 0.10,
     ) -> None:
         """
         Remove references with too many ambiguous bases (N/n).
@@ -1892,7 +1892,7 @@ def resolve_database_path(
     allow_named_database_download: bool = False,
     force_named_database_rebuild: bool = False,
     orthopox_human_only: bool = False,
-    max_ambiguous_fraction: float = 0.05,
+    max_ambiguous_fraction: float = 0.10,
     remove_endogenous: bool = True,
 ) -> Path:
     """
@@ -5006,6 +5006,31 @@ def find_best_reference_with_index(
     segment_database_path = get_segment_database_path(database_dir)
     
     aggregated_stats = {}
+
+    def _pick_representative_reference(ref_stats: list) -> dict:
+        """
+        Pick a representative reference within an aggregated organism/species bucket.
+
+        We primarily want the reference that best matches the sample (high breadth/identity),
+        because downstream outputs (BAM/FASTQ/consensus) are built against this representative.
+        """
+        if not ref_stats:
+            return {}
+
+        def _is_refseq_stat(s: dict) -> bool:
+            return "refseq" in (s.get("description", "") or "").lower()
+
+        def _score(s: dict):
+            # Breadth is most important for picking a good genome backbone.
+            # Identity is next; mapped reads is a weak tie-breaker.
+            breadth = float(s.get("coverage_breadth", 0.0) or 0.0)
+            identity = float(s.get("avg_identity", 0.0) or 0.0)
+            reads = int(s.get("mapped_reads", 0) or 0)
+            # Prefer RefSeq only as a final tie-breaker (avoid picking a worse-matching RefSeq).
+            refseq = 1 if _is_refseq_stat(s) else 0
+            return (breadth, identity, reads, refseq)
+
+        return max(ref_stats, key=_score)
     for stat in all_stats:
         # Use accession to look up organism from database mapping (more reliable than parsing description)
         accession = stat.get("accession", "")
@@ -5043,8 +5068,6 @@ def find_best_reference_with_index(
         
         if organism_key not in aggregated_stats:
             aggregated_stats[organism_key] = {
-                "accession": stat["accession"],  # Keep best accession (prefer RefSeq)
-                "description": stat["description"],
                 "mapped_reads": 0,
                 "aligned_bases": 0,
                 "matches": 0,
@@ -5052,6 +5075,8 @@ def find_best_reference_with_index(
                 "covered_positions": 0,
                 "references": [stat],  # Track all references for this organism
             }
+        else:
+            aggregated_stats[organism_key]["references"].append(stat)
         
         # Aggregate: sum reads, bases, matches
         aggregated_stats[organism_key]["mapped_reads"] += stat["mapped_reads"]
@@ -5067,11 +5092,6 @@ def find_best_reference_with_index(
             aggregated_stats[organism_key]["covered_positions"],
             stat.get("covered_positions", 0)
         )
-        # Prefer RefSeq accession
-        if "refseq" in stat.get("description", "").lower() and "refseq" not in aggregated_stats[organism_key]["description"].lower():
-            aggregated_stats[organism_key]["accession"] = stat["accession"]
-            aggregated_stats[organism_key]["description"] = stat["description"]
-    
     # Convert aggregated stats back to list format with recalculated metrics
     aggregated_all_stats = []
     for organism_key, agg in aggregated_stats.items():
@@ -5101,19 +5121,21 @@ def find_best_reference_with_index(
         covered_pos_count = agg.get("covered_positions", 0)
         agg_coverage_breadth = covered_pos_count / ref_len if ref_len > 0 else 0.0
         
-        # Get organism from first reference in aggregation (they should all have same organism)
+        # Choose representative reference within this organism bucket for downstream outputs.
+        rep = _pick_representative_reference(agg.get("references") or [])
+        rep_acc = (rep.get("accession") or "").strip()
+        rep_desc = rep.get("description") or ""
+
+        # Get organism from representative reference if possible.
         organism = ""
-        if agg.get("references") and len(agg["references"]) > 0:
-            first_ref = agg["references"][0]
-            accession = agg.get("accession", "")
-            if accession and accession in organism_map:
-                organism = organism_map[accession]
-            elif first_ref.get("accession") and first_ref.get("accession") in organism_map:
-                organism = organism_map[first_ref.get("accession")]
+        if rep_acc and rep_acc in organism_map:
+            organism = organism_map[rep_acc]
+        elif rep.get("accession") and rep.get("accession") in organism_map:
+            organism = organism_map[rep.get("accession")]
         
         aggregated_all_stats.append({
-            "accession": agg["accession"],
-            "description": agg["description"],
+            "accession": rep_acc or (agg.get("references")[0].get("accession") if agg.get("references") else ""),
+            "description": rep_desc or (agg.get("references")[0].get("description") if agg.get("references") else ""),
             "mapped_reads": agg["mapped_reads"],
             "coverage_depth": agg_coverage_depth,
             "coverage_breadth": agg_coverage_breadth,
@@ -8562,9 +8584,9 @@ Examples
         "--max-ambiguous-fraction",
         dest="max_ambiguous_fraction",
         type=float,
-        default=0.05,
+        default=0.10,
         metavar="",
-        help="During database preparation, drop references with >= this fraction of Ns (default: 0.05).",
+        help="During database preparation, drop references with >= this fraction of Ns (default: 0.10).",
     )
 
     db_prep.add_argument(
@@ -8874,7 +8896,7 @@ Examples
             allow_named_database_download=True,
             force_named_database_rebuild=getattr(args, "rebuild", False),
             orthopox_human_only=getattr(args, "orthopox_human_only", False),
-            max_ambiguous_fraction=getattr(args, "max_ambiguous_fraction", 0.05),
+            max_ambiguous_fraction=getattr(args, "max_ambiguous_fraction", 0.10),
             remove_endogenous=bool(getattr(args, "remove_endogenous", True)),
         )
         if isinstance(database_result, list):
