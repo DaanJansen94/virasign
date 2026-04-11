@@ -709,8 +709,8 @@ def download_rvdb_database(
         """
         Remove non-human-associated pox references from a FASTA.
 
-        Keeps: Monkeypox (mpox), Variola, Akhmeta (akhmetapox).
-        Drops: Cowpox, Camelpox, Ectromelia, and other pox-like labels.
+        Keeps: Monkeypox (mpox), Akhmeta (akhmetapox).
+        Drops: Variola (eradicated), Cowpox, Camelpox, Ectromelia, and other pox-like labels.
 
         Only filters sequences whose headers look pox-related; all other viral sequences are preserved.
         """
@@ -745,7 +745,7 @@ def download_rvdb_database(
             pass
 
         # Treat Poxviridae (and common poxvirus naming patterns) as pox-related. We still keep a small
-        # allow-list for the human-associated orthopox viruses (Mpox/Variola/Akhmeta).
+        # allow-list for the human-associated orthopox viruses (Mpox/Akhmeta).
         #
         # Notes:
         # - Some records may not include "poxvirus" but do include genus/family keywords.
@@ -770,7 +770,7 @@ def download_rvdb_database(
             re.I,
         )
         allow = re.compile(
-            r"(monkeypox|mpox|variola|akhmeta|akhmetapox|plum\s+pox\s+virus)",
+            r"(monkeypox|mpox|akhmeta|akhmetapox|plum\s+pox\s+virus)",
             re.I,
         )
 
@@ -1056,6 +1056,103 @@ def download_rvdb_database(
         meta["endogenous_viral_elements_filtered"] = True
         _write_database_metadata(metadata_file, meta)
 
+    def _filter_non_viral_contaminants_inplace(fasta_path: Path, metadata_file: Path) -> None:
+        """
+        Remove host background sequences and other non-viral contaminants.
+        Always applied — a viral database should not contain host sequences.
+        """
+        import re
+
+        host_pat = re.compile(
+            r"\bHomo\s+sapiens\b"
+            r"|\bPan\s+troglodytes\b"
+            r"|\bPan\s+paniscus\b",
+            re.I,
+        )
+        variola_pat = re.compile(r"\bvariola\b", re.I)
+        hts_human_pat = re.compile(r"\bHTS\b.*\bhuman\b|\bhuman\b.*\bHTS\b", re.I)
+        blacklist_accessions = {"MZ766785.1"}
+
+        # HIV-1/HIV-2/SIV nonfunctional gene fragments cause false positive hits.
+        # These are partial gene sequences (nef, gag, env, etc.) that slipped through
+        # the "complete sequence" keyword in the complete-genome filter.
+        # Matched against the species field only (not full header) to avoid false
+        # positives like Influenza "SIV-PB1" strain names or "aichivirus".
+        lentivirus_species_pat = re.compile(
+            r"immunodeficiency\s+virus|^HIV|^SIV",
+            re.I,
+        )
+        nonfunctional_gene_pat = re.compile(
+            r"\bnonfunctional\b.*\b(gene|protein)\b",
+            re.I,
+        )
+
+        def _species_from_header(h: str) -> str:
+            parts = h.split("|")
+            if len(parts) >= 5 and parts[0] == "acc":
+                return parts[4].strip()
+            return h
+
+        def _accession_from_header(h: str) -> str:
+            parts = h.split("|")
+            if len(parts) >= 3 and parts[0] == "acc":
+                return parts[2].strip()
+            return h.split()[0].strip()
+
+        def _should_remove(header: str) -> tuple:
+            """Return (remove: bool, reason: str)."""
+            acc = _accession_from_header(header)
+            if acc in blacklist_accessions:
+                return True, f"blacklisted accession ({acc})"
+            label = _species_from_header(header)
+            if host_pat.search(header) or host_pat.search(label):
+                return True, "host background"
+            # Check species field for bare genus "Pan" (covers Pan sp., etc.)
+            stripped = label.strip()
+            if stripped == "Pan" or stripped.startswith("Pan "):
+                if not re.search(r"pandemic|pantropic|panicum|pannonic|panhandle", stripped, re.I):
+                    return True, "host background (Pan genus)"
+            if variola_pat.search(header) or variola_pat.search(label):
+                return True, "Variola (eradicated)"
+            if hts_human_pat.search(header) or hts_human_pat.search(label):
+                return True, "HTS human virus"
+            if lentivirus_species_pat.search(label) and nonfunctional_gene_pat.search(header):
+                return True, "HIV/SIV nonfunctional gene fragment"
+            return False, ""
+
+        tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_contaminants")
+        kept = 0
+        removed = 0
+        removed_details = {}
+
+        with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+            tmp_out, "w", encoding="utf-8", newline="\n"
+        ) as f_out:
+            write = False
+            for line in f_in:
+                if line.startswith(">"):
+                    header = line[1:].strip()
+                    do_remove, reason = _should_remove(header)
+                    if do_remove:
+                        write = False
+                        removed += 1
+                        removed_details[reason] = removed_details.get(reason, 0) + 1
+                    else:
+                        write = True
+                        kept += 1
+                if write:
+                    f_out.write(line)
+
+        if removed > 0:
+            tmp_out.replace(fasta_path)
+            detail_str = ", ".join(f"{k}: {v}" for k, v in sorted(removed_details.items()))
+            logger.info(
+                f"Non-viral contaminant filter applied: removed {removed:,} sequence(s) ({detail_str}), kept {kept:,} total."
+            )
+        else:
+            tmp_out.unlink()
+            logger.info("Non-viral contaminant filter: no contaminants found.")
+
     def _write_database_metadata(metadata_file: Path, meta: dict) -> None:
         """
         Write DB metadata with stable, human-friendly key ordering.
@@ -1153,6 +1250,7 @@ def download_rvdb_database(
         )
         # Optional: remove endogenous/EVE/ERV entries.
         _filter_endogenous_inplace(output_fasta, metadata_file)
+        _filter_non_viral_contaminants_inplace(output_fasta, metadata_file)
         return output_fasta
 
     if not allow_download:
@@ -1373,6 +1471,7 @@ def download_rvdb_database(
         )
         # Apply endogenous/EVE filtering last.
         _filter_endogenous_inplace(output_fasta, metadata_file)
+        _filter_non_viral_contaminants_inplace(output_fasta, metadata_file)
         
     except Exception as e:
         logger.error(f"Failed to filter RVDB for complete genomes: {e}")
@@ -1429,7 +1528,7 @@ def download_refseq_database(
                     re.I,
                 )
                 allow = re.compile(
-                    r"(monkeypox|mpox|variola|akhmeta|akhmetapox)",
+                    r"(monkeypox|mpox|akhmeta|akhmetapox)",
                     re.I,
                 )
                 meta = {}
@@ -1470,6 +1569,8 @@ def download_refseq_database(
                     )
             except Exception as e:
                 logger.warning(f"Could not apply orthopox human-only filter to RefSeq: {e}")
+        # Always filter non-viral contaminants (host background, variola, etc.)
+        _filter_refseq_non_viral_contaminants(output_fasta, metadata_file)
         return output_fasta
 
     if not allow_download:
@@ -1615,7 +1716,7 @@ def download_refseq_database(
                     re.I,
                 )
                 allow = re.compile(
-                    r"(monkeypox|mpox|variola|akhmeta|akhmetapox)",
+                    r"(monkeypox|mpox|akhmeta|akhmetapox)",
                     re.I,
                 )
                 tmp_out = output_fasta.with_suffix(output_fasta.suffix + ".tmp_orthopox_human_only")
@@ -1652,6 +1753,9 @@ def download_refseq_database(
                 )
             except Exception as e:
                 logger.warning(f"Could not apply orthopox human-only filter to RefSeq: {e}")
+
+        # Always filter non-viral contaminants (host background, variola, etc.)
+        _filter_refseq_non_viral_contaminants(output_fasta, metadata_file)
         
     except Exception as e:
         logger.error(f"Failed to download RefSeq: {e}")
@@ -1662,6 +1766,92 @@ def download_refseq_database(
         raise
     
     return output_fasta
+
+def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path) -> None:
+    """
+    Remove host background sequences and other non-viral contaminants from RefSeq.
+    Same logic as the RVDB contaminant filter but works with RefSeq header format.
+    """
+    import re
+
+    host_pat = re.compile(
+        r"\bHomo\s+sapiens\b"
+        r"|\bPan\s+troglodytes\b"
+        r"|\bPan\s+paniscus\b",
+        re.I,
+    )
+    variola_pat = re.compile(r"\bvariola\b", re.I)
+    hts_human_pat = re.compile(r"\bHTS\b.*\bhuman\b|\bhuman\b.*\bHTS\b", re.I)
+    blacklist_accessions = {"MZ766785.1"}
+
+    lentivirus_species_pat = re.compile(
+        r"immunodeficiency\s+virus|^HIV|^SIV",
+        re.I,
+    )
+    nonfunctional_gene_pat = re.compile(
+        r"\bnonfunctional\b.*\b(gene|protein)\b",
+        re.I,
+    )
+
+    def _accession_from_header(h: str) -> str:
+        parts = h.split("|")
+        if len(parts) >= 3 and parts[0] == "acc":
+            return parts[2].strip()
+        return h.split()[0].strip()
+
+    def _species_from_header(h: str) -> str:
+        parts = h.split("|")
+        if len(parts) >= 5 and parts[0] == "acc":
+            return parts[4].strip()
+        return h
+
+    def _should_remove(header: str) -> tuple:
+        acc = _accession_from_header(header)
+        if acc in blacklist_accessions:
+            return True, f"blacklisted accession ({acc})"
+        if host_pat.search(header):
+            return True, "host background"
+        if variola_pat.search(header):
+            return True, "Variola (eradicated)"
+        if hts_human_pat.search(header):
+            return True, "HTS human virus"
+        label = _species_from_header(header)
+        if lentivirus_species_pat.search(label) and nonfunctional_gene_pat.search(header):
+            return True, "HIV/SIV nonfunctional gene fragment"
+        return False, ""
+
+    tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_contaminants")
+    kept = 0
+    removed = 0
+    removed_details = {}
+
+    with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+        tmp_out, "w", encoding="utf-8", newline="\n"
+    ) as f_out:
+        write = False
+        for line in f_in:
+            if line.startswith(">"):
+                header = line[1:].strip()
+                do_remove, reason = _should_remove(header)
+                if do_remove:
+                    write = False
+                    removed += 1
+                    removed_details[reason] = removed_details.get(reason, 0) + 1
+                else:
+                    write = True
+                    kept += 1
+            if write:
+                f_out.write(line)
+
+    if removed > 0:
+        tmp_out.replace(fasta_path)
+        detail_str = ", ".join(f"{k}: {v}" for k, v in sorted(removed_details.items()))
+        logger.info(
+            f"Non-viral contaminant filter applied to RefSeq: removed {removed:,} sequence(s) ({detail_str}), kept {kept:,} total."
+        )
+    else:
+        tmp_out.unlink()
+        logger.info("Non-viral contaminant filter (RefSeq): no contaminants found.")
 
 def download_accession_from_ncbi(accession: str, output_dir: Path = None) -> Path:
     """
@@ -4491,9 +4681,8 @@ def _write_virasign_hit_json_sidecars(
         hit_out = {k: v for k, v in row.items()}
         hit_out["nextclade_clade"] = _nextclade_sidecar_str(hit_out.get("nextclade_clade"))
         hit_out["nextclade_dataset"] = _nextclade_sidecar_str(hit_out.get("nextclade_dataset"))
-        # Mpox datasets can also emit lineage/outbreak; normalize for stable downstream parsing.
-        hit_out["nextclade_lineage"] = _nextclade_sidecar_str(hit_out.get("nextclade_lineage"))
-        hit_out["nextclade_outbreak"] = _nextclade_sidecar_str(hit_out.get("nextclade_outbreak"))
+        hit_out.pop("nextclade_lineage", None)
+        hit_out.pop("nextclade_outbreak", None)
         payload = {
             "schema_version": 1,
             "tool": "virasign",
@@ -5383,7 +5572,6 @@ def _auto_nextclade_dataset_name(hints: List[str]) -> Optional[str]:
         return None
 
     # Fast-path for Mpox: prefer the canonical "all clades" dataset if available.
-    # This covers clade/lineage assignment across clade I/II and subclades when supported.
     mpox_markers = ("mpox", "monkeypox", "orthopoxvirus monkeypox", "orthopoxvirus")
     if any(m in " ".join(hints_l) for m in mpox_markers):
         for preferred in (
@@ -5448,16 +5636,15 @@ def _run_nextclade_and_get_results(input_fasta: Path, dataset_name: str, out_tsv
 
         name_i = _find_col("seqName", "name", "sequenceName")
         clade_i = _find_col("clade", "clade_nextstrain", "cladeGISAID", "clade_gisaid")
-        lineage_i = _find_col("lineage")
-        outbreak_i = _find_col("outbreak")
         if name_i is None or clade_i is None:
             return {}
 
+        max_required = max(name_i, clade_i)
         for line in f:
             if not line.strip():
                 continue
             parts = line.rstrip("\n").split("\t")
-            if len(parts) <= max(i for i in (name_i, clade_i, lineage_i, outbreak_i) if i is not None):
+            if len(parts) <= max_required:
                 continue
             seq_name = parts[name_i].strip()
             clade = parts[clade_i].strip()
@@ -5465,12 +5652,7 @@ def _run_nextclade_and_get_results(input_fasta: Path, dataset_name: str, out_tsv
                 continue
             acc = extract_accession_from_header(seq_name)
             if acc:
-                fields = {"clade": clade}
-                if lineage_i is not None:
-                    fields["lineage"] = parts[lineage_i].strip()
-                if outbreak_i is not None:
-                    fields["outbreak"] = parts[outbreak_i].strip()
-                acc_to_fields[acc] = fields
+                acc_to_fields[acc] = {"clade": clade}
 
     return acc_to_fields
 
@@ -6336,7 +6518,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                     except Exception as e:
                         logger.warning(f"Nextclade failed: {e}")
                 else:
-                    # Auto mode: for Mpox, run the canonical dataset directly (gives clade + lineage + outbreak).
+                    # Auto mode: for Mpox, run the canonical dataset directly (clade assignment).
                     # For everything else, fall back to the agnostic `nextclade sort` approach.
                     did_run_direct = False
                     try:
@@ -6412,12 +6594,8 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                         d["nextclade_clade"] = f.get("clade")
                     if nextclade_dataset_used:
                         d["nextclade_dataset"] = nextclade_dataset_used
-                    # Mpox datasets can also emit lineage/outbreak. For consistent UI/JSON,
-                    # always include these keys for Mpox (use "NA" when missing).
-                    ds_for_row = (d.get("nextclade_dataset") or nextclade_dataset_used or "").strip()
-                    if ds_for_row.startswith("nextstrain/mpox/"):
-                        d["nextclade_lineage"] = (f.get("lineage") or "").strip() or "NA"
-                        d["nextclade_outbreak"] = (f.get("outbreak") or "").strip() or "NA"
+                    d.pop("nextclade_lineage", None)
+                    d.pop("nextclade_outbreak", None)
 
         with open(curated_json_file, 'w') as f:
             json.dump(curated_descriptions, f, indent=2)
@@ -7563,8 +7741,6 @@ def generate_html_visualization(output_dir: Path):
                         <input type="text" placeholder="Filter Organism" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Clade" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Filter Lineage" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Filter Outbreak" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Reads" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('{sample_name}')">
@@ -7582,8 +7758,6 @@ def generate_html_visualization(output_dir: Path):
                                 <th>Organism</th>
                                 <th>Viral Species</th>
                                 <th>Nextclade Clade</th>
-                                <th>Nextclade Lineage</th>
-                                <th>Nextclade Outbreak</th>
                                 <th>Segment</th>
                                 <th class="stats sortable" data-sort="mapped_reads">Mapped Reads</th>
                                 <th class="stats sortable" data-sort="identity">Identity (%)</th>
@@ -7738,12 +7912,6 @@ def generate_html_visualization(output_dir: Path):
                 const cladeRaw = ref.nextclade_clade;
                 const cladeDisp = cellDashHtml(cladeRaw);
                 const cladeAttr = attrOrEmpty(cladeRaw);
-                const lineageRaw = ref.nextclade_lineage;
-                const lineageDisp = cellDashHtml(lineageRaw);
-                const lineageAttr = attrOrEmpty(lineageRaw);
-                const outbreakRaw = ref.nextclade_outbreak;
-                const outbreakDisp = cellDashHtml(outbreakRaw);
-                const outbreakAttr = attrOrEmpty(outbreakRaw);
                 const description = ref.description || 'N/A';
                 const segmentDisp = cellDashHtml(ref.segment);
                 const segmentAttr = attrOrEmpty(ref.segment);
@@ -7755,16 +7923,12 @@ def generate_html_visualization(output_dir: Path):
                 html += `
                     <tr data-accession="${{accession}}" data-organism="${{organism}}" data-species="${{species}}" 
                         data-clade="${{cladeAttr}}"
-                        data-lineage="${{lineageAttr}}"
-                        data-outbreak="${{outbreakAttr}}"
                         data-segment="${{segmentAttr}}"
                         data-reads="${{reads}}" data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}">
                         <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank">${{accession}}</a></td>
                         <td>${{organism}}</td>
                         <td>${{species}}</td>
                         <td>${{cladeDisp}}</td>
-                        <td>${{lineageDisp}}</td>
-                        <td>${{outbreakDisp}}</td>
                         <td>${{segmentDisp}}</td>
                         <td class="stats">${{reads.toLocaleString()}}</td>
                         <td class="stats">${{identity.toFixed(2)}}%</td>
@@ -7806,16 +7970,15 @@ def generate_html_visualization(output_dir: Path):
                     const filterLower = filterValue.toLowerCase();
                     const filterTrimmed = filterValue;
                     
-                    // Columns 7-10 are numeric (reads, identity, depth, breadth) after adding
-                    // Nextclade Clade/Lineage/Outbreak columns.
-                    const isNumericColumn = colIndex >= 7 && colIndex <= 10;
+                    // Columns 5-8 are numeric (reads, identity, depth, breadth).
+                    const isNumericColumn = colIndex >= 5 && colIndex <= 8;
                     
                     if (isNumericColumn) {{
                         if (filterTrimmed !== '') {{
                             const minValue = parseFloat(filterTrimmed);
                             if (!isNaN(minValue)) {{
                                 let cellValue = null;
-                                if (colIndex === 7) {{
+                                if (colIndex === 5) {{
                                     // Mapped Reads
                                     const dataReads = row.getAttribute('data-reads');
                                     if (dataReads !== null && dataReads !== '' && !isNaN(parseFloat(dataReads))) {{
@@ -7830,13 +7993,13 @@ def generate_html_visualization(output_dir: Path):
                                             }}
                                         }}
                                     }}
-                                }} else if (colIndex === 8) {{
+                                }} else if (colIndex === 6) {{
                                     // Identity
                                     cellValue = parseFloat(row.getAttribute('data-identity') || 0);
-                                }} else if (colIndex === 9) {{
+                                }} else if (colIndex === 7) {{
                                     // Depth
                                     cellValue = parseFloat(row.getAttribute('data-depth') || 0);
-                                }} else if (colIndex === 10) {{
+                                }} else if (colIndex === 8) {{
                                     // Breadth
                                     cellValue = parseFloat(row.getAttribute('data-breadth') || 0) * 100;
                                 }}
@@ -8180,7 +8343,7 @@ def generate_html_visualization(output_dir: Path):
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
-            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Nextclade Lineage,Nextclade Outbreak,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\\n';
+            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\\n';
             const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
             
             rows.forEach(row => {{
@@ -8246,6 +8409,7 @@ def generate_html_visualization(output_dir: Path):
                 filterAccession: '',
                 filterOrganism: '',
                 filterSpecies: '',
+                filterClade: '',
                 filterSegment: '',
                 excludeUnknown: false
             }};
@@ -8283,6 +8447,7 @@ def generate_html_visualization(output_dir: Path):
                 filterAccession: '',
                 filterOrganism: '',
                 filterSpecies: '',
+                filterClade: '',
                 filterSegment: '',
                 excludeUnknown: false
             }};
@@ -8290,15 +8455,16 @@ def generate_html_visualization(output_dir: Path):
             const filterRow = document.getElementById(`filters-${{sampleName}}`);
             if (filterRow) {{
                 const inputs = filterRow.querySelectorAll('input[type="text"]');
-                if (inputs.length >= 8) {{
+                if (inputs.length >= 9) {{
                     filters.filterAccession = inputs[0].value.trim().toLowerCase();
                     filters.filterOrganism = inputs[1].value.trim().toLowerCase();
                     filters.filterSpecies = inputs[2].value.trim().toLowerCase();
-                    filters.filterSegment = inputs[3].value.trim().toLowerCase();
-                    filters.minReads = inputs[4].value.trim() ? parseFloat(inputs[4].value.trim()) : null;
-                    filters.minIdentity = inputs[5].value.trim() ? parseFloat(inputs[5].value.trim()) : null;
-                    filters.minDepth = inputs[6].value.trim() ? parseFloat(inputs[6].value.trim()) : null;
-                    filters.minBreadth = inputs[7].value.trim() ? parseFloat(inputs[7].value.trim()) : null;
+                    filters.filterClade = inputs[3].value.trim().toLowerCase();
+                    filters.filterSegment = inputs[4].value.trim().toLowerCase();
+                    filters.minReads = inputs[5].value.trim() ? parseFloat(inputs[5].value.trim()) : null;
+                    filters.minIdentity = inputs[6].value.trim() ? parseFloat(inputs[6].value.trim()) : null;
+                    filters.minDepth = inputs[7].value.trim() ? parseFloat(inputs[7].value.trim()) : null;
+                    filters.minBreadth = inputs[8].value.trim() ? parseFloat(inputs[8].value.trim()) : null;
                 }}
                 const excludeUnknownCheckbox = document.getElementById(`excludeUnknown-${{sampleName}}`);
                 if (excludeUnknownCheckbox) {{
@@ -8331,6 +8497,16 @@ def generate_html_visualization(output_dir: Path):
             if (filters.filterSpecies) {{
                 const species = (ref.viral_species || ref.organism || '').toLowerCase();
                 if (!species.includes(filters.filterSpecies)) {{
+                    return false;
+                }}
+            }}
+            
+            if (filters.filterClade) {{
+                const clade = String(ref.nextclade_clade || '').trim().toLowerCase();
+                if (clade === '' || clade === 'na' || clade === 'n/a') {{
+                    return false;
+                }}
+                if (!clade.includes(filters.filterClade)) {{
                     return false;
                 }}
             }}
@@ -8633,7 +8809,7 @@ Examples
         dest="orthopox_human_only",
         action="store_true",
         default=True,
-        help="When downloading/preparing databases, remove pox/orthopox references except Mpox/Variola/Akhmeta (keeps all non-pox viruses unchanged). Enabled by default.",
+        help="When downloading/preparing databases, remove pox/orthopox references except Mpox/Akhmeta (keeps all non-pox viruses unchanged). Variola is always removed (eradicated). Enabled by default.",
     )
 
     db_prep.add_argument(
