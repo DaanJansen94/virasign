@@ -3431,7 +3431,7 @@ def deduplicate_by_species(stats_list: list) -> list:
     
     return list(species_dict.values())
 
-def deduplicate_by_organism(stats_list: list, segment_database_path: Path = None) -> list:
+def deduplicate_by_organism(stats_list: list, segment_database_path: Path = None, co_infection: bool = False) -> list:
     """
     Deduplicate by viral species (instead of organism), preferring RefSeq over GenBank.
     For segmented viruses, keeps the best reference for EACH segment.
@@ -3439,11 +3439,17 @@ def deduplicate_by_organism(stats_list: list, segment_database_path: Path = None
     Args:
         stats_list: List of statistics dictionaries
         segment_database_path: Path to segment database (optional, for accurate segment detection)
+        co_infection: When True, include organism in the deduplication key so that
+            different serotypes/subtypes within the same viral species are preserved
+            (e.g., Dengue type 1 and Dengue type 2 both kept).
     """
     if not stats_list:
         return []
     
-    logger.info(f"Detecting segments for {len(stats_list)} references and deduplicating by viral species (checking database first, then NCBI if needed)...")
+    if co_infection:
+        logger.info(f"Co-infection mode: deduplicating by viral species + organism (preserving serotypes/subtypes) for {len(stats_list)} references...")
+    else:
+        logger.info(f"Detecting segments for {len(stats_list)} references and deduplicating by viral species (checking database first, then NCBI if needed)...")
     
     # For segmented viruses, we need to group by viral_species + segment
     # For non-segmented, we group by viral_species only
@@ -3510,13 +3516,19 @@ def deduplicate_by_organism(stats_list: list, segment_database_path: Path = None
             logger.info(f"  Processed {i + 1}/{len(stats_list)} references for segment detection... (DB: {segment_db_hits}, API: {segment_api_calls}, fallback: {segment_fallback})")
         
         # Create key: viral_species + segment (or just viral_species if not segmented)
-        # Normalize key to ensure consistent matching (case-insensitive)
+        # In co-infection mode, also include organism to preserve serotype/subtype
+        # distinction (e.g., Dengue type 1 vs type 2 within Orthoflavivirus denguei).
         viral_species_normalized = viral_species.strip().lower()
+        if co_infection:
+            organism_normalized = normalize_species_name(stat.get("organism", "") or "")
+            key_base = f"{viral_species_normalized}||{organism_normalized}" if organism_normalized else viral_species_normalized
+        else:
+            key_base = viral_species_normalized
         if segment:
             segment_normalized = segment.strip().upper()  # Segments are usually uppercase (L, S, etc.)
-            key = f"{viral_species_normalized}||SEGMENT||{segment_normalized}"
+            key = f"{key_base}||SEGMENT||{segment_normalized}"
         else:
-            key = f"{viral_species_normalized}||NO_SEGMENT"
+            key = f"{key_base}||NO_SEGMENT"
         
         # Debug: Track species counts
         if viral_species_normalized not in species_counts:
@@ -5146,6 +5158,17 @@ def find_best_reference_with_index(
         # Return empty/default values for all 5 return values
         return None, None, [], [], []
 
+    pre_filter_count = len(stats_by_ref)
+    stats_by_ref = {
+        h: s for h, s in stats_by_ref.items() if s["mapped_reads"] >= 5
+    }
+    dropped = pre_filter_count - len(stats_by_ref)
+    if dropped:
+        logger.info(f"Dropped {dropped} references with < 5 mapped reads (noise / low-quality alignments)")
+    if not stats_by_ref:
+        logger.warning("No references with >= 5 mapped reads.")
+        return None, None, [], [], []
+
     # Calculate identity for all references and filter by minimum identity threshold
     all_stats = []
     
@@ -5778,7 +5801,8 @@ def _process_sample_task(task_args):
     (sample_name, sample_file_str, database_fasta_path_str, db_output_dir_str, db_min_identity, 
      db_name, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, 
      threads, gzip_fastq, minimap2_I, blinded_species, organism_variations,
-     nextclade, nextclade_dataset) = task_args
+     nextclade, nextclade_dataset, *extra) = task_args
+    co_infection = extra[0] if extra else False
     
     # Convert strings back to Path objects
     sample_file = Path(sample_file_str)
@@ -5807,16 +5831,19 @@ def _process_sample_task(task_args):
         organism_variations=organism_variations,
         nextclade=bool(nextclade),
         nextclade_dataset=nextclade_dataset,
+        co_infection=co_infection,
     )
     return sample_name, db_name, confident_names
 
-def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
+def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None, co_infection: bool = False):
     """
     Process a single sample: map ALL reads to database and find best reference.
     Simple workflow: no rarefaction, no unmapped extraction, no minority detection.
     
     Args:
         blinded_species: List of viral species names to exclude from analysis (optional)
+        co_infection: When True, preserve different serotypes/subtypes within the same
+            viral species as separate hits (e.g., Dengue type 1 + type 2).
     """
     if blinded_species is None:
         blinded_species = []
@@ -5862,6 +5889,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
             organism_variations=organism_variations,
             nextclade=nextclade,
             nextclade_dataset=nextclade_dataset,
+            co_infection=co_infection,
         )
         return confident_names
     
@@ -5895,6 +5923,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         organism_variations=organism_variations,
         nextclade=nextclade,
         nextclade_dataset=nextclade_dataset,
+        co_infection=co_infection,
     )
     
     # Log to file only (not to console)
@@ -5908,7 +5937,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     
     return confident_names
 
-def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
+def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None, co_infection: bool = False):
     """Save mapping statistics and best reference to JSON file and save best reference sequence as FASTA."""
     confident_names = []
     # output_dir is already the sample directory (or database-specific subdirectory if multiple databases)
@@ -5968,7 +5997,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     
     # Deduplicate curated_stats by organism (preferring RefSeq)
     # For segmented viruses, keeps best reference for EACH segment
-    curated_stats_dedup = deduplicate_by_organism(curated_stats_with_organism, segment_database_path=segment_database_path)
+    curated_stats_dedup = deduplicate_by_organism(curated_stats_with_organism, segment_database_path=segment_database_path, co_infection=co_infection)
     
     # Debug: Log Lassa virus stats after deduplication
     lassa_after = [s for s in curated_stats_dedup if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower()]
@@ -8923,6 +8952,17 @@ Examples
         help=argparse.SUPPRESS,
     )
 
+    # Co-infection detection
+    thresholds.add_argument(
+        "--co-infection",
+        dest="co_infection",
+        action="store_true",
+        default=False,
+        help="Detect co-infections within the same viral species (e.g., Dengue type 1 + type 2). "
+             "Keeps different serotypes/subtypes as separate hits instead of merging them. "
+             "Raises identity to 95%% and coverage breadth to 95%% (override with --min_identity / --coverage_breadth).",
+    )
+
     # Reporting
     reporting.add_argument(
         "--no-html",
@@ -9162,6 +9202,15 @@ Examples
     # Don't set min_identity globally - set it per database in the loop below
     # This ensures RVDB uses 80% and RefSeq uses 95% when both are used
     user_specified_identity = args.min_identity  # Store user's explicit value if provided
+
+    # Co-infection mode: raise identity and breadth for confident serotype/subtype detection
+    if getattr(args, "co_infection", False):
+        if user_specified_identity is None:
+            user_specified_identity = 95.0
+            logger.info("Co-infection mode: identity threshold set to 95% (override with --min_identity)")
+        if args.coverage_breadth_threshold == 0.1:
+            args.coverage_breadth_threshold = 0.95
+            logger.info("Co-infection mode: coverage breadth threshold set to 95% (override with --coverage_breadth)")
     
     logger.info("="*60)
     logger.info("Virasign: Viral Read ASSIGNment from nanopore sequencing")
@@ -9183,6 +9232,8 @@ Examples
     logger.info(f"Output directory: {output_dir} (specified: {args.output if args.output else 'default: Virasign_output'})")
     logger.info(f"Min mapped reads: {args.min_mapped_reads}")
     logger.info(f"Coverage depth threshold: {args.coverage_depth_threshold}")
+    if getattr(args, "co_infection", False):
+        logger.info("Co-infection detection: ENABLED (different serotypes/subtypes within the same viral species will be reported separately)")
     
     # Process blinded species
     blinded_species = []
@@ -9320,6 +9371,7 @@ Examples
                 organism_variations,
                 getattr(args, "nextclade", True),
                 getattr(args, "nextclade_dataset", None),
+                getattr(args, "co_infection", False),
             ))
     
     # Count reads for each unique sample to determine optimal thread assignment.
