@@ -1083,7 +1083,7 @@ def download_rvdb_database(
             re.I,
         )
         nonfunctional_gene_pat = re.compile(
-            r"\bnonfunctional\b.*\b(gene|protein)\b",
+            r"\bnonfunctional\b.*\b(genes?|proteins?)\b",
             re.I,
         )
 
@@ -1099,19 +1099,22 @@ def download_rvdb_database(
                 return parts[2].strip()
             return h.split()[0].strip()
 
+        # RVDB entries with these NCBI division codes are host genomic
+        # sequences containing endogenous elements, not actual viruses.
+        # Matched as pipe-delimited substrings to handle header format quirks.
+        _non_viral_div_pat = re.compile(
+            r"\|(?:PRI|MAM|ROD|VRT|PLN|INV)\|"
+        )
+
         def _should_remove(header: str) -> tuple:
             """Return (remove: bool, reason: str)."""
             acc = _accession_from_header(header)
             if acc in blacklist_accessions:
                 return True, f"blacklisted accession ({acc})"
+            m = _non_viral_div_pat.search(header)
+            if m:
+                return True, f"non-viral host ({m.group().strip('|')})"
             label = _species_from_header(header)
-            if host_pat.search(header) or host_pat.search(label):
-                return True, "host background"
-            # Check species field for bare genus "Pan" (covers Pan sp., etc.)
-            stripped = label.strip()
-            if stripped == "Pan" or stripped.startswith("Pan "):
-                if not re.search(r"pandemic|pantropic|panicum|pannonic|panhandle", stripped, re.I):
-                    return True, "host background (Pan genus)"
             if variola_pat.search(header) or variola_pat.search(label):
                 return True, "Variola (eradicated)"
             if hts_human_pat.search(header) or hts_human_pat.search(label):
@@ -1789,7 +1792,7 @@ def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path)
         re.I,
     )
     nonfunctional_gene_pat = re.compile(
-        r"\bnonfunctional\b.*\b(gene|protein)\b",
+        r"\bnonfunctional\b.*\b(genes?|proteins?)\b",
         re.I,
     )
 
