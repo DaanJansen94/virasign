@@ -12,7 +12,7 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 - **Visualization**: Interactive HTML reports with filterable tables, charts, and heatmaps give an immediate, interpretable overview of viral species, coverage, and identity without extra scripting.
 - **Blinding options**: You can blind specific viral species from all outputs (e.g. HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) so incidental findings do not appear in any files. Useful for consent guidelines and ethical research practice.
 
-⚠️ **Co-infection:** If you suspect a co-infection with multiple serotypes/subtypes of the same viral species, use `--co-infection` (see [options](#command-line-options)). However, do not use this as a default, as filters are more stringent to be confident about co-infecting viruses, which will lower your overall sensitivity.
+⚠️ **Co-infection:** If you suspect a co-infection with multiple serotypes/subtypes of the same viral species, use `--co-infection` (see [options](#command-line-options)). However, do not use this as a default, as filters are more stringent to be confident about co-infecting viruses, which will lower your overall sensitivity. If you did not use `--co-infection`, you can always check the `*_unfiltered_all_references.json` files to find hits to multiple viruses within the same species.
 
 ---
 
