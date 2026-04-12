@@ -31,6 +31,7 @@ requirements:
     - samtools >=1.17
     - gzip
     - mmseqs2
+    - nextclade
 
 test:
   imports:
