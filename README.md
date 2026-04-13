@@ -155,9 +155,6 @@ virasign -i input_dir -d species_list.txt -o output_dir
 virasign -i input_dir -d my_accessions.txt -o output_dir
 # (my_accessions.txt contains one accession per line)
 
-# Ultrasensitive mode (lower thresholds, catches weak/divergent signals)
-virasign -i input_dir -u
-
 # Blind incidental findings of chronic viruses
 virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 ```
