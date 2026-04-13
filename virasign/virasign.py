@@ -6471,6 +6471,22 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 }
             )
 
+    # Safety net: ensure every entry in curated_descriptions meets the thresholds,
+    # regardless of which code path added it (main loop or fallback remap).
+    pre_safety = len(curated_descriptions)
+    curated_descriptions = [
+        d for d in curated_descriptions
+        if d.get("avg_identity", 0.0) >= min_identity
+        and d.get("coverage_depth", 0.0) >= coverage_depth_threshold
+        and d.get("coverage_breadth", 0.0) >= coverage_breadth_threshold
+    ]
+    if len(curated_descriptions) < pre_safety:
+        logger.info(
+            f"Safety-net filter removed {pre_safety - len(curated_descriptions)} entry(ies) "
+            f"below thresholds (identity>={min_identity}%, depth>={coverage_depth_threshold}, "
+            f"breadth>={coverage_breadth_threshold})"
+        )
+
     # Debug: Log Lassa virus stats after final filtering
     lassa_after_final = [s for s in curated_descriptions if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower() or s.get("accession", "") == "AY628204.1"]
     if lassa_after_final:
