@@ -7854,6 +7854,7 @@ def generate_html_visualization(output_dir: Path):
                     <h2>Viral Species Heatmap (All Samples)</h2>
                     <div style="display: flex; gap: 10px;">
                         <button onclick="downloadHeatmapAsPNG()">📥 Download PNG</button>
+                        <button onclick="downloadAllSamplesCSV()">📥 Download CSV</button>
                     </div>
                 </div>
                 <div class="heatmap-container" id="heatmap-container">
@@ -8675,6 +8676,40 @@ def generate_html_visualization(output_dir: Path):
             container.innerHTML = html;
         }}
         
+        function downloadAllSamplesCSV() {{
+            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads','Avg Identity (%)','Coverage Depth','Coverage Breadth (%)']];
+            allSamples.forEach(sname => {{
+                const sdata = samplesData[sname];
+                if (!sdata) {{ rows.push([sname,'','','','','','','','','']); return; }}
+                let refs = [];
+                Object.keys(sdata).forEach(db => {{ if (sdata[db].references) refs = refs.concat(sdata[db].references); }});
+                if (refs.length === 0) {{ rows.push([sname,'','','','','','','','','']); return; }}
+                refs.sort((a,b) => (b.coverage_breadth||0)-(a.coverage_breadth||0));
+                refs.forEach(r => {{
+                    rows.push([
+                        sname,
+                        r.accession||'',
+                        r.organism||'',
+                        r.viral_species||'',
+                        r.nextclade_clade||'',
+                        r.segment||'',
+                        r.mapped_reads||0,
+                        (r.avg_identity||0).toFixed(2),
+                        (r.coverage_depth||0).toFixed(2),
+                        ((r.coverage_breadth||0)*100).toFixed(1)
+                    ]);
+                }});
+            }});
+            const csv = rows.map(r => r.map(c => '"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\\n');
+            const blob = new Blob([csv], {{type:'text/csv'}});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'results_summary_all_samples.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        }}
+
         function downloadHeatmapAsPNG() {{
             const container = document.getElementById('heatmap-container');
             if (!container) return;
@@ -8717,6 +8752,38 @@ def generate_html_visualization(output_dir: Path):
             f.write(html_content)
         
         logger.info(f"Generated HTML visualization for {database_name}: {html_file}")
+
+        # Write combined CSV table (all samples, same columns as per-sample HTML table)
+        import csv as csv_module
+        csv_file = output_dir / f"results_summary_{database_name}.csv"
+        with open(csv_file, "w", newline="") as cf:
+            writer = csv_module.writer(cf)
+            writer.writerow([
+                "Sample", "Accession", "Organism", "Viral Species",
+                "Nextclade Clade", "Segment", "Mapped Reads",
+                "Avg Identity (%)", "Coverage Depth", "Coverage Breadth (%)",
+            ])
+            for sname in sorted(db_samples_list):
+                refs = []
+                if sname in db_samples_data and database_name in db_samples_data[sname]:
+                    refs = db_samples_data[sname][database_name]
+                if not refs:
+                    writer.writerow([sname] + [""] * 9)
+                    continue
+                for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
+                    writer.writerow([
+                        sname,
+                        ref.get("accession", ""),
+                        ref.get("organism", ""),
+                        ref.get("viral_species", ""),
+                        ref.get("nextclade_clade", ""),
+                        ref.get("segment", ""),
+                        ref.get("mapped_reads", 0),
+                        f"{ref.get('avg_identity', 0):.2f}",
+                        f"{ref.get('coverage_depth', 0):.2f}",
+                        f"{ref.get('coverage_breadth', 0) * 100:.1f}",
+                    ])
+        logger.info(f"Generated CSV summary for {database_name}: {csv_file}")
 
 
 def is_fastq_file(path: Path) -> bool:
