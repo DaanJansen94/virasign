@@ -103,7 +103,7 @@ virasign --help
   - `--min_mapped_reads`: Min read number that must map to a reference for it to be reported (default: `100`).
   - `--coverage_depth`: Min average coverage depth across the reference (default: `1.0`).
   - `--coverage_breadth`: Min fraction of the reference covered by ≥1 read (default: `0.1`).
-
+  - `-u, --ultrasensitive`: Lowers all thresholds to maximise detection. Useful when you suspect amplicon contamination or severe viral degeneration (bad sample storage), but not advised as default because it increases false positivity. 
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
@@ -154,6 +154,9 @@ virasign -i input_dir -d species_list.txt -o output_dir
 # Use text file with accessions as database
 virasign -i input_dir -d my_accessions.txt -o output_dir
 # (my_accessions.txt contains one accession per line)
+
+# Ultrasensitive mode (lower thresholds, catches weak/divergent signals)
+virasign -i input_dir -u
 
 # Blind incidental findings of chronic viruses
 virasign -i input_dir -d RVDB -b HEP,HIV,HTLV

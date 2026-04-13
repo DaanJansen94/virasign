@@ -8924,6 +8924,18 @@ Examples
         help="Database directory (default: ./Databases).",
     )
 
+    # Ultrasensitive mode
+    thresholds.add_argument(
+        "-u",
+        "--ultrasensitive",
+        dest="ultrasensitive",
+        action="store_true",
+        default=False,
+        help="Ultrasensitive mode: lower all thresholds to maximise detection of low-abundance "
+             "or divergent viruses (identity 70%%, mapped reads 10, depth 0.1, breadth 0.01). "
+             "Trade-off: more potential false positives. Individual thresholds can still be overridden.",
+    )
+
     # Thresholds
     thresholds.add_argument(
         "--min_identity",
@@ -9211,6 +9223,19 @@ Examples
     # Don't set min_identity globally - set it per database in the loop below
     # This ensures RVDB uses 80% and RefSeq uses 95% when both are used
     user_specified_identity = args.min_identity  # Store user's explicit value if provided
+
+    # Ultrasensitive mode: lower all thresholds for maximum detection
+    if getattr(args, "ultrasensitive", False):
+        if user_specified_identity is None:
+            user_specified_identity = 70.0
+        if args.min_mapped_reads == 100:
+            args.min_mapped_reads = 10
+        if args.coverage_depth_threshold == 1.0:
+            args.coverage_depth_threshold = 0.1
+        if args.coverage_breadth_threshold == 0.1:
+            args.coverage_breadth_threshold = 0.01
+        logger.info("Ultrasensitive mode: thresholds lowered for maximum detection (identity %s%%, reads %d, depth %.1f, breadth %.2f)",
+                     user_specified_identity, args.min_mapped_reads, args.coverage_depth_threshold, args.coverage_breadth_threshold)
 
     
     logger.info("="*60)
