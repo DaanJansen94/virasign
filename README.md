@@ -167,6 +167,7 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 |--------|-------------|
 | `.virasign.log` | Detailed run log (hidden file in the output directory) |
 | `results_summary_*.html` | Interactive HTML report (see example below) |
+| `results_summary_*.csv` | CSV table with all identified viruses across all samples |
 | `*_final_selected_references.json` | Summary per sample (metadata/stats; not the sequences themselves) |
 | `NC_004296.1`, `NC_006577.2` | Per-virus folder: `NC_004296.1.fasta`, `NC_004296.1.bam`, `NC_004296.1_mapped_reads.fastq.gz`, `NC_004296.1.json` |
 
