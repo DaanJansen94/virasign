@@ -8265,6 +8265,19 @@ def generate_html_visualization(output_dir: Path):
                 sampleSection.classList.add('active');
                 populateMetadata(sampleName);
                 populateTable(sampleName);
+                // Default UI behavior: show hits with NOGR > 0 (user can clear the field to see all).
+                const filterRow = document.getElementById(`filters-${{sampleName}}`);
+                if (filterRow) {{
+                    const inputs = filterRow.querySelectorAll('input[type="text"]');
+                    // Index 9 is "Minimum NOGR (#)" based on the filter-row input order.
+                    if (inputs && inputs.length >= 10) {{
+                        const nogrInput = inputs[9];
+                        if (nogrInput && String(nogrInput.value || '').trim() === '') {{
+                            nogrInput.value = '1';
+                        }}
+                    }}
+                }}
+                applyAllFilters(sampleName);
                 if (!charts[sampleName]) {{
                     createCharts(sampleName);
                     charts[sampleName] = true;
@@ -9922,7 +9935,7 @@ Examples
         # Update task with assigned threads and convert sample_file to string
         task_list = list(task)
         task_list[1] = str(task_list[1])  # Convert Path to string for pickling
-        task_list[9] = assigned_threads  # Update threads
+        task_list[10] = assigned_threads  # Update threads
         tasks_with_threads.append(tuple(task_list))
     
     # Calculate parallelization strategy based on thread requirements
@@ -9936,7 +9949,7 @@ Examples
         print("=" * 60)
         for i, task_args in enumerate(tasks_with_threads, 1):
             task_list = list(task_args)
-            task_list[9] = 1  # Override to 1 thread
+            task_list[10] = 1  # Override to 1 thread
             print(f"[{i}/{num_tasks}] {task_list[0]}: Running...")
             sample_name, db_name, confident_names = _process_sample_task(tuple(task_list))
             suffix = f" | CONFIDENT (breadth≥20%): {', '.join(confident_names)}" if confident_names else " | CONFIDENT (breadth≥20%): none"
@@ -9944,7 +9957,7 @@ Examples
     else:
         # Scale up threads per sample if more threads are available
         # First, calculate minimum threads needed based on read counts
-        min_threads_needed = sum(t[9] for t in tasks_with_threads)
+        min_threads_needed = sum(t[10] for t in tasks_with_threads)
         
         if min_threads_needed <= total_threads:
             # We have enough threads - scale up if possible
@@ -9957,21 +9970,21 @@ Examples
                 
                 for i, task in enumerate(tasks_with_threads):
                     task_list = list(task)
-                    original_threads = task_list[9]
-                    task_list[9] = original_threads + threads_per_sample_extra
+                    original_threads = task_list[10]
+                    task_list[10] = original_threads + threads_per_sample_extra
                     tasks_with_threads[i] = tuple(task_list)
-                    logger.info(f"  {task[0]}: {original_threads} -> {task_list[9]} threads")
+                    logger.info(f"  {task[0]}: {original_threads} -> {task_list[10]} threads")
         
         # Dynamic scheduling: submit tasks as threads become available
         # Sort by thread requirement (smaller first for better packing)
-        tasks_sorted = sorted(tasks_with_threads, key=lambda x: x[9])
+        tasks_sorted = sorted(tasks_with_threads, key=lambda x: x[10])
         
         # Log to file only
         logger.info(f"Processing {num_tasks} task(s) with {total_threads} total threads (dynamic scheduling)")
-        total_threads_needed = sum(t[9] for t in tasks_sorted)
+        total_threads_needed = sum(t[10] for t in tasks_sorted)
         logger.info(f"Total threads needed: {total_threads_needed}, Available: {total_threads}")
         for task in tasks_sorted:
-            logger.info(f"  - {task[0]}: {task[9]} threads")
+            logger.info(f"  - {task[0]}: {task[10]} threads")
         
         # Print progress to console
         print(f"\nProcessing {num_tasks} sample(s) with {total_threads} threads...")
@@ -9990,7 +10003,7 @@ Examples
             available_threads = total_threads
             initial_batch_count = 0
             for task in pending_tasks[:]:
-                required_threads = task[9]
+                required_threads = task[10]
                 if required_threads <= available_threads:
                     future = executor.submit(_process_sample_task, task)
                     running_futures[future] = (task, required_threads)
@@ -10012,7 +10025,7 @@ Examples
                     
                     # Try to submit pending tasks that fit
                     for task in pending_tasks[:]:
-                        required_threads = task[9]
+                        required_threads = task[10]
                         if required_threads <= available_threads:
                             future = executor.submit(_process_sample_task, task)
                             running_futures[future] = (task, required_threads)
