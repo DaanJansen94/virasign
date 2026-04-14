@@ -103,7 +103,7 @@ virasign --help
   - `--min_mapped_reads`: Min read number that must map to a reference for it to be reported (default: `100`).
   - `--coverage_depth`: Min average coverage depth across the reference (default: `1.0`).
   - `--coverage_breadth`: Min fraction of the reference covered by ≥1 read (default: `0.1`).
-  - `--NOGR` / `--min-nogr`: Minimum number of **NOGR** (Non-Overlapping Genomic Regions) required to report a reference (default: `0`). See `NOGR.md`.
+  - `--NOGR` / `--min-nogr`: Minimum number of Non-Overlapping Genomic Regions (default: `0`). See `docs/NOGR.md`.
   - `-u, --ultrasensitive`: Lowers all thresholds to maximise detection. Useful when you suspect amplicon contamination or severe viral degeneration (bad sample storage), but not advised as default because it increases false positivity. 
 
 - **Reporting**
