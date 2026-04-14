@@ -4403,6 +4403,88 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam, ref_bai_path)
         samtools_threads = max(1, min(int(threads or 1), 16))
         read_ids_by_reference = {}  # accession -> set(read_id)
+        curated_by_acc = {
+            (d.get("accession") or "").strip(): d
+            for d in (curated_descriptions or [])
+            if isinstance(d, dict) and (d.get("accession") or "").strip()
+        }
+
+        def _non_overlapping_reads_and_bases_from_bam(bam_path: Path) -> tuple:
+            """
+            Streaming-mode NAR computation (same semantics as per-reference output mode).
+
+            Returns (non_overlapping_reads_count, non_overlapping_bases_sum) where bases is the
+            non-overlapping reference span (CIGAR ref-consuming ops M/=/X/D/N).
+            """
+            bam_path = Path(bam_path)
+            if not bam_path.exists():
+                return 0, 0
+
+            cmd = ["samtools", "view", "-F", "0x904", str(bam_path)]
+            proc2 = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+            selected_reads = 0
+            selected_bases = 0
+            best_end = None
+            best_bases = 0
+
+            try:
+                assert proc2.stdout is not None
+                for l in proc2.stdout:
+                    if not l:
+                        continue
+                    parts = l.rstrip("\n").split("\t")
+                    if len(parts) < 6:
+                        continue
+                    try:
+                        pos_1based = int(parts[3])
+                    except Exception:
+                        continue
+                    cigar = parts[5]
+                    if not cigar or cigar == "*":
+                        continue
+
+                    ref_consumed, aligned_m = cigar_aligned_bases(cigar)
+                    if ref_consumed <= 0:
+                        continue
+                    start = pos_1based - 1
+                    end = start + ref_consumed
+
+                    if best_end is None:
+                        best_end = end
+                        best_bases = ref_consumed
+                        continue
+
+                    if start > best_end:
+                        selected_reads += 1
+                        selected_bases += int(best_bases or 0)
+                        best_end = end
+                        best_bases = ref_consumed
+                    else:
+                        if end < best_end:
+                            best_end = end
+                            best_bases = ref_consumed
+            finally:
+                try:
+                    if proc2.stdout:
+                        proc2.stdout.close()
+                except Exception:
+                    pass
+                stderr2 = ""
+                try:
+                    stderr2 = proc2.stderr.read() if proc2.stderr else ""
+                except Exception:
+                    stderr2 = ""
+                rc2 = proc2.wait()
+                if rc2 != 0:
+                    logger.debug(f"samtools view failed for {bam_path}: {(stderr2 or '').strip()}")
+                    return 0, 0
+
+            if best_end is not None:
+                selected_reads += 1
+                selected_bases += int(best_bases or 0)
+
+            return int(selected_reads), int(selected_bases)
 
         def _start_bam_pipe(accession: str):
             acc_dir = sample_dir / accession
@@ -4545,6 +4627,17 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                     subprocess.run(["samtools", "index", str(ref_bam)], check=True, capture_output=True)
                 else:
                     raise
+
+            # Attach NAR metrics to the curated hit rows so final JSON + per-hit JSON include it.
+            try:
+                nar_reads, nar_bases = _non_overlapping_reads_and_bases_from_bam(ref_bam)
+            except Exception as e:
+                logger.debug(f"Could not compute non-overlapping reads for {accession}: {e}")
+                nar_reads, nar_bases = 0, 0
+            d = curated_by_acc.get(accession)
+            if d is not None:
+                d["non_overlapping_reads"] = int(nar_reads)
+                d["non_overlapping_bases"] = int(nar_bases)
 
         # Create per-reference mapped reads FASTQ files directly from the original input FASTQ.
         # This keeps streaming mode fast while still producing the expected *_mapped_reads.fastq(.gz) outputs.
@@ -4843,6 +4936,102 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
                 total += n
         return total, aligned_m
 
+    def _non_overlapping_reads_and_bases_from_bam(bam_path: Path) -> tuple:
+        """
+        Compute non-overlapping read evidence from a per-reference BAM.
+
+        - Interval per read is computed on the reference: [POS-1, POS-1+ref_consumed),
+          where ref_consumed comes from CIGAR ops consuming reference (M/=/X/D/N).
+        - "Non-overlapping reads" is the size of a maximal set of reads whose reference intervals do not overlap.
+          Because the BAM is coordinate-sorted (starts non-decreasing), we can compute an optimal greedy solution
+          in one pass.
+        - "Bases" is the sum of reference bases spanned by the selected reads
+          (CIGAR ops consuming reference: M/=/X/D/N). With non-overlapping intervals this
+          is bounded by the reference length and is easier to interpret as "non-overlapping
+          reference support".
+
+        Returns (non_overlapping_reads_count, non_overlapping_bases_sum).
+        """
+        bam_path = Path(bam_path)
+        if not bam_path.exists():
+            return 0, 0
+
+        # Filter: unmapped + secondary + supplementary (even though per-reference BAM is expected primary-only).
+        # 0x4 + 0x100 + 0x800 = 0x904
+        cmd = ["samtools", "view", "-F", "0x904", str(bam_path)]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        selected_reads = 0
+        selected_bases = 0
+
+        # Streaming greedy (optimal):
+        # - BAM is coordinate-sorted by start.
+        # - Maintain the currently best candidate interval (smallest end) among all intervals
+        #   that overlap each other. Once we see an interval that starts after best_end,
+        #   we can safely commit the candidate and start a new group.
+        best_end = None
+        best_bases = 0
+
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                if not line:
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 6:
+                    continue
+                try:
+                    pos_1based = int(parts[3])
+                except Exception:
+                    continue
+                cigar = parts[5]
+                if not cigar or cigar == "*":
+                    continue
+
+                ref_consumed, aligned_m = _cigar_aligned_bases(cigar)
+                if ref_consumed <= 0:
+                    continue
+                start = pos_1based - 1
+                end = start + ref_consumed
+
+                if best_end is None:
+                    best_end = end
+                    best_bases = ref_consumed
+                    continue
+
+                if start > best_end:
+                    # We moved past the candidate's end: commit it, then start a new group.
+                    selected_reads += 1
+                    selected_bases += int(best_bases or 0)
+                    best_end = end
+                    best_bases = ref_consumed
+                else:
+                    # Still overlapping this group; keep the interval with the smallest end.
+                    if end < best_end:
+                        best_end = end
+                        best_bases = ref_consumed
+        finally:
+            try:
+                if proc.stdout:
+                    proc.stdout.close()
+            except Exception:
+                pass
+            stderr = ""
+            try:
+                stderr = proc.stderr.read() if proc.stderr else ""
+            except Exception:
+                stderr = ""
+            rc = proc.wait()
+            if rc != 0:
+                logger.debug(f"samtools view failed for {bam_path}: {(stderr or '').strip()}")
+                return 0, 0
+
+        if best_end is not None:
+            selected_reads += 1
+            selected_bases += int(best_bases or 0)
+
+        return int(selected_reads), int(selected_bases)
+
     with open(remap_sam, "r") as f:
         for line in f:
             if not line:
@@ -4992,8 +5181,19 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
                 logger.info(f"  Created {ref_bam.name} and {ref_bai.name}")
             else:
                 logger.info(f"  Created {ref_bam.name} and indexed it")
+
+            # Derived evidence stats from the BAM (primary-only, same thresholds as mapped_reads).
+            try:
+                nar_reads, nar_bases = _non_overlapping_reads_and_bases_from_bam(ref_bam)
+            except Exception as e:
+                logger.debug(f"Could not compute non-overlapping reads for {accession}: {e}")
+                nar_reads, nar_bases = 0, 0
+            stat["non_overlapping_reads"] = int(nar_reads)
+            stat["non_overlapping_bases"] = int(nar_bases)
         else:
             logger.warning(f"  No alignments found for {accession} in remapped SAM")
+            stat["non_overlapping_reads"] = int(stat.get("non_overlapping_reads", 0) or 0)
+            stat["non_overlapping_bases"] = int(stat.get("non_overlapping_bases", 0) or 0)
 
         # 4. Extract reads from original FASTQ that mapped ONLY to this reference (original behavior)
         if accession in read_ids_by_reference:
@@ -5057,6 +5257,100 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
     if initial_sam.exists():
         initial_sam.unlink()
         logger.info(f"Removed initial mapping SAM file: {initial_sam.name}")
+
+
+def compute_nogr_from_bam(bam_path: Path) -> tuple:
+    """
+    Compute NOGR metrics from a per-reference BAM.
+
+    Returns:
+    - nogr_regions: maximal number of non-overlapping alignment intervals on the reference
+    - nogr_bases: sum of non-overlapping reference span (CIGAR ref-consuming ops M/=/X/D/N)
+    """
+    bam_path = Path(bam_path)
+    if not bam_path.exists():
+        return 0, 0
+
+    def _cigar_ref_consumed(cigar: str) -> int:
+        num = ""
+        total = 0
+        for ch in cigar:
+            if ch.isdigit():
+                num += ch
+                continue
+            if not num:
+                continue
+            n = int(num)
+            num = ""
+            if ch in ("M", "=", "X", "D", "N"):
+                total += n
+        return total
+
+    # 0x4 + 0x100 + 0x800 = 0x904 : unmapped + secondary + supplementary
+    cmd = ["samtools", "view", "-F", "0x904", str(bam_path)]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    selected_reads = 0
+    selected_bases = 0
+    best_end = None
+    best_bases = 0
+
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if not line:
+                continue
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 6:
+                continue
+            try:
+                pos_1based = int(parts[3])
+            except Exception:
+                continue
+            cigar = parts[5]
+            if not cigar or cigar == "*":
+                continue
+            ref_consumed = _cigar_ref_consumed(cigar)
+            if ref_consumed <= 0:
+                continue
+
+            start = pos_1based - 1
+            end = start + ref_consumed
+            if best_end is None:
+                best_end = end
+                best_bases = ref_consumed
+                continue
+
+            if start > best_end:
+                selected_reads += 1
+                selected_bases += int(best_bases or 0)
+                best_end = end
+                best_bases = ref_consumed
+            else:
+                if end < best_end:
+                    best_end = end
+                    best_bases = ref_consumed
+    finally:
+        try:
+            if proc.stdout:
+                proc.stdout.close()
+        except Exception:
+            pass
+        stderr = ""
+        try:
+            stderr = proc.stderr.read() if proc.stderr else ""
+        except Exception:
+            stderr = ""
+        rc = proc.wait()
+        if rc != 0:
+            logger.debug(f"samtools view failed for {bam_path}: {(stderr or '').strip()}")
+            return 0, 0
+
+    if best_end is not None:
+        selected_reads += 1
+        selected_bases += int(best_bases or 0)
+
+    return int(selected_reads), int(selected_bases)
 
 def find_best_reference_with_index(
     sample_fastq: Path,
@@ -5825,7 +6119,7 @@ def _process_sample_task(task_args):
     All Path objects are converted to strings for pickling.
     """
     (sample_name, sample_file_str, database_fasta_path_str, db_output_dir_str, db_min_identity, 
-     db_name, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, 
+     db_name, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, min_nogr,
      threads, gzip_fastq, minimap2_I, blinded_species, organism_variations,
      nextclade, nextclade_dataset) = task_args
     
@@ -5849,6 +6143,7 @@ def _process_sample_task(task_args):
         min_mapped_reads=min_mapped_reads,
         coverage_depth_threshold=coverage_depth_threshold,
         coverage_breadth_threshold=coverage_breadth_threshold,
+        min_nogr=int(min_nogr or 0),
         threads=threads,
         gzip_fastq=gzip_fastq,
         minimap2_I=minimap2_I,
@@ -5859,7 +6154,7 @@ def _process_sample_task(task_args):
     )
     return sample_name, db_name, confident_names
 
-def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
+def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_identity=80.0, min_mapped_reads=100, coverage_depth_threshold=1.0, coverage_breadth_threshold=0.1, min_nogr: int = 0, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
     """
     Process a single sample: map ALL reads to database and find best reference.
     Simple workflow: no rarefaction, no unmapped extraction, no minority detection.
@@ -5938,7 +6233,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     confident_names = save_results(
         sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, sample_dir,
         database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold,
-        coverage_breadth_threshold, threads, gzip_fastq=gzip_fastq,
+        coverage_breadth_threshold, min_nogr, threads, gzip_fastq=gzip_fastq,
         minimap2_I=minimap2_I,
         blinded_species=blinded_species,
         organism_variations=organism_variations,
@@ -5957,7 +6252,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
     
     return confident_names
 
-def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
+def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, curated_stats, output_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads, coverage_depth_threshold, coverage_breadth_threshold, min_nogr: int = 0, threads=1, gzip_fastq: bool = True, minimap2_I: str = "8G", blinded_species=None, organism_variations=None, nextclade: bool = True, nextclade_dataset: Optional[str] = None):
     """Save mapping statistics and best reference to JSON file and save best reference sequence as FASTA."""
     confident_names = []
     # output_dir is already the sample directory (or database-specific subdirectory if multiple databases)
@@ -6550,6 +6845,33 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 db_remap_sam = db_dir / f"{sample_name}_remapped.sam"
                 if db_selected_refs.exists() and db_remap_sam.exists():
                     create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, threads=threads, gzip_fastq=gzip_fastq, min_identity=min_identity)
+
+                    # Ensure BAM-derived stats (e.g., NAR) are present before re-writing JSON + sidecars.
+                    for d in descs:
+                        if not isinstance(d, dict):
+                            continue
+                        acc = (d.get("accession") or "").strip()
+                        if not acc:
+                            continue
+                        if "non_overlapping_reads" in d and "non_overlapping_bases" in d:
+                            continue
+                        bam_path = db_dir / acc / f"{acc}.bam"
+                        nogr_r, nogr_b = compute_nogr_from_bam(bam_path)
+                        d["nogr_regions"] = int(nogr_r)
+                        d["nogr_bases"] = int(nogr_b)
+                        # Backward-compatible keys (kept for existing parsers/HTML older versions)
+                        d["non_overlapping_reads"] = int(nogr_r)
+                        d["non_overlapping_bases"] = int(nogr_b)
+
+                    # Re-write JSON after per-reference outputs so it includes BAM-derived stats (e.g., NAR).
+                    with open(curated_json_file, 'w') as f:
+                        json.dump(descs, f, indent=2)
+                    logger.info(
+                        f"Updated {db_source} final selected references with per-reference stats to {curated_json_file}"
+                    )
+
+                    # Write per-accession sidecars inside this database folder (so users can inspect immediately).
+                    _write_virasign_hit_json_sidecars(db_dir, sample_name, descs, gzip_fastq)
                     
                     # Clean up: Remove selected_references.fasta and its index (references are in per-reference folders)
                     if db_selected_refs.exists():
@@ -6665,13 +6987,6 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                     d.pop("nextclade_lineage", None)
                     d.pop("nextclade_outbreak", None)
 
-        with open(curated_json_file, 'w') as f:
-            json.dump(curated_descriptions, f, indent=2)
-        logger.info(f"Saved final selected references ({len(curated_descriptions)} entries total) to {curated_json_file}")
-
-        if nextclade:
-            _cleanup_nextclade_intermediates(sample_dir, sample_name)
-
         if selected_refs_fasta.exists() and remap_sam.exists():
             create_per_reference_outputs(sample_name, curated_descriptions, selected_refs_fasta, remap_sam, sample_fastq, sample_dir, threads=threads, gzip_fastq=gzip_fastq, min_identity=min_identity)
 
@@ -6689,6 +7004,46 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             if initial_sam.exists():
                 initial_sam.unlink()
                 logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (remapping files not found)")
+
+        # Ensure BAM-derived stats (e.g., NOGR) are present before writing final JSON + per-hit sidecars.
+        # This works for both streaming and non-streaming per-reference output modes as long as per-virus BAMs exist.
+        for d in curated_descriptions:
+            if not isinstance(d, dict):
+                continue
+            acc = (d.get("accession") or "").strip()
+            if not acc:
+                continue
+            if (
+                ("nogr_regions" in d and "nogr_bases" in d)
+                or ("non_overlapping_reads" in d and "non_overlapping_bases" in d)
+            ):
+                continue
+            bam_path = sample_dir / acc / f"{acc}.bam"
+            nogr_r, nogr_b = compute_nogr_from_bam(bam_path)
+            d["nogr_regions"] = int(nogr_r)
+            d["nogr_bases"] = int(nogr_b)
+            # Backward-compatible keys (kept for existing parsers/HTML older versions)
+            d["non_overlapping_reads"] = int(nogr_r)
+            d["non_overlapping_bases"] = int(nogr_b)
+
+        # Apply optional NOGR threshold (minimum number of non-overlapping genomic regions).
+        if int(min_nogr or 0) > 0:
+            pre = len(curated_descriptions)
+            curated_descriptions = [
+                d for d in curated_descriptions
+                if int((d.get("nogr_regions", d.get("non_overlapping_reads", 0)) or 0)) >= int(min_nogr or 0)
+            ]
+            dropped = pre - len(curated_descriptions)
+            if dropped:
+                logger.info(f"NOGR filter removed {dropped} reference(s) with NOGR < {int(min_nogr or 0)}")
+
+        # Write curated JSON after per-reference outputs so it includes BAM-derived stats (e.g., NOGR).
+        with open(curated_json_file, 'w') as f:
+            json.dump(curated_descriptions, f, indent=2)
+        logger.info(f"Saved final selected references ({len(curated_descriptions)} entries total) to {curated_json_file}")
+
+        if nextclade:
+            _cleanup_nextclade_intermediates(sample_dir, sample_name)
 
         # Per-accession sidecar (taxonomy, stats, Nextclade, artifact names) for downstream pipelines / HTML parity.
         _write_virasign_hit_json_sidecars(sample_dir, sample_name, curated_descriptions, gzip_fastq)
@@ -6742,6 +7097,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             "min_mapped_reads": min_mapped_reads,
             "coverage_depth_threshold": coverage_depth_threshold,
             "coverage_breadth_threshold": coverage_breadth_threshold,
+            "min_nogr": int(min_nogr or 0),
         }
     }
     
@@ -6932,6 +7288,7 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                     "min_mapped_reads": min_mapped_reads,
                     "coverage_depth_threshold": coverage_depth_threshold,
                     "coverage_breadth_threshold": coverage_breadth_threshold,
+                    "min_nogr": int(min_nogr or 0),
                 }
             }
             
@@ -7551,12 +7908,16 @@ def generate_html_visualization(output_dir: Path):
             background: #f8f9fa;
             padding: 10px;
             display: grid;
-            grid-template-columns: 1.2fr 1.5fr 1.5fr 0.8fr 1fr 1fr 1fr 1fr auto;
+            /* Keep filters aligned with table columns and avoid wrapping into a second line. */
+            grid-template-columns: repeat(10, minmax(160px, 1fr));
             gap: 10px;
             border-bottom: 1px solid #dee2e6;
             align-items: center;
+            overflow-x: auto;
         }}
         .filter-row input[type="text"] {{
+            width: 100%;
+            min-width: 0;
             padding: 5px;
             border: 1px solid #ddd;
             border-radius: 4px;
@@ -7810,10 +8171,11 @@ def generate_html_visualization(output_dir: Path):
                         <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Clade" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Minimum Reads" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Minimum Reads (#)" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Depth" onkeyup="applyAllFilters('{sample_name}')">
                         <input type="text" placeholder="Minimum Breadth" onkeyup="applyAllFilters('{sample_name}')">
+                        <input type="text" placeholder="Minimum NOGR (#)" onkeyup="applyAllFilters('{sample_name}')">
                         <div class="checkbox-container">
                             <input type="checkbox" id="excludeUnknown-{sample_name}" onchange="applyAllFilters('{sample_name}')">
                             <label for="excludeUnknown-{sample_name}">Exclude Unknown</label>
@@ -7827,10 +8189,11 @@ def generate_html_visualization(output_dir: Path):
                                 <th>Viral Species</th>
                                 <th>Nextclade Clade</th>
                                 <th>Segment</th>
-                                <th class="stats sortable" data-sort="mapped_reads">Mapped Reads</th>
+                                <th class="stats sortable" data-sort="mapped_reads">Mapped Reads (#)</th>
                                 <th class="stats sortable" data-sort="identity">Identity (%)</th>
-                                <th class="stats sortable" data-sort="depth">Coverage Depth</th>
-                                <th class="stats sortable" data-sort="breadth">Coverage Breadth</th>
+                                <th class="stats sortable" data-sort="depth">Coverage Depth (x)</th>
+                                <th class="stats sortable" data-sort="breadth">Coverage Breadth (%)</th>
+                                <th class="stats sortable" data-sort="nogr_regions">NOGR (#/bases)</th>
                             </tr>
                         </thead>
                         <tbody id="tbody-{sample_name}">
@@ -7985,6 +8348,9 @@ def generate_html_visualization(output_dir: Path):
                 const segmentDisp = cellDashHtml(ref.segment);
                 const segmentAttr = attrOrEmpty(ref.segment);
                 const reads = ref.mapped_reads || 0;
+                const nogrRegions = ref.nogr_regions || ref.non_overlapping_reads || 0;
+                const nogrBases = ref.nogr_bases || ref.non_overlapping_bases || 0;
+                const nogrDisp = `${{nogrRegions.toLocaleString()}}|${{nogrBases.toLocaleString()}}`;
                 const identity = ref.avg_identity || 0;
                 const depth = ref.coverage_depth || 0;
                 const breadth = ref.coverage_breadth || 0;
@@ -7993,7 +8359,8 @@ def generate_html_visualization(output_dir: Path):
                     <tr data-accession="${{accession}}" data-organism="${{organism}}" data-species="${{species}}" 
                         data-clade="${{cladeAttr}}"
                         data-segment="${{segmentAttr}}"
-                        data-reads="${{reads}}" data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}">
+                        data-reads="${{reads}}" data-nogr-regions="${{nogrRegions}}" data-nogr-bases="${{nogrBases}}"
+                        data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}">
                         <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank">${{accession}}</a></td>
                         <td>${{organism}}</td>
                         <td>${{species}}</td>
@@ -8003,6 +8370,7 @@ def generate_html_visualization(output_dir: Path):
                         <td class="stats">${{identity.toFixed(2)}}%</td>
                         <td class="stats">${{depth.toFixed(2)}}x</td>
                         <td class="stats">${{(breadth * 100).toFixed(1)}}%</td>
+                        <td class="stats">${{nogrDisp}}</td>
                     </tr>
                 `;
             }});
@@ -8039,8 +8407,9 @@ def generate_html_visualization(output_dir: Path):
                     const filterLower = filterValue.toLowerCase();
                     const filterTrimmed = filterValue;
                     
-                    // Columns 5-8 are numeric (reads, identity, depth, breadth).
-                    const isNumericColumn = colIndex >= 5 && colIndex <= 8;
+                    // Columns 5-9 are numeric-ish (reads, identity, depth, breadth, NOGR).
+                    // NOGR is shown as "regions|bases"; for numeric filtering we treat it as NOGR regions.
+                    const isNumericColumn = colIndex >= 5 && colIndex <= 9;
                     
                     if (isNumericColumn) {{
                         if (filterTrimmed !== '') {{
@@ -8071,6 +8440,9 @@ def generate_html_visualization(output_dir: Path):
                                 }} else if (colIndex === 8) {{
                                     // Breadth
                                     cellValue = parseFloat(row.getAttribute('data-breadth') || 0) * 100;
+                                }} else if (colIndex === 9) {{
+                                    // NOGR regions
+                                    cellValue = parseFloat(row.getAttribute('data-nogr-regions') || 0);
                                 }}
                                 if (cellValue === null || isNaN(cellValue) || cellValue < minValue) {{
                                     shouldShow = false;
@@ -8185,6 +8557,9 @@ def generate_html_visualization(output_dir: Path):
                 if (sortType === 'mapped_reads') {{
                     aVal = parseFloat(a.getAttribute('data-reads') || 0);
                     bVal = parseFloat(b.getAttribute('data-reads') || 0);
+                }} else if (sortType === 'nogr_regions') {{
+                    aVal = parseFloat(a.getAttribute('data-nogr-regions') || 0);
+                    bVal = parseFloat(b.getAttribute('data-nogr-regions') || 0);
                 }} else if (sortType === 'identity') {{
                     aVal = parseFloat(a.getAttribute('data-identity') || 0);
                     bVal = parseFloat(b.getAttribute('data-identity') || 0);
@@ -8412,7 +8787,7 @@ def generate_html_visualization(output_dir: Path):
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
-            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads,Identity (%),Coverage Depth,Coverage Breadth (%)\\n';
+            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads (#),Identity (%),Coverage Depth (x),Coverage Breadth (%),NOGR (#/bases)\\n';
             const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
             
             rows.forEach(row => {{
@@ -8513,6 +8888,7 @@ def generate_html_visualization(output_dir: Path):
                 minIdentity: null,
                 minDepth: null,
                 minBreadth: null,
+                minNogr: null,
                 filterAccession: '',
                 filterOrganism: '',
                 filterSpecies: '',
@@ -8524,7 +8900,7 @@ def generate_html_visualization(output_dir: Path):
             const filterRow = document.getElementById(`filters-${{sampleName}}`);
             if (filterRow) {{
                 const inputs = filterRow.querySelectorAll('input[type="text"]');
-                if (inputs.length >= 9) {{
+                if (inputs.length >= 10) {{
                     filters.filterAccession = inputs[0].value.trim().toLowerCase();
                     filters.filterOrganism = inputs[1].value.trim().toLowerCase();
                     filters.filterSpecies = inputs[2].value.trim().toLowerCase();
@@ -8534,6 +8910,7 @@ def generate_html_visualization(output_dir: Path):
                     filters.minIdentity = inputs[6].value.trim() ? parseFloat(inputs[6].value.trim()) : null;
                     filters.minDepth = inputs[7].value.trim() ? parseFloat(inputs[7].value.trim()) : null;
                     filters.minBreadth = inputs[8].value.trim() ? parseFloat(inputs[8].value.trim()) : null;
+                    filters.minNogr = inputs[9].value.trim() ? parseFloat(inputs[9].value.trim()) : null;
                 }}
                 const excludeUnknownCheckbox = document.getElementById(`excludeUnknown-${{sampleName}}`);
                 if (excludeUnknownCheckbox) {{
@@ -8592,6 +8969,13 @@ def generate_html_visualization(output_dir: Path):
             if (filters.minReads !== null && !isNaN(filters.minReads)) {{
                 const reads = ref.mapped_reads || 0;
                 if (reads < filters.minReads) {{
+                    return false;
+                }}
+            }}
+            
+            if (filters.minNogr !== null && !isNaN(filters.minNogr)) {{
+                const nogr = ref.nogr_regions || ref.non_overlapping_reads || 0;
+                if (nogr < filters.minNogr) {{
                     return false;
                 }}
             }}
@@ -8677,13 +9061,13 @@ def generate_html_visualization(output_dir: Path):
         }}
         
         function downloadAllSamplesCSV() {{
-            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads','Avg Identity (%)','Coverage Depth','Coverage Breadth (%)']];
+            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads (#)','Avg Identity (%)','Coverage Depth (x)','Coverage Breadth (%)','NOGR (#/bases)']];
             allSamples.forEach(sname => {{
                 const sdata = samplesData[sname];
-                if (!sdata) {{ rows.push([sname,'','','','','','','','','']); return; }}
+                if (!sdata) {{ rows.push([sname,'','','','','','','','','','']); return; }}
                 let refs = [];
                 Object.keys(sdata).forEach(db => {{ if (sdata[db].references) refs = refs.concat(sdata[db].references); }});
-                if (refs.length === 0) {{ rows.push([sname,'','','','','','','','','']); return; }}
+                if (refs.length === 0) {{ rows.push([sname,'','','','','','','','','','']); return; }}
                 refs.sort((a,b) => (b.coverage_breadth||0)-(a.coverage_breadth||0));
                 refs.forEach(r => {{
                     rows.push([
@@ -8694,6 +9078,7 @@ def generate_html_visualization(output_dir: Path):
                         r.nextclade_clade||'',
                         r.segment||'',
                         r.mapped_reads||0,
+                        `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{(r.nogr_bases||r.non_overlapping_bases||0)}}`,
                         (r.avg_identity||0).toFixed(2),
                         (r.coverage_depth||0).toFixed(2),
                         ((r.coverage_breadth||0)*100).toFixed(1)
@@ -8760,17 +9145,19 @@ def generate_html_visualization(output_dir: Path):
             writer = csv_module.writer(cf)
             writer.writerow([
                 "Sample", "Accession", "Organism", "Viral Species",
-                "Nextclade Clade", "Segment", "Mapped Reads",
-                "Avg Identity (%)", "Coverage Depth", "Coverage Breadth (%)",
+                "Nextclade Clade", "Segment",
+                "Mapped Reads (#)", "Avg Identity (%)", "Coverage Depth (x)", "Coverage Breadth (%)",
+                "NOGR (#/bases)",
             ])
             for sname in sorted(db_samples_list):
                 refs = []
                 if sname in db_samples_data and database_name in db_samples_data[sname]:
                     refs = db_samples_data[sname][database_name]
                 if not refs:
-                    writer.writerow([sname] + [""] * 9)
+                    writer.writerow([sname] + [""] * 10)
                     continue
                 for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
+                    nogr = f"{int(ref.get('nogr_regions', ref.get('non_overlapping_reads', 0)) or 0)}|{int(ref.get('nogr_bases', ref.get('non_overlapping_bases', 0)) or 0)}"
                     writer.writerow([
                         sname,
                         ref.get("accession", ""),
@@ -8782,6 +9169,7 @@ def generate_html_visualization(output_dir: Path):
                         f"{ref.get('avg_identity', 0):.2f}",
                         f"{ref.get('coverage_depth', 0):.2f}",
                         f"{ref.get('coverage_breadth', 0) * 100:.1f}",
+                        nogr,
                     ])
         logger.info(f"Generated CSV summary for {database_name}: {csv_file}")
 
@@ -9065,6 +9453,16 @@ Examples
         dest="coverage_breadth_threshold",
         metavar="",
         help=argparse.SUPPRESS,
+    )
+
+    thresholds.add_argument(
+        "--NOGR",
+        "--min-nogr",
+        dest="min_nogr",
+        type=int,
+        default=0,
+        metavar="",
+        help="Minimum NOGR (Non-Overlapping Genomic Regions) required to report a reference (default: 0).",
     )
 
     # Reporting
@@ -9471,6 +9869,7 @@ Examples
                 args.min_mapped_reads,
                 args.coverage_depth_threshold,
                 args.coverage_breadth_threshold,
+                int(getattr(args, "min_nogr", 0) or 0),
                 args.threads,  # Will be adjusted based on read count
                 args.gzip_fastq,
                 args.minimap2_I,
