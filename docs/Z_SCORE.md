@@ -2,10 +2,6 @@
 
 Virasign can compute a **background-corrected Z-score** per reported virus using **water controls** (e.g. negative controls). This mirrors a common idea in metagenomic reporting: quantify whether a signal is unusually high compared to background contamination.
 
-This concept is used in CZ ID / IDseq as part of their “background model” reporting. See:
-- IDseq paper (GigaScience, 2020): `https://ncbi.nlm.nih.gov/pmc/articles/PMC7566497/` (background models and z-scores described at a high level)
-- CZ ID workflows wiki: `https://github.com/chanzuckerberg/czid-workflows/wiki`
-
 ---
 
 ## Why use a Z-score?
@@ -43,36 +39,12 @@ Virasign computes the Z-score using the per-hit **remapped** `mapped_reads` (the
 
 ## Formula
 
-For a given virus label `v`, and a set of water controls `W`:
+Virasign computes, for each virus, a Z-score as the number of standard deviations that the sample’s log-transformed `mapped_reads` signal is above/below the mean of the selected water controls.
 
-- Compute the transformed values in each water control:
+This follows the same background-correction idea used by CZ ID / IDseq background models. For more information, see:
 
-```text
-y[w,v] = log10(x[w,v] + 1)
-```
-
-where `x[w,v]` is `mapped_reads` for virus `v` in water sample `w`. If a virus is absent from a water sample, `x[w,v] = 0`.
-
-- Compute background mean and standard deviation:
-
-```text
-mu[v]    = mean( y[w,v] for w in W )
-sigma[v] = stdev( y[w,v] for w in W )   # sample stdev (ddof=1)
-```
-
-For a non-water sample `s`:
-
-```text
-z[s,v] = ( y[s,v] - mu[v] ) / sigma[v]
-```
-
-### Zero-variance case (`sigma[v] = 0`)
-
-If all controls have exactly the same value for a virus, the classical Z-score is undefined. Virasign keeps the output numeric and directional by using a tiny `epsilon` in the denominator and capping extremes:
-
-- equal to controls → `z = 0`
-- higher than controls → large positive Z
-- lower than controls → large negative Z
+- IDseq paper (GigaScience, 2020): `https://ncbi.nlm.nih.gov/pmc/articles/PMC7566497/`
+- CZ ID workflows wiki: `https://github.com/chanzuckerberg/czid-workflows/wiki`
 
 ---
 
