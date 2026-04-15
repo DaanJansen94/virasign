@@ -52,16 +52,17 @@ This follows the same background-correction idea used by CZ ID / IDseq backgroun
 
 Z-scores are “standard deviation units” above/below background. Practical interpretation depends on context and other evidence (coverage breadth/depth, identity, NOGR, etc.), but the table below is a useful starting point.
 
-| Z-score | SD interpreation| Practical interpretation (rule of thumb) |
+| Z-score | SD interpretation | Practical interpretation |
 |---:|---|---|
-| -3 | 3 SD below background mean | Likely not a real hit; signal is lower than background. |
-| -1 | 1 SD below background mean | Background-like; unlikely meaningful on its own. |
-| 0 | At the background mean | Consistent with water background. |
-| 1 | 1 SD above background mean | Mildly above background; often still compatible with background. |
-| 2 | 2 SD above background mean | Clearly above background; worth attention, especially if other metrics support it. |
-| 3 | 3 SD above background mean | Strongly above background; more consistent with a true signal than background alone. |
-| 10 | 10 SD above background mean | Very strong outlier vs controls; typically a compelling signal if alignment metrics are good. |
-| 50–100 | Extremely above background | Can happen when controls have very low variance; interpret together with other evidence and the number/quality of controls. |
+| -3 | 3 SD below mean | Below background |
+| -1 | 1 SD below mean | Background-like |
+| 0 | At mean | Background-like |
+| 1 | 1 SD above mean | Slightly above background |
+| 2 | 2 SD above mean | Above background |
+| 3 | 3 SD above mean | Strongly above background |
+| 10 | 10 SD above mean | Strongly above background |
+| 50 | Extreme outlier | Strongly above background |
+| 100 | Extreme outlier | typically only in non-water samples
 
 ---
 
