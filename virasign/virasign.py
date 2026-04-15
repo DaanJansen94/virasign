@@ -8562,7 +8562,7 @@ def generate_html_visualization(
                         <td class="stats">${{depth.toFixed(2)}}x</td>
                         <td class="stats">${{(breadth * 100).toFixed(1)}}%</td>
                         <td class="stats">${{nogrDisp}}</td>
-                        <td class="stats">${{zscore === null ? '-' : Number(zscore).toFixed(2)}}</td>
+                        <td class="stats">${{zscore === null ? '—' : Number(zscore).toFixed(2)}}</td>
                     </tr>
                 `;
             }});
