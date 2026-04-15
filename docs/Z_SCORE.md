@@ -1,6 +1,6 @@
 # Z-score background correction
 
-Virasign can compute a **background-corrected Z-score** per reported virus using **water controls** (e.g. negative controls). This mirrors a common idea in metagenomic reporting: quantify whether a signal is unusually high compared to background contamination.
+Virasign can compute a background-corrected Z-score per reported virus using water controls (e.g. negative controls). This mirrors a common idea in metagenomic reporting: quantify whether a signal is unusually high compared to background contamination.
 
 ---
 
@@ -11,7 +11,7 @@ Some taxa show up at low levels in many runs due to:
 - index hopping / low-level carryover
 - laboratory environment background
 
-By comparing each virus to your **water controls in the same run**, the Z-score answers:
+By comparing each virus to your water controls in the same run, the Z-score answers:
 
 > “Is this virus higher than what we typically see in water controls?”
 
@@ -19,21 +19,21 @@ By comparing each virus to your **water controls in the same run**, the Z-score 
 
 ## When Virasign computes it
 
-- Z-scores are computed only when **≥2 water controls** are available.
+- Z-scores are computed only when ≥2 water controls are available.
 - Water controls are auto-detected when the sample name contains `water`, `h2o`, or `h20` (case-insensitive).
-- You can override auto-detection with **exact input FASTQ paths**:
+- You can override auto-detection with exact input FASTQ paths:
 
 ```bash
 virasign -i input_dir --zscore-controls /path/to/water1.fastq.gz,/path/to/water2.fastq.gz
 ```
 
-When `--zscore-controls` is provided, Virasign **does not** use auto-detection (so you can exclude some “H2O_*” samples intentionally).
+When `--zscore-controls` is provided, Virasign does not use auto-detection (so you can exclude some “H2O_*” samples intentionally).
 
 ---
 
 ## What signal is used
 
-Virasign computes the Z-score using the per-hit **remapped** `mapped_reads` (the same value reported in the final per-sample JSON).
+Virasign computes the Z-score using the per-hit remapped `mapped_reads` (the same value reported in the final per-sample JSON).
 
 ---
 
@@ -66,5 +66,5 @@ Z-scores are “standard deviation units” above/below background:
 - Per-hit fields in `*_final_selected_references.json`:
   - `zscore`: the computed value
   - `zscore_controls`: list of water samples used for the background model
-- `results_summary_*.html` and `results_summary_*.csv` include a **Z-score column**.
+- `results_summary_*.html` and `results_summary_*.csv` include a Z-score column.
 
