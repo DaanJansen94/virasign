@@ -120,7 +120,7 @@ virasign --help
   - `--blinding`: List available blinding abbreviations and exit.
 
 - **Z-score (optional)**: Background-correct hits using water controls. See [`docs/Z_SCORE.md`](docs/Z_SCORE.md).
-  - `--zscore`: Enable/disable Z-score computation (default: `true`, auto-detect water controls by sample name).
+  - `--zscore`: Enable/disable Z-score computation (default: `true`, auto-detect water controls by name).
   - `--zscore-controls`: Override auto-detection with exact input paths (example: `--zscore-controls /path/water1.fastq.gz,/path/water2.fastq.gz` or `--zscore-controls water_controls.txt` with one path per line).
 
 - **RVDB clustering (optional)**: Cluster RVDB to reduce database size and speed up runtime.
