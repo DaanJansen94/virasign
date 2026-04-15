@@ -261,18 +261,33 @@ def should_blind_stat(stat: dict, blinded_species: list, organism_map: dict = No
 def extract_accession_from_header(header: str) -> str:
     """
     Extract accession number from FASTA header.
-    Accession is the part between the 2nd and 3rd pipe (|).
-    Example: 'acc|REFSEQ|NC_001474.2|Dengue virus 2, complete genome' -> 'NC_001474.2'
-    If header doesn't have the expected format, returns the first whitespace-delimited token.
+    Supports multiple common header styles, e.g.:
+    - 'acc|REFSEQ|NC_001474.2|Dengue virus 2, complete genome' -> 'NC_001474.2'
+    - 'acc|GENBANK|OM326720.1|...' -> 'OM326720.1'
+    - 'gb|OM326720.1|...' -> 'OM326720.1'
+    If the header doesn't match a known pipe-delimited style, returns the first whitespace-delimited token.
     """
     if not header:
         return ""
     parts = header.split("|")
-    if len(parts) >= 3:
-        # Accession is between 2nd and 3rd pipe
-        return parts[2].strip()
-    # Fallback: return first token if no pipes
-    return header.split()[0] if header.split() else ""
+    if len(parts) >= 2:
+        tag0 = parts[0].strip().lower()
+        # NCBI/INSDC style: gb|ACCESSION|..., ref|ACCESSION|..., etc.
+        if tag0 in {"gb", "ref", "emb", "dbj", "tpg", "tpd", "tpe"}:
+            return parts[1].strip()
+        # SwissProt/TrEMBL style (rare here, but safe): sp|ACCESSION|..., tr|ACCESSION|...
+        if tag0 in {"sp", "tr"}:
+            return parts[1].strip()
+        # ViraSign-style: acc|REFSEQ|ACCESSION|..., acc|GENBANK|ACCESSION|..., acc|RVDB|ACCESSION|...
+        if tag0 == "acc" and len(parts) >= 3:
+            return parts[2].strip()
+        # Some databases omit 'acc|' but still use a source token in the second slot.
+        if len(parts) >= 3 and parts[1].strip().upper() in {"REFSEQ", "GENBANK", "RVDB"}:
+            return parts[2].strip()
+
+    # Fallback: return first token if no usable pipes
+    toks = header.split()
+    return toks[0] if toks else ""
 
 def normalize_species_name(species: str) -> str:
     """
@@ -9091,10 +9106,10 @@ def generate_html_visualization(output_dir: Path):
                         r.nextclade_clade||'',
                         r.segment||'',
                         r.mapped_reads||0,
-                        `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{(r.nogr_bases||r.non_overlapping_bases||0)}}`,
                         (r.avg_identity||0).toFixed(2),
                         (r.coverage_depth||0).toFixed(2),
-                        ((r.coverage_breadth||0)*100).toFixed(1)
+                        ((r.coverage_breadth||0)*100).toFixed(1),
+                        `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{(r.nogr_bases||r.non_overlapping_bases||0)}}`
                     ]);
                 }});
             }});
