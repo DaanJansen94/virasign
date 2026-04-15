@@ -39,45 +39,40 @@ When `--zscore-controls` is provided, Virasign **does not** use auto-detection (
 
 Virasign computes the Z-score using the per-hit **remapped** `mapped_reads` (the same value reported in the final per-sample JSON).
 
-To make the statistic stable for sparse count data, Virasign uses:
-
-```text
-y = log10(mapped_reads + 1)
-```
-
 ---
 
 ## Formula
 
-For a given virus (practical label) \(v\), and a set of water controls \(W\):
+For a given virus label `v`, and a set of water controls `W`:
 
 - Compute the transformed values in each water control:
-  \[
-  y_{w,v} = \log_{10}(x_{w,v} + 1)
-  \]
-  where \(x_{w,v}\) is `mapped_reads` for virus \(v\) in water sample \(w\). If a virus is absent from a water sample, \(x_{w,v}=0\).
+
+```text
+y[w,v] = log10(x[w,v] + 1)
+```
+
+where `x[w,v]` is `mapped_reads` for virus `v` in water sample `w`. If a virus is absent from a water sample, `x[w,v] = 0`.
 
 - Compute background mean and standard deviation:
-  \[
-  \mu_v = \text{mean}(\{y_{w,v}\})
-  \]
-  \[
-  \sigma_v = \text{stdev}(\{y_{w,v}\}) \quad (\text{sample stdev, ddof}=1)
-  \]
 
-For a non-water sample \(s\):
+```text
+mu[v]    = mean( y[w,v] for w in W )
+sigma[v] = stdev( y[w,v] for w in W )   # sample stdev (ddof=1)
+```
 
-\[
-z_{s,v} = \frac{y_{s,v} - \mu_v}{\sigma_v}
-\]
+For a non-water sample `s`:
 
-### Zero-variance case (\(\sigma_v = 0\))
+```text
+z[s,v] = ( y[s,v] - mu[v] ) / sigma[v]
+```
 
-If all controls have exactly the same value for a virus, the classical Z-score is undefined. Virasign keeps the output numeric and directional by using a tiny \(\epsilon\) in the denominator and capping extremes:
+### Zero-variance case (`sigma[v] = 0`)
 
-- equal to controls \(\Rightarrow z=0\)
-- higher than controls \(\Rightarrow\) large positive Z
-- lower than controls \(\Rightarrow\) large negative Z
+If all controls have exactly the same value for a virus, the classical Z-score is undefined. Virasign keeps the output numeric and directional by using a tiny `epsilon` in the denominator and capping extremes:
+
+- equal to controls → `z = 0`
+- higher than controls → large positive Z
+- lower than controls → large negative Z
 
 ---
 
