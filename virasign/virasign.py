@@ -4643,7 +4643,7 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                 else:
                     raise
 
-            # Attach NAR metrics to the curated hit rows so final JSON + per-hit JSON include it.
+            # Attach NOGR metrics to the curated hit rows so final JSON + per-hit JSON include it.
             try:
                 nar_reads, nar_bases = _non_overlapping_reads_and_bases_from_bam(ref_bam)
             except Exception as e:
@@ -4651,8 +4651,10 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                 nar_reads, nar_bases = 0, 0
             d = curated_by_acc.get(accession)
             if d is not None:
-                d["non_overlapping_reads"] = int(nar_reads)
-                d["non_overlapping_bases"] = int(nar_bases)
+                # Output keys are NOGR (see docs/NOGR.md). We keep the "non_overlapping_*" naming only
+                # as an internal computation detail, not as a public JSON field.
+                d["nogr_regions"] = int(nar_reads)
+                d["nogr_bases"] = int(nar_bases)
 
         # Create per-reference mapped reads FASTQ files directly from the original input FASTQ.
         # This keeps streaming mode fast while still producing the expected *_mapped_reads.fastq(.gz) outputs.
@@ -5203,12 +5205,12 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             except Exception as e:
                 logger.debug(f"Could not compute non-overlapping reads for {accession}: {e}")
                 nar_reads, nar_bases = 0, 0
-            stat["non_overlapping_reads"] = int(nar_reads)
-            stat["non_overlapping_bases"] = int(nar_bases)
+            stat["nogr_regions"] = int(nar_reads)
+            stat["nogr_bases"] = int(nar_bases)
         else:
             logger.warning(f"  No alignments found for {accession} in remapped SAM")
-            stat["non_overlapping_reads"] = int(stat.get("non_overlapping_reads", 0) or 0)
-            stat["non_overlapping_bases"] = int(stat.get("non_overlapping_bases", 0) or 0)
+            stat["nogr_regions"] = int(stat.get("nogr_regions", 0) or 0)
+            stat["nogr_bases"] = int(stat.get("nogr_bases", 0) or 0)
 
         # 4. Extract reads from original FASTQ that mapped ONLY to this reference (original behavior)
         if accession in read_ids_by_reference:
@@ -6861,22 +6863,19 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 if db_selected_refs.exists() and db_remap_sam.exists():
                     create_per_reference_outputs(sample_name, descs, db_selected_refs, db_remap_sam, sample_fastq, db_dir, threads=threads, gzip_fastq=gzip_fastq, min_identity=min_identity)
 
-                    # Ensure BAM-derived stats (e.g., NAR) are present before re-writing JSON + sidecars.
+                    # Ensure BAM-derived stats (e.g., NOGR) are present before re-writing JSON + sidecars.
                     for d in descs:
                         if not isinstance(d, dict):
                             continue
                         acc = (d.get("accession") or "").strip()
                         if not acc:
                             continue
-                        if "non_overlapping_reads" in d and "non_overlapping_bases" in d:
+                        if "nogr_regions" in d and "nogr_bases" in d:
                             continue
                         bam_path = db_dir / acc / f"{acc}.bam"
                         nogr_r, nogr_b = compute_nogr_from_bam(bam_path)
                         d["nogr_regions"] = int(nogr_r)
                         d["nogr_bases"] = int(nogr_b)
-                        # Backward-compatible keys (kept for existing parsers/HTML older versions)
-                        d["non_overlapping_reads"] = int(nogr_r)
-                        d["non_overlapping_bases"] = int(nogr_b)
 
                     # Re-write JSON after per-reference outputs so it includes BAM-derived stats (e.g., NAR).
                     with open(curated_json_file, 'w') as f:
@@ -7030,23 +7029,19 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 continue
             if (
                 ("nogr_regions" in d and "nogr_bases" in d)
-                or ("non_overlapping_reads" in d and "non_overlapping_bases" in d)
             ):
                 continue
             bam_path = sample_dir / acc / f"{acc}.bam"
             nogr_r, nogr_b = compute_nogr_from_bam(bam_path)
             d["nogr_regions"] = int(nogr_r)
             d["nogr_bases"] = int(nogr_b)
-            # Backward-compatible keys (kept for existing parsers/HTML older versions)
-            d["non_overlapping_reads"] = int(nogr_r)
-            d["non_overlapping_bases"] = int(nogr_b)
 
         # Apply optional NOGR threshold (minimum number of non-overlapping genomic regions).
         if int(min_nogr or 0) > 0:
             pre = len(curated_descriptions)
             curated_descriptions = [
                 d for d in curated_descriptions
-                if int((d.get("nogr_regions", d.get("non_overlapping_reads", 0)) or 0)) >= int(min_nogr or 0)
+                if int((d.get("nogr_regions", 0) or 0)) >= int(min_nogr or 0)
             ]
             dropped = pre - len(curated_descriptions)
             if dropped:
