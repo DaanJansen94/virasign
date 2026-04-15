@@ -12,7 +12,7 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 - **NOGR**: NOGR (Non-Overlapping Genomic Regions) hels interpret low-breadth hits and spot false positives such as amplicon contamination (reads accumulating in one region results in a low NOGR). See [`docs/NOGR.md`](docs/NOGR.md).
 - **Z-score**: A background correction using water controls that helps distinguish true hits from background signal (contaminants). See [`docs/Z_SCORE.md`](docs/Z_SCORE.md).
 - **Visualization**: Interactive HTML reports with filterable tables, charts, and heatmaps give an immediate, interpretable overview of viral species, coverage, and identity without extra scripting.
-- **Blinding options**: You can blind specific viral species from all outputs (e.g. HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) so incidental findings do not appear in any files. Useful for consent guidelines and ethical research practice.
+- **Blinding options**: Blind specific viral species from all outputs (e.g. HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) so incidental findings do not appear in any files. Useful for consent guidelines and ethical research practice.
 
 ---
 
