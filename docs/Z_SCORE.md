@@ -50,14 +50,18 @@ This follows the same background-correction idea used by CZ ID / IDseq backgroun
 
 ## How to interpret Z-scores
 
-Z-scores are “standard deviation units” above/below background:
+Z-scores are “standard deviation units” above/below background. Practical interpretation depends on context and other evidence (coverage breadth/depth, identity, NOGR, etc.), but the table below is a useful starting point.
 
-- **Z ≈ 0**: similar to water background
-- **Z < 0**: lower than the water background mean
-- **Z > 0**: above water background
-- **Z ≥ 2**: ≥2 standard deviations above the control mean.
-- **Z ≥ 3**: ≥3 standard deviations above the control mean.
-- Very large Z (e.g. **50–100**) can happen when controls are very consistent (low variance) and the sample is higher than background.
+| Example Z-score | SD interpretation (vs water controls) | Practical / biological interpretation (rule of thumb) |
+|---:|---|---|
+| -3 | 3 SD below background mean | Likely not a real hit; signal is lower than background. |
+| -1 | 1 SD below background mean | Background-like; unlikely meaningful on its own. |
+| 0 | At the background mean | Consistent with water background. |
+| 1 | 1 SD above background mean | Mildly above background; often still compatible with background. |
+| 2 | 2 SD above background mean | Clearly above background; worth attention, especially if other metrics support it. |
+| 3 | 3 SD above background mean | Strongly above background; more consistent with a true signal than background alone. |
+| 10 | 10 SD above background mean | Very strong outlier vs controls; typically a compelling signal if alignment metrics are good. |
+| 50–100 | Extremely above background | Can happen when controls have very low variance; interpret together with other evidence and the number/quality of controls. |
 
 ---
 
