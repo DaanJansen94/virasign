@@ -52,7 +52,7 @@ This follows the same background-correction idea used by CZ ID / IDseq backgroun
 
 Z-scores are “standard deviation units” above/below background. Practical interpretation depends on context and other evidence (coverage breadth/depth, identity, NOGR, etc.), but the table below is a useful starting point.
 
-| Example Z-score | SD interpretation (vs water controls) | Practical / biological interpretation (rule of thumb) |
+| Z-score | SD interpreation| Practical interpretation (rule of thumb) |
 |---:|---|---|
 | -3 | 3 SD below background mean | Likely not a real hit; signal is lower than background. |
 | -1 | 1 SD below background mean | Background-like; unlikely meaningful on its own. |
