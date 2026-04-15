@@ -6514,74 +6514,23 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             logger.warning("Could not extract final selected references. Skipping re-mapping.")
     else:
         logger.warning("No curated references meeting thresholds after deduplication. Skipping re-mapping.")
-        # Fallback: still generate per-reference outputs for the best reference (if available).
-        # This is especially useful for custom databases where coverage thresholds may be too strict
-        # but users still want BAM/FASTQ/FASTA for the best hit.
-        try:
-            if best_ref and isinstance(best_ref, dict) and best_ref.get("accession") and best_ref.get("description"):
-                fallback_accession = best_ref["accession"]
-                fallback_desc = best_ref["description"]
-                logger.info(f"Fallback output: remapping to best reference only: {fallback_accession}")
-
-                selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
-                # Extract best reference sequence from the original database FASTA.
-                best_ref_fasta = sample_dir / f"{fallback_accession}.fasta"
-                if not extract_fasta_record_by_accession(database_fasta_path, fallback_accession, best_ref_fasta):
-                    # Last resort: try matching exact header if accession parsing fails
-                    extract_fasta_record(database_fasta_path, fallback_desc, best_ref_fasta)
-                if best_ref_fasta.exists() and best_ref_fasta.stat().st_size > 0:
-                    merge_fasta_files([best_ref_fasta], selected_refs_fasta)
-                    try:
-                        best_ref_fasta.unlink()
-                    except Exception:
-                        pass
-
-                    # Build minimap2 index for the small selected reference set and remap reads.
-                    ensure_minimap2_index(selected_refs_fasta)
-                    remap_sam = sample_dir / f"{sample_name}_remapped.sam"
-                    cmd = [
-                        "minimap2",
-                        "-a",
-                        "-t",
-                        str(max(1, int(threads or 1))),
-                        "-I",
-                        str(minimap2_I),
-                        str(selected_refs_fasta),
-                        str(sample_fastq),
-                    ]
-                    with open(remap_sam, "w") as out_sam:
-                        subprocess.run(cmd, check=True, stdout=out_sam, stderr=subprocess.PIPE, text=True)
-
-                    create_per_reference_outputs(
-                        sample_name,
-                        [{"accession": fallback_accession, "description": fallback_desc}],
-                        selected_refs_fasta,
-                        remap_sam,
-                        sample_fastq,
-                        sample_dir,
-                        threads=threads,
-                        gzip_fastq=gzip_fastq,
-                        min_identity=min_identity,
-                    )
-                    try:
-                        fr = _updated_stats_from_remapped_sam(
-                            remap_sam, selected_refs_fasta, min_identity
-                        )
-                        fr_by = _index_remap_stats_by_accession(fr)
-                        row = _lookup_remap_row(fr_by, fallback_accession)
-                        if row is None and len(fr) == 1:
-                            row = next(iter(fr.values()))
-                        if row:
-                            fallback_remap_metrics = row
-                    except Exception as ex:
-                        logger.warning(f"Could not parse fallback remapped SAM for JSON metrics: {ex}")
-        except Exception as e:
-            logger.warning(f"Fallback output failed: {e}")
+        # Important: when nothing meets curated thresholds, we still write the unfiltered JSON,
+        # but we do NOT generate per-reference artifacts (per-accession folders/BAM/FASTQ/FASTA).
+        # This keeps negatives/controls clean while still allowing inspection via the unfiltered report.
         # Clean up initial SAM file even if no curated references
         initial_sam = sample_dir / f"{sample_name}.sam"
         if initial_sam.exists():
             initial_sam.unlink()
             logger.info(f"Removed initial mapping SAM file: {initial_sam.name} (no curated references)")
+
+        # Also remove any leftover per-sample selected-reference index if it exists.
+        # (Database .mmi files are kept.)
+        try:
+            selected_refs_index = sample_dir / f"{sample_name}_selected_references.fasta.mmi"
+            if selected_refs_index.exists():
+                selected_refs_index.unlink()
+        except Exception as e:
+            logger.debug(f"Could not remove selected reference index for {sample_name}: {e}")
     
     # Save curated descriptions JSON (simplified for easy review)
     # Filter by identity, coverage_depth, and coverage_breadth thresholds
@@ -6711,7 +6660,8 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 (d.get("accession") or "").strip() for d in curated_descriptions if isinstance(d, dict)
             }
             # Only consider immediate children named like accessions.
-            acc_dir_re = re.compile(r"^[A-Za-z]{1,4}\d+(?:_\d+)?\.\d+$")
+            # Include RefSeq-style accessions with an underscore (e.g. NC_001474.2).
+            acc_dir_re = re.compile(r"^[A-Za-z]{1,4}_?\d+(?:_\d+)?\.\d+$")
             removed_dirs = 0
             for child in sample_dir.iterdir():
                 if not child.is_dir():
@@ -6730,61 +6680,8 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         except Exception as e:
             logger.warning(f"Could not remove non-final per-accession folders: {e}")
     
-    # If nothing meets strict thresholds, still emit a minimal "final selected references" entry
-    # for the fallback best reference (so outputs/HTML can still show the primary hit, and Nextclade
-    # can still annotate clades when possible).
-    if not curated_descriptions and best_ref and best_stats:
-        fallback_accession = (best_ref.get("accession", "") or "").strip()
-        fallback_desc = (best_ref.get("description", "") or "").strip()
-        if fallback_accession:
-            if fallback_remap_metrics:
-                fb_row = fallback_remap_metrics
-                fallback_stat = {
-                    "accession": fallback_accession,
-                    "description": fallback_desc,
-                    "mapped_reads": int(fb_row.get("mapped_reads", 0) or 0),
-                    "avg_identity": float(fb_row.get("avg_identity", 0.0) or 0.0),
-                    "coverage_depth": float(fb_row.get("coverage_depth", 0.0) or 0.0),
-                    "coverage_breadth": float(fb_row.get("coverage_breadth", 0.0) or 0.0),
-                }
-            else:
-                fallback_stat = {
-                    "accession": fallback_accession,
-                    "description": fallback_desc,
-                    "mapped_reads": int(best_stats.get("mapped_reads", 0) or 0),
-                    "avg_identity": float(best_stats.get("avg_identity", 0.0) or 0.0),
-                    "coverage_depth": float(best_stats.get("coverage_depth", 0.0) or 0.0),
-                    "coverage_breadth": float(best_stats.get("coverage_breadth", 0.0) or 0.0),
-                }
-            try:
-                enriched = enrich_stats_with_organism(
-                    [fallback_stat],
-                    cache_path=cache_path,
-                    database_path=database_path,
-                    nodes_file=nodes_file,
-                    names_file=names_file,
-                )
-                fallback_stat = enriched[0] if enriched else fallback_stat
-            except Exception:
-                pass
-
-            curated_descriptions.append(
-                {
-                    "accession": fallback_stat.get("accession", fallback_accession),
-                    "description": fallback_stat.get("description", fallback_desc),
-                    "organism": fallback_stat.get("organism", ""),
-                    "viral_species": fallback_stat.get("viral_species", ""),
-                    "mapped_reads": fallback_stat.get("mapped_reads", 0),
-                    "avg_identity": fallback_stat.get("avg_identity", 0.0),
-                    "coverage_depth": fallback_stat.get("coverage_depth", 0.0),
-                    "coverage_breadth": fallback_stat.get("coverage_breadth", 0.0),
-                    "segment": None,
-                    "database_source": actual_database_source or "Unknown",
-                }
-            )
-
     # Safety net: ensure every entry in curated_descriptions meets the thresholds,
-    # regardless of which code path added it (main loop or fallback remap).
+    # regardless of which code path added it.
     pre_safety = len(curated_descriptions)
     curated_descriptions = [
         d for d in curated_descriptions
@@ -6798,6 +6695,23 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             f"below thresholds (identity>={min_identity}%, depth>={coverage_depth_threshold}, "
             f"breadth>={coverage_breadth_threshold})"
         )
+
+    # If nothing passes final thresholds, keep outputs clean (especially for negatives/controls):
+    # - we still write the unfiltered JSON later
+    # - but we remove any remap artifacts (selected_references FASTA/index and remapped SAM)
+    if not curated_descriptions:
+        try:
+            selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
+            selected_refs_index = sample_dir / f"{sample_name}_selected_references.fasta.mmi"
+            remap_sam = sample_dir / f"{sample_name}_remapped.sam"
+            if remap_sam.exists():
+                remap_sam.unlink()
+            if selected_refs_fasta.exists():
+                selected_refs_fasta.unlink()
+            if selected_refs_index.exists():
+                selected_refs_index.unlink()
+        except Exception as e:
+            logger.debug(f"Could not clean remap artifacts for {sample_name}: {e}")
 
     # Debug: Log Lassa virus stats after final filtering
     lassa_after_final = [s for s in curated_descriptions if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower() or s.get("accession", "") == "AY628204.1"]
@@ -7057,6 +6971,42 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
 
         # Per-accession sidecar (taxonomy, stats, Nextclade, artifact names) for downstream pipelines / HTML parity.
         _write_virasign_hit_json_sidecars(sample_dir, sample_name, curated_descriptions, gzip_fastq)
+
+        # Write a single final FASTA containing only references that passed final thresholds.
+        # This is the only sample-level FASTA we keep.
+        try:
+            final_fasta = sample_dir / f"{sample_name}_final_selected_references.fasta"
+            accs = [
+                (d.get("accession") or "").strip()
+                for d in curated_descriptions
+                if isinstance(d, dict) and (d.get("accession") or "").strip()
+            ]
+            src_fastas = []
+            for acc in accs:
+                p = sample_dir / acc / f"{acc}.fasta"
+                if p.exists():
+                    src_fastas.append(p)
+            if src_fastas:
+                merge_fasta_files(src_fastas, final_fasta)
+        except Exception as e:
+            logger.debug(f"Could not write final selected FASTA for {sample_name}: {e}")
+
+        # Always remove the per-sample minimap2 index for the selected references.
+        # (Database .mmi files are kept; per-reference artifacts are in accession folders.)
+        try:
+            selected_refs_index = sample_dir / f"{sample_name}_selected_references.fasta.mmi"
+            if selected_refs_index.exists():
+                selected_refs_index.unlink()
+        except Exception as e:
+            logger.debug(f"Could not remove selected reference index for {sample_name}: {e}")
+
+        # Remove intermediate selected reference FASTA once the run is complete.
+        try:
+            selected_refs_fasta = sample_dir / f"{sample_name}_selected_references.fasta"
+            if selected_refs_fasta.exists():
+                selected_refs_fasta.unlink()
+        except Exception as e:
+            logger.debug(f"Could not remove selected reference FASTA for {sample_name}: {e}")
     else:
         # No curated descriptions - clean up initial SAM file
         initial_sam = sample_dir / f"{sample_name}.sam"
