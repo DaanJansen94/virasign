@@ -1,12 +1,12 @@
 # Virasign
 
-Virasign (**Viral** Read **ASSIGN**ment) is a viral taxonomic classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or a custom accesion number) and performs taxonomic classification to identify viral species. Virasign generates comprehensive interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data (e.g., IGV). Virasign includes options to blind yourself from certain incidental findings (such as HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) when wanted, ensuring these findings do not appear in any output files, in line with consent guidelines and ethical research practices.
+Virasign (**Viral** Read **ASSIGN**ment) is a viral taxonomic classification and reference selection tool for nanopore data. It maps long-read sequencing data (via minimap2) against viral databases (RVDB, RefSeq, or a custom accesion number) and performs taxonomic classification to identify viruses. Virasign generates comprehensive interactive HTML reports with filterable tables, charts and heatmaps. For each identified virus, Virasign also provides the closest reference sequence, mapped reads in FASTQ format, and BAM files which can be used to easily generate a consensus genome and visualize data (e.g., IGV). Virasign includes options to blind yourself from certain incidental findings (such as HIV, Hepatitis viruses, HTLV, EBV, CMV, HPV) when wanted, ensuring these findings do not appear in any output files, in line with consent guidelines and ethical research practices.
 
 Virasign has been validated to classify the diversity of human pathogens well. However, when extended to other sources such as viral diversity within animal hosts, there may not be sufficient references in the databases to find good hits using this approach. In such cases, you can specify your own custom databases or accessions to improve detection.
 
 ### Why Virasign?
 
-- **High sensitivity and specificity**: Virasign’s two-step design (map to a large viral DB, deduplicate by species, then remap to a curated set) gives good sensitivity and specificity and accurate per-virus read counts and BAM/FASTQ. See [Design and how Virasign works](#design-and-how-virasign-works) below.
+- **High sensitivity and specificity**: Virasign’s two-step design (map to a large viral DB, deduplicate to one best reference per virus, then remap to that curated set) gives good sensitivity and specificity and accurate per-virus read counts and BAM/FASTQ. See [Design and how Virasign works](#design-and-how-virasign-works) below.
 - **Ease of use**: Single command (`virasign -i input_dir`). Default databases (RVDB, RefSeq) are built in (no separate download), and you can run with minimal setup.
 - **Clear output**: Results for each identified virus are easy to find and use (JSON summaries, per-reference FASTA/BAM/FASTQ), so you can move straight to consensus building or other preferred metagenomics pipeline steps.
 - **NOGR**: Virasign reports NOGR (Non-Overlapping Genomic Regions) to help interpret low-breadth hits and spot false positives such as amplicon contamination (reads accumulating in one region results in a low NOGR). See [`docs/NOGR.md`](docs/NOGR.md).
@@ -183,9 +183,9 @@ virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
 
 ## Design and how Virasign works
 
-Virasign works in two steps: **(1)** map reads to a large viral DB (e.g. RVDB, RefSeq), **(2)** pick one best reference per viral species and remap all reads to that curated set.
+Virasign works in two steps: **(1)** map reads to a large viral DB (e.g. RVDB, RefSeq), **(2)** pick one best reference per virus and remap all reads to that curated set.
 
-- **Best-reference selection**: References are deduplicated by viral species and one representative ref per species is chosen (by read count, identity, coverage), giving a small set of best refs instead of many near-duplicates.
+- **Best-reference selection**: References are deduplicated per virus and one representative reference is chosen (by read count, identity, coverage), giving a small set of best refeferences instead of many near-duplicates.
 - **Why remap**: In one pass to the full DB, minimap2 reports one primary alignment per read, so the best ref “wins” and other species get no count. Remapping to the curated set gives correct counts per virus and meaningful BAM/FASTQ for consensus and downstream analysis, and increases specificity (fewer spurious hits).
 - **Why not secondary mapping**: Reporting multiple alignments per read in the first pass would create many false positives with a large DB and lower specificity. Virasign uses primary-only for the first pass, then deduplicates and remaps.
 - **Scale and flexibility**: Large viral DBs give sensitivity and completeness (e.g. catching more true viral hits, including low-abundance or divergent viruses). Custom databases and accessions are supported, and the tool is expandable to future reference sets.
