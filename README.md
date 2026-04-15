@@ -105,7 +105,7 @@ virasign --help
   - `--coverage_depth`: Min average coverage depth across the reference (default: `1.0`).
   - `--coverage_breadth`: Min fraction of the reference covered by ≥1 read (default: `0.1`).
   - `--NOGR`: Min number of Non-Overlapping Genomic Regions (default: `0`). See [`docs/NOGR.md`](docs/NOGR.md).
-  - `-u, --ultrasensitive`: Lowers all thresholds to maximise detection. Useful when you suspect amplicon contamination or severe viral degeneration (bad sample storage), but not advised as default because it increases false positivity. 
+  - `-u, --ultrasensitive`: Lowers all thresholds to maximise detection. Useful when you suspect amplicon contamination or severe viral degeneration (bad sample storage), but not advised as default because it increases false positivity (breadth: `0.01` and depth `0.5`). 
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
@@ -118,6 +118,10 @@ virasign --help
 - **Blinding (hide specific viruses completely)**
   - `-b, --blind`: Blind specific viral species from the analysis (not reported in any output files). Use abbreviations (HEP, HIV, HTLV, EBV, CMV, HPV) or full species names (Human immunodeficiency virus, Orthohepadnavirus hominoidei).
   - `--blinding`: List available blinding abbreviations and exit.
+
+- **Z-score (optional)**: Background-correct hits using water controls. See [`docs/Z_SCORE.md`](docs/Z_SCORE.md).
+  - `--zscore`: Enable/disable Z-score computation (default: `true`, auto-detect water controls by sample name).
+  - `--zscore-controls`: Override auto-detection with exact input paths (example: `--zscore-controls /path/water1.fastq.gz,/path/water2.fastq.gz` or `--zscore-controls water_controls.txt` with one path per line).
 
 - **RVDB clustering (optional)**: Cluster RVDB to reduce database size and speed up runtime.
   - `--enable-clustering`: Enable clustering for RVDB (default: off).

@@ -7279,7 +7279,13 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         logger.info(f"  Coverage breadth: {best_stats.get('coverage_breadth', 0.0):.4f}")
     return confident_names
 
-def generate_html_visualization(output_dir: Path):
+def generate_html_visualization(
+    output_dir: Path,
+    *,
+    zscore_enabled: bool = True,
+    zscore_controls: Optional[str] = None,
+    sample_fastq_by_name: Optional[Dict[str, str]] = None,
+):
     """
     Generate separate comprehensive HTML reports for each database with:
     - Filterable and sortable tables per sample
@@ -7300,6 +7306,206 @@ def generate_html_visualization(output_dir: Path):
     
     # Find all sample directories - include ALL sample directories, even if they have no viruses
     all_sample_dirs = [d for d in output_dir.iterdir() if d.is_dir() and not d.name.startswith('.')]
+
+    # Helper: sample name heuristics for water controls (auto-detect).
+    def _is_water_sample_name(name: str) -> bool:
+        n = (name or "").lower()
+        return ("water" in n) or ("h2o" in n) or ("h20" in n)
+
+    def _label_for_zscore(hit: dict) -> str:
+        # Use the same "practical virus label" used throughout outputs when available.
+        # Fallback to organism, then accession.
+        if not isinstance(hit, dict):
+            return ""
+        for k in ("viral_species", "organism", "accession"):
+            v = (hit.get(k) or "").strip()
+            if v:
+                return v
+        return ""
+
+    def _compute_and_write_zscores(
+        *,
+        zscore_enabled: bool,
+        zscore_control_fastqs_csv: Optional[str],
+        sample_fastq_by_name: Dict[str, str],
+    ) -> Tuple[set, Dict[str, List[str]]]:
+        """
+        Compute Z-scores against water controls and write them into per-hit JSONs.
+
+        - Z-score is computed on log10(mapped_reads + 1) per virus label.
+        - Requires >=2 controls; otherwise no Z-scores are written.
+        - Controls are either:
+          - manually specified by --zscore-controls (CSV of exact FASTQ paths), or
+          - auto-detected by sample folder name containing water/h2o/h20.
+
+        Returns:
+          - controls_used: set of sample names used as controls
+          - controls_by_db: mapping database_name -> ordered list of controls (for reporting)
+        """
+        if not zscore_enabled:
+            return set(), {}
+
+        # Resolve controls.
+        controls: List[str] = []
+        if zscore_control_fastqs_csv:
+            raw = (zscore_control_fastqs_csv or "").strip()
+            requested_raw: List[str] = []
+            try:
+                p = Path(raw).expanduser()
+                if raw and p.exists() and p.is_file():
+                    # File of paths (one per line).
+                    with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line or line.startswith("#"):
+                                continue
+                            requested_raw.append(line)
+                else:
+                    # Comma-separated paths.
+                    requested_raw = [x.strip() for x in raw.split(",") if x.strip()]
+            except Exception as e:
+                logger.warning(f"Z-score controls could not be parsed from '{raw}': {e}")
+                requested_raw = []
+
+            requested = [str(Path(x).expanduser().resolve()) for x in requested_raw if x]
+            # Match exact fastq paths to sample names.
+            inv = {str(Path(fp).expanduser().resolve()): s for s, fp in (sample_fastq_by_name or {}).items() if fp}
+            for p in requested:
+                if p in inv:
+                    controls.append(inv[p])
+                else:
+                    logger.warning(f"Z-score control FASTQ not found in inputs: {p} (skipping)")
+        else:
+            controls = [d.name for d in all_sample_dirs if _is_water_sample_name(d.name)]
+
+        # De-duplicate, stable order.
+        seen = set()
+        controls = [c for c in controls if not (c in seen or seen.add(c))]
+
+        if len(controls) < 2:
+            logger.info("Z-score: <2 water controls available; skipping Z-score computation.")
+            return set(), {}
+
+        controls_set = set(controls)
+
+        # Load all per-sample final JSON hits that exist.
+        # Some controls may have no final JSON (true negatives); treat as all-zeros for all labels.
+        sample_hits: Dict[str, List[dict]] = {}
+        sample_db: Dict[str, str] = {}  # sample_name -> database_name (for summary grouping)
+        for jf in final_json_files:
+            try:
+                sample_name = jf.parent.name
+                with open(jf, "r") as f:
+                    hits = json.load(f) or []
+                if not isinstance(hits, list):
+                    continue
+                sample_hits[sample_name] = hits
+                # Infer DB from folder path when outputs are split; otherwise Unknown.
+                # This is used only for HTML/CSV grouping, not for math.
+                # Example: sample/RVDB/sample_final_selected_references.json
+                parts = jf.parts
+                db_name = "Unknown"
+                if len(parts) >= 2 and parts[-2] in ("RVDB", "RefSeq", "Custom"):
+                    db_name = parts[-2]
+                sample_db[sample_name] = db_name
+            except Exception as e:
+                logger.debug(f"Z-score: could not read {jf}: {e}")
+
+        # Build background distributions per label.
+        import math
+        from statistics import mean, stdev
+
+        # Union of labels observed anywhere (final hits); this is enough because absent => 0.
+        labels: set = set()
+        for hits in sample_hits.values():
+            for h in hits:
+                lab = _label_for_zscore(h)
+                if lab:
+                    labels.add(lab)
+
+        # If no labels at all, nothing to do.
+        if not labels:
+            return controls_set, {}
+
+        # Pre-compute per-label control values.
+        control_values: Dict[str, List[float]] = {}
+        for lab in labels:
+            vals = []
+            for c in controls:
+                hits = sample_hits.get(c) or []
+                # Find label value; if label not present, x=0.
+                x = 0
+                for h in hits:
+                    if _label_for_zscore(h) == lab:
+                        x = int(h.get("mapped_reads", 0) or 0)
+                        break
+                y = math.log10(x + 1)
+                vals.append(float(y))
+            control_values[lab] = vals
+
+        # Compute mu/sigma per label.
+        mu_sigma: Dict[str, Tuple[float, float]] = {}
+        for lab, vals in control_values.items():
+            try:
+                mu = float(mean(vals))
+                sigma = float(stdev(vals)) if len(vals) >= 2 else 0.0
+            except Exception:
+                mu, sigma = 0.0, 0.0
+            mu_sigma[lab] = (mu, sigma)
+
+        # Apply z-scores to non-control sample JSONs only.
+        eps = 1e-6
+        z_cap = 99.0
+
+        for sample_name, hits in list(sample_hits.items()):
+            if sample_name in controls_set:
+                continue
+            changed = False
+            for h in hits:
+                lab = _label_for_zscore(h)
+                if not lab:
+                    continue
+                x = int(h.get("mapped_reads", 0) or 0)
+                y = float(math.log10(x + 1))
+                mu, sigma = mu_sigma.get(lab, (0.0, 0.0))
+                denom = sigma if sigma > 0 else eps
+                z = (y - mu) / denom
+                if z > z_cap:
+                    z = z_cap
+                elif z < -z_cap:
+                    z = -z_cap
+                # Add requested fields.
+                h["zscore"] = float(z)
+                h["zscore_controls"] = controls
+                changed = True
+
+            if changed:
+                # Write back into its JSON file (may be nested in RVDB/RefSeq subfolders).
+                # Locate by sample_name in path.
+                try:
+                    # Prefer the same file we loaded from final_json_files.
+                    # If multiple JSONs exist (multi-db), update all matching sample JSONs.
+                    for jf in final_json_files:
+                        if jf.parent.name != sample_name:
+                            continue
+                        with open(jf, "w") as f:
+                            json.dump(hits, f, indent=2)
+                except Exception as e:
+                    logger.debug(f"Z-score: could not write JSON for {sample_name}: {e}")
+
+        # Controls by DB for reporting (not shown in HTML/CSV per your request, but returned if needed).
+        controls_by_db: Dict[str, List[str]] = {}
+        for c in controls:
+            db = sample_db.get(c, "Unknown")
+            controls_by_db.setdefault(db, []).append(c)
+        return controls_set, controls_by_db
+
+    # Compute/write Z-scores before building HTML/CSV (so the reports include the field).
+    _controls_used, _controls_by_db = _compute_and_write_zscores(
+        zscore_enabled=bool(zscore_enabled),
+        zscore_control_fastqs_csv=(zscore_controls or None),
+        sample_fastq_by_name=(sample_fastq_by_name or {}),
+    )
     all_sample_names = set()
     # Add all sample directories (even if they have no JSON files - they might have no viruses detected)
     for sample_dir in all_sample_dirs:
@@ -8154,6 +8360,7 @@ def generate_html_visualization(output_dir: Path):
                                 <th class="stats sortable" data-sort="depth">Coverage Depth (x)</th>
                                 <th class="stats sortable" data-sort="breadth">Coverage Breadth (%)</th>
                                 <th class="stats sortable" data-sort="nogr_regions">NOGR (#/bases)</th>
+                                <th class="stats sortable" data-sort="zscore">Z-score</th>
                             </tr>
                         </thead>
                         <tbody id="tbody-{sample_name}">
@@ -8327,13 +8534,14 @@ def generate_html_visualization(output_dir: Path):
                 const identity = ref.avg_identity || 0;
                 const depth = ref.coverage_depth || 0;
                 const breadth = ref.coverage_breadth || 0;
+                const zscore = (ref.zscore !== undefined && ref.zscore !== null) ? ref.zscore : null;
                 
                 html += `
                     <tr data-accession="${{accession}}" data-organism="${{organism}}" data-species="${{species}}" 
                         data-clade="${{cladeAttr}}"
                         data-segment="${{segmentAttr}}"
                         data-reads="${{reads}}" data-nogr-regions="${{nogrRegions}}" data-nogr-bases="${{nogrBases}}"
-                        data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}">
+                        data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}" data-zscore="${{zscore === null ? '' : zscore}}">
                         <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank">${{accession}}</a></td>
                         <td>${{organism}}</td>
                         <td>${{species}}</td>
@@ -8344,6 +8552,7 @@ def generate_html_visualization(output_dir: Path):
                         <td class="stats">${{depth.toFixed(2)}}x</td>
                         <td class="stats">${{(breadth * 100).toFixed(1)}}%</td>
                         <td class="stats">${{nogrDisp}}</td>
+                        <td class="stats">${{zscore === null ? '-' : Number(zscore).toFixed(2)}}</td>
                     </tr>
                 `;
             }});
@@ -8533,6 +8742,9 @@ def generate_html_visualization(output_dir: Path):
                 }} else if (sortType === 'nogr_regions') {{
                     aVal = parseFloat(a.getAttribute('data-nogr-regions') || 0);
                     bVal = parseFloat(b.getAttribute('data-nogr-regions') || 0);
+                }} else if (sortType === 'zscore') {{
+                    aVal = parseFloat(a.getAttribute('data-zscore') || 0);
+                    bVal = parseFloat(b.getAttribute('data-zscore') || 0);
                 }} else if (sortType === 'identity') {{
                     aVal = parseFloat(a.getAttribute('data-identity') || 0);
                     bVal = parseFloat(b.getAttribute('data-identity') || 0);
@@ -8760,7 +8972,7 @@ def generate_html_visualization(output_dir: Path):
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
-            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads (#),Identity (%),Coverage Depth (x),Coverage Breadth (%),NOGR (#/bases)\\n';
+            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads (#),Identity (%),Coverage Depth (x),Coverage Breadth (%),NOGR (#/bases),Z-score\\n';
             const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
             
             rows.forEach(row => {{
@@ -9034,13 +9246,13 @@ def generate_html_visualization(output_dir: Path):
         }}
         
         function downloadAllSamplesCSV() {{
-            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads (#)','Avg Identity (%)','Coverage Depth (x)','Coverage Breadth (%)','NOGR (#/bases)']];
+            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads (#)','Avg Identity (%)','Coverage Depth (x)','Coverage Breadth (%)','NOGR (#/bases)','Z-score']];
             allSamples.forEach(sname => {{
                 const sdata = samplesData[sname];
-                if (!sdata) {{ rows.push([sname,'','','','','','','','','','']); return; }}
+                if (!sdata) {{ rows.push([sname,'','','','','','','','','','','']); return; }}
                 let refs = [];
                 Object.keys(sdata).forEach(db => {{ if (sdata[db].references) refs = refs.concat(sdata[db].references); }});
-                if (refs.length === 0) {{ rows.push([sname,'','','','','','','','','','']); return; }}
+                if (refs.length === 0) {{ rows.push([sname,'','','','','','','','','','','']); return; }}
                 refs.sort((a,b) => (b.coverage_breadth||0)-(a.coverage_breadth||0));
                 refs.forEach(r => {{
                     rows.push([
@@ -9054,7 +9266,8 @@ def generate_html_visualization(output_dir: Path):
                         (r.avg_identity||0).toFixed(2),
                         (r.coverage_depth||0).toFixed(2),
                         ((r.coverage_breadth||0)*100).toFixed(1),
-                        `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{(r.nogr_bases||r.non_overlapping_bases||0)}}`
+                        `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{(r.nogr_bases||r.non_overlapping_bases||0)}}`,
+                        (r.zscore !== undefined && r.zscore !== null) ? Number(r.zscore).toFixed(2) : ''
                     ]);
                 }});
             }});
@@ -9120,14 +9333,14 @@ def generate_html_visualization(output_dir: Path):
                 "Sample", "Accession", "Organism", "Viral Species",
                 "Nextclade Clade", "Segment",
                 "Mapped Reads (#)", "Avg Identity (%)", "Coverage Depth (x)", "Coverage Breadth (%)",
-                "NOGR (#/bases)",
+                "NOGR (#/bases)", "Z-score",
             ])
             for sname in sorted(db_samples_list):
                 refs = []
                 if sname in db_samples_data and database_name in db_samples_data[sname]:
                     refs = db_samples_data[sname][database_name]
                 if not refs:
-                    writer.writerow([sname] + [""] * 10)
+                    writer.writerow([sname] + [""] * 11)
                     continue
                 for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
                     nogr = f"{int(ref.get('nogr_regions', ref.get('non_overlapping_reads', 0)) or 0)}|{int(ref.get('nogr_bases', ref.get('non_overlapping_bases', 0)) or 0)}"
@@ -9143,6 +9356,7 @@ def generate_html_visualization(output_dir: Path):
                         f"{ref.get('coverage_depth', 0):.2f}",
                         f"{ref.get('coverage_breadth', 0) * 100:.1f}",
                         nogr,
+                        "" if ref.get("zscore", None) is None else f"{float(ref.get('zscore') or 0.0):.2f}",
                     ])
         logger.info(f"Generated CSV summary for {database_name}: {csv_file}")
 
@@ -9243,6 +9457,7 @@ Examples
     choose_db = parser.add_argument_group("Choose database (auto-downloads on first run)")
     thresholds = parser.add_argument_group("Viral identification thresholds (controls what is reported)")
     reporting = parser.add_argument_group("Reporting")
+    zscore_group = parser.add_argument_group("Z-score (optional)")
     performance = parser.add_argument_group("Performance")
     blinding = parser.add_argument_group("Blinding (hide specific viruses completely)")
     clustering = parser.add_argument_group("RVDB clustering (optional)")
@@ -9452,6 +9667,24 @@ Examples
         action="store_false",
         default=True,
         help="Write per-virus mapped reads as plain .fastq (default: .fastq.gz).",
+    )
+
+    # Z-score (optional)
+    zscore_group.add_argument(
+        "--zscore",
+        dest="zscore",
+        type=str,
+        default="true",
+        metavar="",
+        help="Compute background-corrected Z-score using water controls (default: true).",
+    )
+    zscore_group.add_argument(
+        "--zscore-controls",
+        dest="zscore_controls",
+        type=str,
+        default=None,
+        metavar="",
+        help="Override auto-detected water controls with exact FASTQ paths (>=2 waters): comma-separated or a file (one path per line).",
     )
 
     # Nextclade runs by default when the CLI is installed; flags omitted from --help.
@@ -9779,6 +10012,16 @@ Examples
         sys.exit(1)
     
     logger.info(f"Found {len(samples)} sample(s)")
+
+    # Map sample_name -> exact input FASTQ path (used for --zscore-controls matching).
+    # If multiple FASTQs map to the same inferred sample name, the first one wins.
+    sample_fastq_by_name: Dict[str, str] = {}
+    for sf in samples:
+        try:
+            sname = infer_sample_name_from_fastq(sf)
+            sample_fastq_by_name.setdefault(sname, str(Path(sf).expanduser().resolve()))
+        except Exception:
+            continue
     
     # Prepare all sample+database combinations for processing
     sample_db_tasks = []
@@ -10032,7 +10275,13 @@ Examples
     
     # Generate HTML visualization of results (optional)
     if getattr(args, "generate_html", True):
-        generate_html_visualization(output_dir)
+        zscore_enabled = str(getattr(args, "zscore", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
+        generate_html_visualization(
+            output_dir,
+            zscore_enabled=zscore_enabled,
+            zscore_controls=getattr(args, "zscore_controls", None),
+            sample_fastq_by_name=sample_fastq_by_name,
+        )
     else:
         logger.info("HTML report generation disabled (--no-html)")
 
