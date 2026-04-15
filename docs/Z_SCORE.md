@@ -1,6 +1,6 @@
 # Z-score background correction
 
-Virasign can compute a **background-corrected Z-score** per reported virus using **water controls** (e.g. negative controls such as water-only extractions). This mirrors a common idea in metagenomic reporting: quantify whether a signal is unusually high compared to background contamination.
+Virasign can compute a **background-corrected Z-score** per reported virus using **water controls** (e.g. negative controls). This mirrors a common idea in metagenomic reporting: quantify whether a signal is unusually high compared to background contamination.
 
 This concept is used in CZ ID / IDseq as part of their “background model” reporting. See:
 - IDseq paper (GigaScience, 2020): `https://ncbi.nlm.nih.gov/pmc/articles/PMC7566497/` (background models and z-scores described at a high level)
@@ -41,9 +41,9 @@ Virasign computes the Z-score using the per-hit **remapped** `mapped_reads` (the
 
 To make the statistic stable for sparse count data, Virasign uses:
 
-\[
-y = \log_{10}(\text{mapped\_reads} + 1)
-\]
+```text
+y = log10(mapped_reads + 1)
+```
 
 ---
 
@@ -88,11 +88,9 @@ Z-scores are “standard deviation units” above/below background:
 - **Z ≈ 0**: similar to water background
 - **Z < 0**: lower than the water background mean
 - **Z > 0**: above water background
-- **Z ≥ 2**: ≥2 standard deviations above the control mean; if the background distribution is approximately normal, this corresponds to ~97.5th percentile (one-sided; ~95% two-sided).
-- **Z ≥ 3**: ≥3 standard deviations above the control mean; under a normal assumption this is ~99.87th percentile (one-sided; ~99.73% two-sided).
+- **Z ≥ 2**: ≥2 standard deviations above the control mean.
+- **Z ≥ 3**: ≥3 standard deviations above the control mean.
 - Very large Z (e.g. **50–100**) can happen when controls are very consistent (low variance) and the sample is higher than background.
-
-These are heuristics; interpretation should always be combined with other evidence (coverage breadth/depth, identity, NOGR, etc.) and study context.
 
 ---
 
