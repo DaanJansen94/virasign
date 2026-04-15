@@ -7455,7 +7455,7 @@ def generate_html_visualization(
 
         # Apply z-scores to non-control sample JSONs only.
         eps = 1e-6
-        z_cap = 99.0
+        z_cap = 100.0
 
         for sample_name, hits in list(sample_hits.items()):
             if sample_name in controls_set:
@@ -7492,6 +7492,34 @@ def generate_html_visualization(
                             json.dump(hits, f, indent=2)
                 except Exception as e:
                     logger.debug(f"Z-score: could not write JSON for {sample_name}: {e}")
+
+                # Also propagate into per-virus sidecar JSONs: <sample>/<accession>/<accession>.json
+                # (These sidecars are used by downstream pipelines and match the folder artifacts.)
+                try:
+                    for jf in final_json_files:
+                        if jf.parent.name != sample_name:
+                            continue
+                        base_dir = jf.parent
+                        for h in hits:
+                            acc = (h.get("accession") or "").strip()
+                            if not acc:
+                                continue
+                            sidecar = base_dir / acc / f"{acc}.json"
+                            if not sidecar.exists():
+                                continue
+                            try:
+                                with open(sidecar, "r", encoding="utf-8", errors="replace") as sf:
+                                    payload = json.load(sf) if sf.readable() else {}
+                            except Exception:
+                                payload = {}
+                            if not isinstance(payload, dict):
+                                payload = {}
+                            payload["zscore"] = h.get("zscore")
+                            payload["zscore_controls"] = controls
+                            with open(sidecar, "w") as sf:
+                                json.dump(payload, sf, indent=2)
+                except Exception as e:
+                    logger.debug(f"Z-score: could not write sidecars for {sample_name}: {e}")
 
         # Controls by DB for reporting (not shown in HTML/CSV per your request, but returned if needed).
         controls_by_db: Dict[str, List[str]] = {}
@@ -8070,41 +8098,18 @@ def generate_html_visualization(
             margin: 0;
             color: #333;
         }}
-        .filter-row {{
+        .filter-row th {{
             background: #f8f9fa;
-            padding: 10px;
-            display: grid;
-            /* Keep filters aligned with table columns and avoid wrapping into a second line. */
-            grid-template-columns: repeat(10, minmax(160px, 1fr));
-            gap: 10px;
+            padding: 8px 10px;
             border-bottom: 1px solid #dee2e6;
-            align-items: center;
-            overflow-x: auto;
         }}
-        .filter-row input[type="text"] {{
+        .filter-row th input[type="text"] {{
             width: 100%;
-            min-width: 0;
-            padding: 5px;
+            padding: 5px 6px;
             border: 1px solid #ddd;
             border-radius: 4px;
             font-size: 0.9em;
-        }}
-        .filter-row .checkbox-container {{
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            white-space: nowrap;
-        }}
-        .filter-row .checkbox-container input[type="checkbox"] {{
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
-        }}
-        .filter-row .checkbox-container label {{
-            font-size: 0.9em;
-            color: #495057;
-            cursor: pointer;
-            user-select: none;
+            box-sizing: border-box;
         }}
         table {{
             width: 100%;
@@ -8122,6 +8127,9 @@ def generate_html_visualization(
             border-bottom: 2px solid #dee2e6;
             position: sticky;
             top: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }}
         th.sortable {{
             cursor: pointer;
@@ -8150,6 +8158,9 @@ def generate_html_visualization(
         td {{
             padding: 12px;
             border-bottom: 1px solid #e9ecef;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }}
         tr:hover {{
             background: #f8f9fa;
@@ -8331,35 +8342,45 @@ def generate_html_visualization(
                         <h3>Viral References</h3>
                         <button onclick="downloadTableAsCSV('{sample_name}')">📥 Download Table (CSV)</button>
                     </div>
-                    <div class="filter-row" id="filters-{sample_name}">
-                        <input type="text" placeholder="Filter Accession" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Filter Organism" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Filter Species" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Filter Clade" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Filter Segment" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Minimum Reads (#)" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Minimum Identity" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Minimum Depth" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Minimum Breadth" onkeyup="applyAllFilters('{sample_name}')">
-                        <input type="text" placeholder="Minimum NOGR (#)" onkeyup="applyAllFilters('{sample_name}')">
-                        <div class="checkbox-container">
-                            <input type="checkbox" id="excludeUnknown-{sample_name}" onchange="applyAllFilters('{sample_name}')">
-                            <label for="excludeUnknown-{sample_name}">Exclude Unknown</label>
-                        </div>
-                    </div>
-                    <table id="table-{sample_name}">
+                    <table id="table-{sample_name}" style="table-layout: fixed;">
+                        <colgroup>
+                            <col style="width: 140px;">
+                            <col style="width: 220px;">
+                            <col style="width: 220px;">
+                            <col style="width: 90px;">
+                            <col style="width: 90px;">
+                            <col style="width: 110px;">
+                            <col style="width: 90px;">
+                            <col style="width: 90px;">
+                            <col style="width: 110px;">
+                            <col style="width: 110px;">
+                            <col style="width: 90px;">
+                        </colgroup>
                         <thead>
+                            <tr class="filter-row" id="filters-{sample_name}">
+                                <th><input type="text" placeholder="Accession" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Organism" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Species" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Clade" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Segment" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Min Reads" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Min ID" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Min Depth" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Min Breadth" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Min NOGR" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Min Z-score" onkeyup="applyAllFilters('{sample_name}')"></th>
+                            </tr>
                             <tr>
                                 <th>Accession</th>
                                 <th>Organism</th>
                                 <th>Viral Species</th>
-                                <th>Nextclade Clade</th>
+                                <th>Clade</th>
                                 <th>Segment</th>
-                                <th class="stats sortable" data-sort="mapped_reads">Mapped Reads (#)</th>
-                                <th class="stats sortable" data-sort="identity">Identity (%)</th>
-                                <th class="stats sortable" data-sort="depth">Coverage Depth (x)</th>
-                                <th class="stats sortable" data-sort="breadth">Coverage Breadth (%)</th>
-                                <th class="stats sortable" data-sort="nogr_regions">NOGR (#/bases)</th>
+                                <th class="stats sortable" data-sort="mapped_reads">Reads (#)</th>
+                                <th class="stats sortable" data-sort="identity">Ident (%)</th>
+                                <th class="stats sortable" data-sort="depth">Depth (x)</th>
+                                <th class="stats sortable" data-sort="breadth">Breadth (%)</th>
+                                <th class="stats sortable" data-sort="nogr_regions">NOGR (#|b)</th>
                                 <th class="stats sortable" data-sort="zscore">Z-score</th>
                             </tr>
                         </thead>
@@ -8432,18 +8453,7 @@ def generate_html_visualization(
                 sampleSection.classList.add('active');
                 populateMetadata(sampleName);
                 populateTable(sampleName);
-                // Default UI behavior: show hits with NOGR > 0 (user can clear the field to see all).
-                const filterRow = document.getElementById(`filters-${{sampleName}}`);
-                if (filterRow) {{
-                    const inputs = filterRow.querySelectorAll('input[type="text"]');
-                    // Index 9 is "Minimum NOGR (#)" based on the filter-row input order.
-                    if (inputs && inputs.length >= 10) {{
-                        const nogrInput = inputs[9];
-                        if (nogrInput && String(nogrInput.value || '').trim() === '') {{
-                            nogrInput.value = '1';
-                        }}
-                    }}
-                }}
+                // Leave numeric filters empty by default.
                 applyAllFilters(sampleName);
                 if (!charts[sampleName]) {{
                     createCharts(sampleName);
@@ -8573,9 +8583,6 @@ def generate_html_visualization(
             
             const rows = tbody.querySelectorAll('tr');
             const inputs = filterRow.querySelectorAll('input[type="text"]');
-            const excludeUnknownCheckbox = document.getElementById(`excludeUnknown-${{sampleName}}`);
-            const excludeUnknown = excludeUnknownCheckbox && excludeUnknownCheckbox.checked;
-            
             // Get all filter values
             const filterValues = Array.from(inputs).map(input => input.value.trim());
             
@@ -8589,9 +8596,9 @@ def generate_html_visualization(
                     const filterLower = filterValue.toLowerCase();
                     const filterTrimmed = filterValue;
                     
-                    // Columns 5-9 are numeric-ish (reads, identity, depth, breadth, NOGR).
+                    // Columns 5-10 are numeric-ish (reads, identity, depth, breadth, NOGR, Z-score).
                     // NOGR is shown as "regions|bases"; for numeric filtering we treat it as NOGR regions.
-                    const isNumericColumn = colIndex >= 5 && colIndex <= 9;
+                    const isNumericColumn = colIndex >= 5 && colIndex <= 10;
                     
                     if (isNumericColumn) {{
                         if (filterTrimmed !== '') {{
@@ -8625,6 +8632,10 @@ def generate_html_visualization(
                                 }} else if (colIndex === 9) {{
                                     // NOGR regions
                                     cellValue = parseFloat(row.getAttribute('data-nogr-regions') || 0);
+                                }} else if (colIndex === 10) {{
+                                    // Z-score (missing values treated as 0)
+                                    const zs = row.getAttribute('data-zscore');
+                                    cellValue = (zs === null || zs === '') ? 0 : parseFloat(zs);
                                 }}
                                 if (cellValue === null || isNaN(cellValue) || cellValue < minValue) {{
                                     shouldShow = false;
@@ -8640,17 +8651,6 @@ def generate_html_visualization(
                                 shouldShow = false;
                                 break;
                             }}
-                        }}
-                    }}
-                }}
-                
-                // Apply "Exclude Unknown" filter if checkbox is checked
-                if (shouldShow && excludeUnknown && cells.length > 2) {{
-                    const speciesCell = cells[2];
-                    if (speciesCell) {{
-                        const speciesText = speciesCell.textContent.trim().toLowerCase();
-                        if (speciesText === 'unknown') {{
-                            shouldShow = false;
                         }}
                     }}
                 }}
@@ -9039,8 +9039,7 @@ def generate_html_visualization(
                 filterOrganism: '',
                 filterSpecies: '',
                 filterClade: '',
-                filterSegment: '',
-                excludeUnknown: false
+                filterSegment: ''
             }};
             
             // Find the currently active sample section
@@ -9074,18 +9073,18 @@ def generate_html_visualization(
                 minDepth: null,
                 minBreadth: null,
                 minNogr: null,
+                minZscore: null,
                 filterAccession: '',
                 filterOrganism: '',
                 filterSpecies: '',
                 filterClade: '',
-                filterSegment: '',
-                excludeUnknown: false
+                filterSegment: ''
             }};
             
             const filterRow = document.getElementById(`filters-${{sampleName}}`);
             if (filterRow) {{
                 const inputs = filterRow.querySelectorAll('input[type="text"]');
-                if (inputs.length >= 10) {{
+                if (inputs.length >= 11) {{
                     filters.filterAccession = inputs[0].value.trim().toLowerCase();
                     filters.filterOrganism = inputs[1].value.trim().toLowerCase();
                     filters.filterSpecies = inputs[2].value.trim().toLowerCase();
@@ -9096,10 +9095,7 @@ def generate_html_visualization(
                     filters.minDepth = inputs[7].value.trim() ? parseFloat(inputs[7].value.trim()) : null;
                     filters.minBreadth = inputs[8].value.trim() ? parseFloat(inputs[8].value.trim()) : null;
                     filters.minNogr = inputs[9].value.trim() ? parseFloat(inputs[9].value.trim()) : null;
-                }}
-                const excludeUnknownCheckbox = document.getElementById(`excludeUnknown-${{sampleName}}`);
-                if (excludeUnknownCheckbox) {{
-                    filters.excludeUnknown = excludeUnknownCheckbox.checked;
+                    filters.minZscore = inputs[10].value.trim() ? parseFloat(inputs[10].value.trim()) : null;
                 }}
             }}
             
@@ -9164,6 +9160,13 @@ def generate_html_visualization(
                     return false;
                 }}
             }}
+
+            if (filters.minZscore !== null && !isNaN(filters.minZscore)) {{
+                const z = (ref.zscore !== undefined && ref.zscore !== null) ? parseFloat(ref.zscore) : 0;
+                if (z < filters.minZscore) {{
+                    return false;
+                }}
+            }}
             
             if (filters.minIdentity !== null && !isNaN(filters.minIdentity)) {{
                 const identity = ref.avg_identity || 0;
@@ -9182,14 +9185,6 @@ def generate_html_visualization(
             if (filters.minBreadth !== null && !isNaN(filters.minBreadth)) {{
                 const breadth = (ref.coverage_breadth || 0) * 100; // Convert to percentage
                 if (breadth < filters.minBreadth) {{
-                    return false;
-                }}
-            }}
-            
-            // Check exclude unknown
-            if (filters.excludeUnknown) {{
-                const species = (ref.viral_species || ref.organism || '').toLowerCase();
-                if (species === 'unknown') {{
                     return false;
                 }}
             }}
@@ -10022,6 +10017,163 @@ Examples
             sample_fastq_by_name.setdefault(sname, str(Path(sf).expanduser().resolve()))
         except Exception:
             continue
+
+    # Z-score controls: resolve to sample names (for scheduling and early annotation).
+    zscore_enabled = str(getattr(args, "zscore", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
+
+    def _is_water_sample_name(name: str) -> bool:
+        n = (name or "").lower()
+        return ("water" in n) or ("h2o" in n) or ("h20" in n)
+
+    def _parse_zscore_controls_to_sample_names(raw: Optional[str]) -> List[str]:
+        if not raw:
+            return []
+        raw = str(raw).strip()
+        requested_raw: List[str] = []
+        try:
+            p = Path(raw).expanduser()
+            if raw and p.exists() and p.is_file():
+                with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        requested_raw.append(line)
+            else:
+                requested_raw = [x.strip() for x in raw.split(",") if x.strip()]
+        except Exception:
+            requested_raw = []
+
+        requested = [str(Path(x).expanduser().resolve()) for x in requested_raw if x]
+        inv = {str(Path(fp).expanduser().resolve()): s for s, fp in (sample_fastq_by_name or {}).items() if fp}
+        controls: List[str] = []
+        seen = set()
+        for pth in requested:
+            sname = inv.get(pth)
+            if not sname:
+                logger.warning(f"Z-score control FASTQ not found in inputs: {pth} (skipping)")
+                continue
+            if sname in seen:
+                continue
+            seen.add(sname)
+            controls.append(sname)
+        return controls
+
+    zscore_controls_raw = getattr(args, "zscore_controls", None)
+    manual_controls = _parse_zscore_controls_to_sample_names(zscore_controls_raw)
+    auto_controls = [s for s in sample_fastq_by_name.keys() if _is_water_sample_name(s)]
+    zscore_control_sample_names: List[str] = manual_controls if manual_controls else auto_controls
+    zscore_control_set = set(zscore_control_sample_names)
+
+    def _annotate_sample_zscores(sample_name: str) -> None:
+        """
+        Write zscore + zscore_controls into:
+        - <sample>/**/<sample>_final_selected_references.json
+        - <sample>/**/<accession>/<accession>.json
+
+        Only applies when Z-score is enabled and >=2 controls are available.
+        """
+        if not zscore_enabled or len(zscore_control_sample_names) < 2:
+            return
+        import math
+        from statistics import mean, stdev
+
+        sample_root = output_dir / sample_name
+        if not sample_root.exists():
+            return
+
+        # Find final JSONs for this sample (single or multi-db).
+        sample_final_jsons = list(sample_root.rglob(f"{sample_name}_final_selected_references.json"))
+        if not sample_final_jsons:
+            return
+
+        def _label(hit: dict) -> str:
+            if not isinstance(hit, dict):
+                return ""
+            for k in ("viral_species", "organism", "accession"):
+                v = (hit.get(k) or "").strip()
+                if v:
+                    return v
+            return ""
+
+        eps = 1e-6
+        z_cap = 100.0
+
+        for jf in sample_final_jsons:
+            try:
+                base_dir = jf.parent
+                db_name = base_dir.name if base_dir.name in ("RVDB", "RefSeq", "Custom") else None
+
+                with open(jf, "r", encoding="utf-8", errors="replace") as f:
+                    hits = json.load(f) or []
+                if not isinstance(hits, list) or not hits:
+                    continue
+
+                # Load controls for this same db layout (if present).
+                control_maps: List[Dict[str, int]] = []
+                for c in zscore_control_sample_names:
+                    c_dir = output_dir / c
+                    if db_name:
+                        c_dir = c_dir / db_name
+                    c_json = c_dir / f"{c}_final_selected_references.json"
+                    cmap: Dict[str, int] = {}
+                    if c_json.exists():
+                        try:
+                            with open(c_json, "r", encoding="utf-8", errors="replace") as cf:
+                                chits = json.load(cf) or []
+                            if isinstance(chits, list):
+                                for h in chits:
+                                    lab = _label(h)
+                                    if not lab:
+                                        continue
+                                    cmap[lab] = int(h.get("mapped_reads", 0) or 0)
+                        except Exception:
+                            pass
+                    control_maps.append(cmap)
+
+                # Annotate sample hits.
+                for h in hits:
+                    lab = _label(h)
+                    if not lab:
+                        continue
+                    x = int(h.get("mapped_reads", 0) or 0)
+                    y = float(math.log10(x + 1))
+                    y_controls = [float(math.log10(int(cm.get(lab, 0) or 0) + 1)) for cm in control_maps]
+                    mu = float(mean(y_controls)) if y_controls else 0.0
+                    sigma = float(stdev(y_controls)) if len(y_controls) >= 2 else 0.0
+                    denom = sigma if sigma > 0 else eps
+                    z = (y - mu) / denom
+                    if z > z_cap:
+                        z = z_cap
+                    elif z < -z_cap:
+                        z = -z_cap
+                    h["zscore"] = float(z)
+                    h["zscore_controls"] = list(zscore_control_sample_names)
+
+                with open(jf, "w") as f:
+                    json.dump(hits, f, indent=2)
+
+                # Sidecars for this json location.
+                for h in hits:
+                    acc = (h.get("accession") or "").strip()
+                    if not acc:
+                        continue
+                    sidecar = base_dir / acc / f"{acc}.json"
+                    if not sidecar.exists():
+                        continue
+                    try:
+                        with open(sidecar, "r", encoding="utf-8", errors="replace") as sf:
+                            payload = json.load(sf) or {}
+                    except Exception:
+                        payload = {}
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    payload["zscore"] = h.get("zscore")
+                    payload["zscore_controls"] = list(zscore_control_sample_names)
+                    with open(sidecar, "w") as sf:
+                        json.dump(payload, sf, indent=2)
+            except Exception as e:
+                logger.debug(f"Z-score annotate failed for {sample_name}: {e}")
     
     # Prepare all sample+database combinations for processing
     sample_db_tasks = []
@@ -10181,6 +10333,10 @@ Examples
         # Dynamic scheduling: submit tasks as threads become available
         # Sort by thread requirement (smaller first for better packing)
         tasks_sorted = sorted(tasks_with_threads, key=lambda x: x[10])
+        # If Z-score is enabled with >=2 controls, prioritize control samples first.
+        # This ensures the background model is available early and allows immediate per-sample annotation.
+        if zscore_enabled and len(zscore_control_sample_names) >= 2 and zscore_control_set:
+            tasks_sorted = sorted(tasks_sorted, key=lambda x: (0 if x[0] in zscore_control_set else 1, x[10]))
         
         # Log to file only
         logger.info(f"Processing {num_tasks} task(s) with {total_threads} total threads (dynamic scheduling)")
@@ -10207,6 +10363,17 @@ Examples
             initial_batch_count = 0
             for task in pending_tasks[:]:
                 required_threads = task[10]
+                if (
+                    zscore_enabled
+                    and len(zscore_control_sample_names) >= 2
+                    and zscore_control_set
+                    and (
+                        any(t[0] in zscore_control_set for t in pending_tasks)
+                        or any(t[0] in zscore_control_set for (t, _) in running_futures.values())
+                    )
+                    and task[0] not in zscore_control_set
+                ):
+                    continue
                 if required_threads <= available_threads:
                     future = executor.submit(_process_sample_task, task)
                     running_futures[future] = (task, required_threads)
@@ -10229,6 +10396,17 @@ Examples
                     # Try to submit pending tasks that fit
                     for task in pending_tasks[:]:
                         required_threads = task[10]
+                        if (
+                            zscore_enabled
+                            and len(zscore_control_sample_names) >= 2
+                            and zscore_control_set
+                            and (
+                                any(t[0] in zscore_control_set for t in pending_tasks)
+                                or any(t[0] in zscore_control_set for (t, _) in running_futures.values())
+                            )
+                            and task[0] not in zscore_control_set
+                        ):
+                            continue
                         if required_threads <= available_threads:
                             future = executor.submit(_process_sample_task, task)
                             running_futures[future] = (task, required_threads)
@@ -10251,6 +10429,14 @@ Examples
                         logger.info(f"Completed ({completed_count}/{num_tasks}): {sample_name} ({db_name}) - {threads_used} threads freed")
                         suffix = f" | CONFIDENT (breadth≥20%): {', '.join(confident_names)}" if confident_names else " | CONFIDENT (breadth≥20%): none"
                         print(f"[{completed_count}/{num_tasks}] {sample_name}: ✓ Completed{suffix}")
+
+                        # If controls are available, annotate Z-scores as soon as a non-control sample finishes.
+                        if (
+                            zscore_enabled
+                            and len(zscore_control_sample_names) >= 2
+                            and sample_name not in zscore_control_set
+                        ):
+                            _annotate_sample_zscores(sample_name)
                     except Exception as e:
                         sample_progress[task[0]] = "Failed"
                         logger.error(f"Task {task[0]} ({task[5]}) failed: {e}")
