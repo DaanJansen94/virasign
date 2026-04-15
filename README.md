@@ -8,7 +8,7 @@ Virasign has been validated to classify the diversity of human pathogens well. H
 
 - **High sensitivity and specificity**: Virasign’s two-step design (map to a large viral DB, deduplicate to one best reference per virus, then remap to that curated set) gives good sensitivity and specificity and accurate per-virus read counts and BAM/FASTQ. See [Design and how Virasign works](#design-and-how-virasign-works) below.
 - **Ease of use**: Single command (`virasign -i input_dir`). Default databases (RVDB, RefSeq) are built in (no separate download), and you can run with minimal setup.
-- **Clear output**: Results for each identified virus are easy to find and use (JSON summaries, per-reference FASTA/BAM/FASTQ), so you can move straight to consensus building or other preferred metagenomics pipeline steps.
+- **Clear output**: Results for each identified virus are easy to find (JSON summaries, per-reference FASTA/BAM/FASTQ), so you can move straight to consensus building or other preferred metagenomics pipeline steps.
 - **NOGR**: NOGR (Non-Overlapping Genomic Regions) hels interpret low-breadth hits and spot false positives such as amplicon contamination (reads accumulating in one region results in a low NOGR). See [`docs/NOGR.md`](docs/NOGR.md).
 - **Z-score**: A background correction using water controls that helps distinguish true hits from background signal (contaminants). See [`docs/Z_SCORE.md`](docs/Z_SCORE.md).
 - **Visualization**: Interactive HTML reports with filterable tables, charts, and heatmaps give an immediate, interpretable overview of viral species, coverage, and identity without extra scripting.
