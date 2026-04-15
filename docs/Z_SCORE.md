@@ -39,7 +39,7 @@ Virasign computes the Z-score using the per-hit remapped `mapped_reads` (the sam
 
 ## Formula
 
-Virasign computes, for each virus, a Z-score as the number of standard deviations that the sample’s log-transformed `mapped_reads` signal is above/below the mean of the selected water controls.
+Virasign computes, for each virus, a Z-score as the number of standard deviations that the sample’s log-transformed mapped_reads signal is above/below the mean of the log-transformed mapped_reads values in the selected water controls.
 
 This follows the same background-correction idea used by CZ ID / IDseq background models. For more information, see:
 
