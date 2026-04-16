@@ -1,6 +1,6 @@
 # Citations
 
-This document lists references for Virasign and key third-party tools and frameworks it depends on.
+This document lists references for Virasign and key third-party tools it depends on.
 
 ## Virasign
 
@@ -8,7 +8,9 @@ If you use Virasign in your research, please cite:
 
 Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification tool designed for nanopore sequencing data (v0.0.5). Zenodo. https://doi.org/10.5281/zenodo.18387008
 
-## Containers (distribution)
+---
+
+## Containers
 
 ### Docker
 
@@ -17,6 +19,8 @@ Merkel D. Docker: lightweight Linux containers for consistent development and de
 ### Singularity
 
 Kurtzer GM, Sochat V, Bauer MW. Singularity: Scientific containers for mobility of compute. PLoS One. 2017 May 11;12(5):e0177459. doi: 10.1371/journal.pone.0177459.
+
+---
 
 ## Core bioinformatics tools used by Virasign
 
@@ -40,6 +44,8 @@ Steinegger M, Söding J. MMseqs2 enables sensitive protein sequence searching fo
 
 Nextclade: clade assignment, QC and sequence analysis. https://github.com/nextstrain/nextclade
 
+---
+
 ## Workflow frameworks (only if applicable to your usage)
 
 If you run Virasign as part of a workflow framework, please cite the framework you used.
@@ -51,4 +57,3 @@ Ewels PA, Peltzer A, Fillinger S, Patel H, Alneberg J, Wilm A, Garcia MU, Di Tom
 ### Nextflow
 
 Di Tommaso P, Chatzou M, Floden EW, Barja PP, Palumbo E, Notredame C. Nextflow enables reproducible computational workflows. Nat Biotechnol. 2017 Apr 11;35(4):316-319. doi: 10.1038/nbt.3820.
-
