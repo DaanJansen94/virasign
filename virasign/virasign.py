@@ -6216,7 +6216,7 @@ def process_sample(sample_name, sample_fastq, database_fasta, output_dir, min_id
         confident_names = save_results(
             sample_name, None, None, all_stats, filtered_stats, curated_stats,
             sample_dir, database_fasta, sample_fastq, min_identity, min_mapped_reads,
-            coverage_depth_threshold, coverage_breadth_threshold, threads,
+            coverage_depth_threshold, coverage_breadth_threshold, min_nogr, threads,
             gzip_fastq=gzip_fastq,
             minimap2_I=minimap2_I,
             blinded_species=blinded_species,
