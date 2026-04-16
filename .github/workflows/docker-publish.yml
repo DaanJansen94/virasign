@@ -46,7 +46,7 @@ jobs:
           PY
           )"
 
-          TAGS="${IMAGE}:${VERSION}"$'\n'"${IMAGE}:${VERSION%.*}"
+          TAGS="${IMAGE}:${VERSION}"
           if [[ "${VERSION}" == "${PROJECT_VERSION}" ]]; then
             TAGS+=$'\n'"${IMAGE}:latest"
           fi
