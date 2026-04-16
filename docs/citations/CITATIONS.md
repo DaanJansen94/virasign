@@ -14,7 +14,7 @@ Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification
 
 ### Docker
 
-Merkel D. Docker: lightweight Linux containers for consistent development and deployment. Linux Journal. 2014 Mar 1;239:Article 2. doi: https://doi.org/10.5555/2600239.2600241.
+Merkel D. Docker: lightweight Linux containers for consistent development and deployment. Linux Journal. 2014 Mar 1;239:Article 2. https://www.linuxjournal.com/content/docker-lightweight-linux-containers-consistent-development-and-deployment
 
 ### Singularity
 
@@ -42,7 +42,7 @@ Steinegger M, Söding J. MMseqs2 enables sensitive protein sequence searching fo
 
 ### Nextclade
 
-Nextclade: clade assignment, QC and sequence analysis. https://github.com/nextstrain/nextclade
+Aksamentov I, Roemer C, Hodcroft EB, Neher RA. Nextclade: clade assignment, mutation calling and quality control for viral genomes. Journal of Open Source Software. 2021;6(67):3773. https://doi.org/10.21105/joss.03773
 
 ---
 
