@@ -7680,6 +7680,7 @@ def generate_html_visualization(
             continue
     
     # Process unfiltered JSON files for metadata
+    run_metadata_by_sample = {}
     for json_file in sorted(unfiltered_json_files):
         try:
             with open(json_file, 'r') as f:
@@ -7691,6 +7692,12 @@ def generate_html_visualization(
             if len(parts) == 2:
                 # Single database case: file is directly in sample directory
                 sample_name = parts[0]
+                # Record per-sample run configuration (used as fallback for HTML header metadata)
+                run_metadata_by_sample[sample_name] = {
+                    "database_source": metadata.get("database_source", ""),
+                    "database_used": metadata.get("database_used", ""),
+                    "filtering_criteria": metadata.get("filtering_criteria", {}),
+                }
                 # Try to detect database from metadata or file path
                 db_source = metadata.get("database_source", "")
                 db_used = metadata.get("database_used", "")
@@ -7773,6 +7780,7 @@ def generate_html_visualization(
                 
                 samples_metadata[sample_name][database] = {
                     "database_source": db_source,
+                    "database_used": metadata.get("database_used", ""),
                     "filtering_criteria": metadata.get("filtering_criteria", {})
                 }
                 
@@ -7787,12 +7795,22 @@ def generate_html_visualization(
         samples_json[sample_name] = {}
         if sample_name in samples_data:
             for database in samples_data[sample_name]:
+                # Prefer metadata for the same database bucket. If missing (common when a custom
+                # accession DB produces RefSeq-labeled references), fall back to the only metadata
+                # entry we have for the sample (which carries the run's filtering_criteria).
+                md_by_db = samples_metadata.get(sample_name, {})
+                md = md_by_db.get(database)
+                if md is None and len(md_by_db) == 1:
+                    md = next(iter(md_by_db.values()))
+                if md is None:
+                    md = run_metadata_by_sample.get(sample_name)
                 samples_json[sample_name][database] = {
                     "references": samples_data[sample_name][database],
-                    "metadata": samples_metadata.get(sample_name, {}).get(database, {
+                    "metadata": md if md is not None else {
                         "database_source": database,
+                        "database_used": "",
                         "filtering_criteria": {}
-                    })
+                    }
                 }
         else:
             if sample_name in samples_metadata:
@@ -7882,13 +7900,17 @@ def generate_html_visualization(
         for sample_name in all_sample_names:
             has_data = False
             if sample_name in db_samples_data and database_name in db_samples_data[sample_name]:
+                md = db_samples_metadata.get(sample_name, {}).get(database_name)
+                if md is None:
+                    md = run_metadata_by_sample.get(sample_name)
                 db_samples_json[sample_name] = {
                     database_name: {
                         "references": db_samples_data[sample_name][database_name],
-                        "metadata": db_samples_metadata.get(sample_name, {}).get(database_name, {
+                        "metadata": md if md is not None else {
                             "database_source": database_name,
+                            "database_used": "",
                             "filtering_criteria": {}
-                        })
+                        }
                     }
                 }
                 has_data = True
@@ -8476,18 +8498,27 @@ def generate_html_visualization(
                 const meta = samplesData[sampleName][db].metadata;
                 const criteria = meta.filtering_criteria || {{}};
                 
-                // Use actual values, or defaults if missing/zero
-                const dbSource = meta.database_source || db;
-                const isRefSeq = dbSource.toLowerCase().includes('refseq');
-                const minId = (criteria.min_identity && criteria.min_identity > 0) ? criteria.min_identity : (isRefSeq ? 95 : 80);
-                const minReads = (criteria.min_mapped_reads && criteria.min_mapped_reads > 0) ? criteria.min_mapped_reads : 100;
-                const depthThresh = (criteria.coverage_depth_threshold && criteria.coverage_depth_threshold > 0) ? criteria.coverage_depth_threshold : 1.0;
-                const breadthThresh = (criteria.coverage_breadth_threshold && criteria.coverage_breadth_threshold > 0) ? criteria.coverage_breadth_threshold : 0.1;
+                // Use actual values, or defaults if missing/zero.
+                // Note: "database_source" describes where a *reference* comes from (e.g. RefSeq).
+                // For custom accession databases we want defaults to behave like RVDB unless the
+                // user explicitly changed thresholds (e.g. ultrasensitive / manual overrides).
+                const dbUsed = (meta.database_used || '').toString().toLowerCase();
+                const dbType = dbUsed.includes('refseq') ? 'RefSeq' : (dbUsed.includes('rvdb') ? 'RVDB' : 'Custom');
+                const isRefSeq = dbType.toLowerCase() === 'refseq';
+                const minIdVal = Number(criteria.min_identity);
+                const minReadsVal = Number(criteria.min_mapped_reads);
+                const depthThreshVal = Number(criteria.coverage_depth_threshold);
+                const breadthThreshVal = Number(criteria.coverage_breadth_threshold);
+
+                const minId = (Number.isFinite(minIdVal) && minIdVal > 0) ? minIdVal : (isRefSeq ? 95 : 80);
+                const minReads = (Number.isFinite(minReadsVal) && minReadsVal > 0) ? minReadsVal : 100;
+                const depthThresh = (Number.isFinite(depthThreshVal) && depthThreshVal > 0) ? depthThreshVal : 1.0;
+                const breadthThresh = (Number.isFinite(breadthThreshVal) && breadthThreshVal > 0) ? breadthThreshVal : 0.1;
                 
                 html += `
                     <div class="metadata-item">
-                        <div class="label">Database Source</div>
-                        <div class="value">${{dbSource}}</div>
+                        <div class="label">Database</div>
+                        <div class="value">${{dbType}}</div>
                     </div>
                     <div class="metadata-item">
                         <div class="label">Min Identity</div>
