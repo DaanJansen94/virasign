@@ -195,8 +195,7 @@ Virasign works in two steps: **(1)** map reads to a large viral DB (e.g. RVDB, R
 - **Why not secondary mapping**: Reporting multiple alignments per read in the first pass would create many false positives with a large DB and lower specificity. Virasign uses primary-only for the first pass, then deduplicates and remaps.
 - **Scale and flexibility**: Large viral DBs give sensitivity and completeness (e.g. catching more true viral hits, including low-abundance or divergent viruses). Custom databases and accessions are supported, and the tool is expandable to future reference sets.
 
-Also on [**Zenodo**](https://zenodo.org/records/18387009), [**Docker**](https://hub.docker.com/repository/docker/daanjansen94/virasign/general), and [**Singularity**](https://cloud.sylabs.io/library/jansendaan94_v2).
-
+Also on [**Zenodo**](https://zenodo.org/records/18387009), [**Docker**](https://hub.docker.com/repository/docker/daanjansen94/virasign/general), and [**Singularity (Sylabs)**](https://cloud.sylabs.io/library/jansendaan94_v2/metatropics/virasign).
 ---
 
 ## Citation
