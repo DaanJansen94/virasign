@@ -43,5 +43,3 @@ Steinegger M, Söding J. MMseqs2 enables sensitive protein sequence searching fo
 ### Nextclade
 
 Aksamentov I, Roemer C, Hodcroft EB, Neher RA. Nextclade: clade assignment, mutation calling and quality control for viral genomes. Journal of Open Source Software. 2021;6(67):3773. https://doi.org/10.21105/joss.03773
-
----
