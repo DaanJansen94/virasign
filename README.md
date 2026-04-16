@@ -208,4 +208,5 @@ Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification
 ```
 
 Also cite other tools Virasign relies on; see [`docs/citations/CITATIONS.md`](docs/citations/CITATIONS.md).
+
 ---
