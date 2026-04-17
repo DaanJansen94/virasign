@@ -4656,8 +4656,63 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                 d["nogr_regions"] = int(nar_reads)
                 d["nogr_bases"] = int(nar_bases)
 
+            # Compute binned coverage profile for interactive HTML visualization.
+            try:
+                cov_profile = compute_coverage_profile_from_bam(ref_bam, threads=samtools_threads)
+            except Exception as e:
+                logger.debug(f"Could not compute coverage profile for {accession}: {e}")
+                cov_profile = None
+            if d is not None and cov_profile is not None:
+                d["coverage_profile"] = cov_profile
+                # Also export a static PDF into the per-virus folder.
+                try:
+                    acc_dir = sample_dir / accession
+                    # Short filenames inside each per-virus folder.
+                    # Keep backward compatibility by removing any legacy-named PDFs we used to write.
+                    legacy_pdfs = [
+                        acc_dir / f"{accession}_coverage.pdf",
+                        acc_dir / f"{accession}_coverage_log_depth_corrected.pdf",
+                    ]
+                    for lp in legacy_pdfs:
+                        try:
+                            if lp.exists():
+                                lp.unlink()
+                        except Exception:
+                            pass
+                    export_coverage_profile_pdf(
+                        cov_profile,
+                        acc_dir / "coverage.pdf",
+                        title=f"{sample_name}: {(d.get('viral_species') or d.get('organism') or accession)} ({accession})",
+                        accession=accession,
+                        segment=d.get("segment"),
+                        mapped_reads=d.get("mapped_reads"),
+                        avg_identity=d.get("avg_identity"),
+                        coverage_depth=d.get("coverage_depth"),
+                        coverage_breadth=d.get("coverage_breadth"),
+                        nogr_regions=d.get("nogr_regions"),
+                        min_identity=min_identity,
+                        threads=samtools_threads,
+                    )
+                    export_coverage_profile_pdf(
+                        cov_profile,
+                        acc_dir / "log_coverage.pdf",
+                        title=f"{sample_name}: {(d.get('viral_species') or d.get('organism') or accession)} ({accession})",
+                        accession=accession,
+                        segment=d.get("segment"),
+                        mapped_reads=d.get("mapped_reads"),
+                        avg_identity=d.get("avg_identity"),
+                        coverage_depth=d.get("coverage_depth"),
+                        coverage_breadth=d.get("coverage_breadth"),
+                        nogr_regions=d.get("nogr_regions"),
+                        min_identity=min_identity,
+                        log_depth_corrected=True,
+                        threads=samtools_threads,
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not export coverage PDF for {accession}: {e}")
+
         # Create per-reference mapped reads FASTQ files directly from the original input FASTQ.
-        # This keeps streaming mode fast while still producing the expected *_mapped_reads.fastq(.gz) outputs.
+        # Use a short, stable filename inside each per-accession folder.
         sample_fastq_path = Path(sample_fastq)
         input_is_gzipped = sample_fastq_path.suffix == ".gz"
 
@@ -4667,8 +4722,18 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             acc_dir = sample_dir / accession
             acc_dir.mkdir(parents=True, exist_ok=True)
             ref_fastq = acc_dir / (
-                f"{accession}_mapped_reads.fastq.gz" if gzip_fastq else f"{accession}_mapped_reads.fastq"
+                "mread.fastq.gz" if gzip_fastq else "mread.fastq"
             )
+            # Remove legacy long filenames if present.
+            for legacy in (
+                acc_dir / f"{accession}_mapped_reads.fastq.gz",
+                acc_dir / f"{accession}_mapped_reads.fastq",
+            ):
+                try:
+                    if legacy.exists() and legacy.resolve() != ref_fastq.resolve():
+                        legacy.unlink()
+                except Exception:
+                    pass
 
             if gzip_fastq:
                 f_out_ctx = gzip.open(ref_fastq, "wt", compresslevel=6, encoding="utf-8", newline="\n")
@@ -4827,7 +4892,7 @@ def _write_virasign_hit_json_sidecars(
         acc_dir = _per_reference_folder_for_row(sample_dir, row)
         if acc_dir is None:
             continue
-        fastq_name = f"{acc}_mapped_reads.fastq.gz" if gzip_fastq else f"{acc}_mapped_reads.fastq"
+        fastq_name = "mread.fastq.gz" if gzip_fastq else "mread.fastq"
         meta_name = f"{acc}.json"
         hit_out = {k: v for k, v in row.items()}
         hit_out["nextclade_clade"] = _nextclade_sidecar_str(hit_out.get("nextclade_clade"))
@@ -5207,6 +5272,58 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
                 nar_reads, nar_bases = 0, 0
             stat["nogr_regions"] = int(nar_reads)
             stat["nogr_bases"] = int(nar_bases)
+
+            # Compute binned coverage profile for interactive HTML visualization.
+            try:
+                cov_profile = compute_coverage_profile_from_bam(ref_bam, threads=samtools_threads)
+            except Exception as e:
+                logger.debug(f"Could not compute coverage profile for {accession}: {e}")
+                cov_profile = None
+            if cov_profile is not None:
+                stat["coverage_profile"] = cov_profile
+                # Also export a static PDF into the per-virus folder.
+                try:
+                    legacy_pdfs = [
+                        acc_dir / f"{accession}_coverage.pdf",
+                        acc_dir / f"{accession}_coverage_log_depth_corrected.pdf",
+                    ]
+                    for lp in legacy_pdfs:
+                        try:
+                            if lp.exists():
+                                lp.unlink()
+                        except Exception:
+                            pass
+                    export_coverage_profile_pdf(
+                        cov_profile,
+                        acc_dir / "coverage.pdf",
+                        title=f"{sample_name}: {(stat.get('viral_species') or stat.get('organism') or accession)} ({accession})",
+                        accession=accession,
+                        segment=stat.get("segment"),
+                        mapped_reads=stat.get("mapped_reads"),
+                        avg_identity=stat.get("avg_identity"),
+                        coverage_depth=stat.get("coverage_depth"),
+                        coverage_breadth=stat.get("coverage_breadth"),
+                        nogr_regions=stat.get("nogr_regions"),
+                        min_identity=min_identity,
+                        threads=samtools_threads,
+                    )
+                    export_coverage_profile_pdf(
+                        cov_profile,
+                        acc_dir / "log_coverage.pdf",
+                        title=f"{sample_name}: {(stat.get('viral_species') or stat.get('organism') or accession)} ({accession})",
+                        accession=accession,
+                        segment=stat.get("segment"),
+                        mapped_reads=stat.get("mapped_reads"),
+                        avg_identity=stat.get("avg_identity"),
+                        coverage_depth=stat.get("coverage_depth"),
+                        coverage_breadth=stat.get("coverage_breadth"),
+                        nogr_regions=stat.get("nogr_regions"),
+                        min_identity=min_identity,
+                        log_depth_corrected=True,
+                        threads=samtools_threads,
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not export coverage PDF for {accession}: {e}")
         else:
             logger.warning(f"  No alignments found for {accession} in remapped SAM")
             stat["nogr_regions"] = int(stat.get("nogr_regions", 0) or 0)
@@ -5217,9 +5334,17 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             read_ids_for_this_ref = read_ids_by_reference[accession]
             logger.info(f"  Extracting {len(read_ids_for_this_ref)} read(s) that mapped to {accession}...")
 
-            ref_fastq = acc_dir / (
-                f"{accession}_mapped_reads.fastq.gz" if gzip_fastq else f"{accession}_mapped_reads.fastq"
-            )
+            ref_fastq = acc_dir / ("mread.fastq.gz" if gzip_fastq else "mread.fastq")
+            # Remove legacy long filenames if present.
+            for legacy in (
+                acc_dir / f"{accession}_mapped_reads.fastq.gz",
+                acc_dir / f"{accession}_mapped_reads.fastq",
+            ):
+                try:
+                    if legacy.exists() and legacy.resolve() != ref_fastq.resolve():
+                        legacy.unlink()
+                except Exception:
+                    pass
             sample_fastq_path = Path(sample_fastq)
             is_gzipped = sample_fastq_path.suffix == ".gz"
 
@@ -5368,6 +5493,471 @@ def compute_nogr_from_bam(bam_path: Path) -> tuple:
         selected_bases += int(best_bases or 0)
 
     return int(selected_reads), int(selected_bases)
+
+
+def compute_coverage_profile_from_bam(
+    bam_path: Path,
+    *,
+    num_bins: int = 1000,
+    threads: int = 1,
+) -> Optional[dict]:
+    """
+    Compute a binned coverage depth profile from a per-reference BAM.
+
+    Uses ``samtools depth -a`` to get per-base depth, then bins into *num_bins*
+    windows.  Returns a dict with ``ref_len``, ``bin_size``, and ``depths``
+    (list of per-bin mean depths), or *None* on failure.
+    """
+    bam_path = Path(bam_path)
+    if not bam_path.exists():
+        return None
+
+    # samtools depth supports -@/--threads; use run threads when available.
+    t = max(1, int(threads or 1))
+    cmd = ["samtools", "depth", "-a", "-J", "-@", str(max(0, t - 1)), str(bam_path)]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except Exception:
+        return None
+
+    per_base: list = []
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 3:
+                try:
+                    per_base.append(int(parts[2]))
+                except ValueError:
+                    per_base.append(0)
+    finally:
+        try:
+            if proc.stdout:
+                proc.stdout.close()
+        except Exception:
+            pass
+        proc.wait()
+
+    ref_len = len(per_base)
+    if ref_len == 0:
+        return None
+
+    actual_bins = min(num_bins, ref_len)
+    bin_size = ref_len / actual_bins
+    binned: list = []
+    for i in range(actual_bins):
+        start = int(i * bin_size)
+        end = int((i + 1) * bin_size)
+        if end <= start:
+            end = start + 1
+        window = per_base[start:end]
+        binned.append(round(sum(window) / len(window), 2) if window else 0)
+
+    return {
+        "ref_len": ref_len,
+        "bin_size": round(bin_size, 1),
+        "depths": binned,
+    }
+
+
+def export_coverage_profile_pdf(
+    coverage_profile: dict,
+    out_pdf_path: Path,
+    *,
+    title: str = "",
+    accession: Optional[str] = None,
+    segment: Optional[str] = None,
+    mapped_reads: Optional[int] = None,
+    avg_identity: Optional[float] = None,
+    coverage_depth: Optional[float] = None,
+    coverage_breadth: Optional[float] = None,
+    nogr_regions: Optional[int] = None,
+    min_identity: Optional[float] = None,
+    log_depth_corrected: bool = False,
+    threads: int = 1,
+) -> bool:
+    """
+    Export a static coverage plot PDF from a binned coverage profile.
+
+    Notes:
+    - Uses matplotlib (if available). If matplotlib is not installed, returns False.
+    - This is written into the per-virus folder so users have a portable artifact without opening HTML.
+    """
+    out_pdf_path = Path(out_pdf_path)
+
+    def _write_minimal_pdf_lineplot(
+        *,
+        xs: List[float],
+        ys: List[float],
+        x_max: float,
+        y_max: float,
+        title_line1: str,
+        title_line2: str = "",
+        y_axis_label: str = "Depth (x)",
+        accession: str = "",
+        segment: str = "",
+        metrics: Optional[dict] = None,
+    ) -> bool:
+        """
+        Write a tiny single-page PDF with a line plot.
+
+        This intentionally avoids optional dependencies (matplotlib/reportlab) so the conda env
+        can stay light. The output is simple but portable.
+        """
+        if not xs or not ys or len(xs) != len(ys):
+            return False
+
+        # A4 landscape in points.
+        W, H = 842.0, 595.0
+        margin_l = 60.0
+        margin_r = 36.0
+        margin_b = 60.0
+        margin_t = 70.0
+        header_h = 120.0
+
+        origin_x = margin_l
+        origin_y = margin_b
+        plot_w = W - margin_l - margin_r
+        plot_h = H - margin_t - margin_b - header_h
+
+        x_max = float(x_max or 1.0)
+        y_max = float(y_max or 1.0)
+        if x_max <= 0:
+            x_max = 1.0
+        if y_max <= 0:
+            y_max = 1.0
+
+        def _map_x(x: float) -> float:
+            return origin_x + (float(x) / x_max) * plot_w
+
+        def _map_y(y: float) -> float:
+            return origin_y + (float(y) / y_max) * plot_h
+
+        # Downsample for PDF size if needed.
+        step = 1
+        n = len(xs)
+        if n > 4000:
+            step = max(1, n // 4000)
+        pts = [(_map_x(xs[i]), _map_y(ys[i])) for i in range(0, n, step)]
+        if len(pts) < 2:
+            return False
+
+        def _fmt_km(v: float) -> str:
+            try:
+                v = float(v)
+            except Exception:
+                return str(v)
+            av = abs(v)
+            if av >= 1_000_000:
+                return f"{v/1_000_000:.1f}M"
+            if av >= 1_000:
+                return f"{v/1_000:.1f}k"
+            if v >= 10:
+                return f"{v:.0f}"
+            return f"{v:.2f}".rstrip("0").rstrip(".")
+
+        def _nice_ticks(max_val: float, n: int = 5) -> List[float]:
+            # Simple "nice" tick generator: pick step from {1,2,5} * 10^k.
+            if max_val <= 0:
+                return [0.0, 1.0]
+            import math
+            raw = max_val / max(1, (n - 1))
+            k = 10 ** math.floor(math.log10(raw))
+            for m in (1, 2, 5, 10):
+                step = m * k
+                if step >= raw:
+                    break
+            top = math.ceil(max_val / step) * step
+            ticks = [i * step for i in range(int(top / step) + 1)]
+            return ticks[: max(2, n + 2)]
+
+        # Build content stream (PDF drawing operators).
+        lines: List[str] = []
+        # Title
+        def _pdf_escape(s: str) -> str:
+            return (s or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+        t1 = _pdf_escape(title_line1.strip())
+        t2 = _pdf_escape(title_line2.strip())
+
+        # Header card (title + metric tiles) aligned to the plot "card"
+        header_x = origin_x - 8.0
+        header_w = plot_w + 16.0
+        header_top = H - margin_t + 5.0
+        header_y = header_top - (header_h - 10.0)
+        header_card_h = header_h - 10.0
+
+        # background + border
+        lines.append("0.95 0.96 0.99 rg")
+        lines.append(f"{header_x:.2f} {header_y:.2f} {header_w:.2f} {header_card_h:.2f} re f")
+        lines.append("0.80 0.82 0.87 RG 1 w")
+        lines.append(f"{header_x:.2f} {header_y:.2f} {header_w:.2f} {header_card_h:.2f} re S")
+
+        # Title (sample: virus)
+        lines.append(
+            f"BT /F1 18 Tf 0.10 0.12 0.18 rg {header_x + 18:.2f} {header_y + header_card_h - 26:.2f} Td ("
+            + t1
+            + ") Tj ET"
+        )
+        if t2:
+            lines.append(
+                f"BT /F1 10 Tf 0.25 0.25 0.25 rg {header_x + 18:.2f} {header_y + header_card_h - 44:.2f} Td ("
+                + t2
+                + ") Tj ET"
+            )
+        # Accession is included in the main title; don't repeat it as a separate right-aligned label.
+
+        # Metric tiles row
+        m = metrics or {}
+        tiles = [
+            ("Reads", f"{int(m.get('reads') or 0):,}"),
+            ("Identity", f"{float(m.get('identity') or 0.0):.2f}%"),
+            ("Depth", f"{float(m.get('depth') or 0.0):.2f}x"),
+            ("Breadth", f"{float(m.get('breadth_pct') or 0.0):.1f}%"),
+            ("NOGR", f"{int(m.get('nogr') or 0):,}"),
+        ]
+        seg_s = (segment or "").strip()
+        if seg_s and seg_s.upper() not in ("NA", "N/A", "NONE", "NULL"):
+            tiles.append(("Segment", seg_s))
+        tile_gap = 10.0
+        tile_h = 34.0
+        tile_y = header_y + 12.0
+        tile_w = (header_w - tile_gap * (len(tiles) - 1) - 24.0) / len(tiles)
+        tile_x0 = header_x + 12.0
+        for i, (lbl, val) in enumerate(tiles):
+            x = tile_x0 + i * (tile_w + tile_gap)
+            lines.append("1 1 1 rg")
+            lines.append(f"{x:.2f} {tile_y:.2f} {tile_w:.2f} {tile_h:.2f} re f")
+            lines.append("0.82 0.84 0.88 RG 0.8 w")
+            lines.append(f"{x:.2f} {tile_y:.2f} {tile_w:.2f} {tile_h:.2f} re S")
+            lbl_esc = _pdf_escape(lbl)
+            val_esc = _pdf_escape(val)
+            lines.append(f"BT /F1 8 Tf 0.35 0.35 0.35 rg {x + 8:.2f} {tile_y + tile_h - 11:.2f} Td ({lbl_esc}) Tj ET")
+            lines.append(f"BT /F1 12 Tf 0.10 0.12 0.18 rg {x + 8:.2f} {tile_y + 9:.2f} Td ({val_esc}) Tj ET")
+
+        # Plot card background + border (match header tone)
+        lines.append("0.95 0.96 0.99 rg")
+        lines.append(f"{origin_x - 8:.2f} {origin_y - 8:.2f} {plot_w + 16:.2f} {plot_h + 16:.2f} re f")
+        lines.append("0.90 0.91 0.93 RG 1 w")
+        lines.append(f"{origin_x - 8:.2f} {origin_y - 8:.2f} {plot_w + 16:.2f} {plot_h + 16:.2f} re S")
+
+        # Grid (light)
+        y_ticks = _nice_ticks(y_max, n=6)
+        # Ensure the y-axis scale matches the top tick so tick labels/grid never render "above" the plot.
+        # (If the top tick is > y_max, we'd otherwise map it above the plot area.)
+        try:
+            y_scale_max = float(max(y_ticks) if y_ticks else y_max)
+        except Exception:
+            y_scale_max = float(y_max or 1.0)
+        if y_scale_max <= 0:
+            y_scale_max = 1.0
+        y_max = y_scale_max
+        x_ticks = [0.0, x_max * 0.25, x_max * 0.5, x_max * 0.75, x_max]
+        lines.append("0.85 0.87 0.90 RG 0.6 w")
+        for yt in y_ticks:
+            y = _map_y(yt)
+            lines.append(f"{origin_x:.2f} {y:.2f} m {origin_x + plot_w:.2f} {y:.2f} l S")
+        for xt in x_ticks:
+            x = _map_x(xt)
+            lines.append(f"{x:.2f} {origin_y:.2f} m {x:.2f} {origin_y + plot_h:.2f} l S")
+
+        # Axes (dark)
+        lines.append("0 0 0 RG 1 w")
+        lines.append(f"{origin_x:.2f} {origin_y:.2f} m {origin_x + plot_w:.2f} {origin_y:.2f} l S")
+        lines.append(f"{origin_x:.2f} {origin_y:.2f} m {origin_x:.2f} {origin_y + plot_h:.2f} l S")
+
+        # Tick labels
+        # Y labels
+        # Place y tick labels based on label length so they don't drift too far left
+        # for small log-scaled values (e.g., 0.1, 0.3, 1.2).
+        y_tick_labels = []
+        for yt in y_ticks:
+            try:
+                y_tick_labels.append(_pdf_escape(_fmt_km(yt)))
+            except Exception:
+                y_tick_labels.append(_pdf_escape(str(yt)))
+        max_y_chars = max((len(s) for s in y_tick_labels), default=1)
+        # Approximate text width: Helvetica ~0.5em per char; font size is 9.
+        # Keep within a sensible range so it never overlaps the axis or gets too far left.
+        y_label_dx = min(28.0, max(14.0, 6.0 + max_y_chars * 5.0))
+        y_label_x = origin_x - y_label_dx
+        y_tick_x0 = origin_x - 3.0
+        for yt in y_ticks:
+            y = _map_y(yt)
+            # Keep labels within plot bounds (avoid drifting above the plot area).
+            y = min(y, origin_y + plot_h - 2)
+            lbl = _pdf_escape(_fmt_km(yt))
+            lines.append(f"BT /F1 9 Tf 0.25 0.25 0.25 rg {y_label_x:.2f} {y - 3:.2f} Td ({lbl}) Tj ET")
+            # tick mark
+            lines.append(f"{y_tick_x0:.2f} {y:.2f} m {origin_x:.2f} {y:.2f} l S")
+        # X labels
+        for xt in x_ticks:
+            x = _map_x(xt)
+            lbl = _pdf_escape(_fmt_km(xt))
+            lines.append(f"BT /F1 9 Tf 0.25 0.25 0.25 rg {x - 8:.2f} {origin_y - 18:.2f} Td ({lbl}) Tj ET")
+            lines.append(f"{x:.2f} {origin_y:.2f} m {x:.2f} {origin_y - 3:.2f} l S")
+        # Axis labels
+        lines.append(f"BT /F1 10 Tf 0 0 0 rg {origin_x + plot_w/2 - 60:.2f} {origin_y - 38:.2f} Td (Genome position (bp)) Tj ET")
+        # Y-axis label: rotate 90° and center it to avoid overlapping top tick labels.
+        # PDF text rotation via Tm: [0 1 -1 0 tx ty]
+        # Keep offset similar to x-axis title spacing (~38pt).
+        y_lab = _pdf_escape(y_axis_label)
+        lines.append(f"BT /F1 10 Tf 0 0 0 rg 0 1 -1 0 {origin_x - 38:.2f} {origin_y + plot_h/2:.2f} Tm ({y_lab}) Tj ET")
+
+        # Filled area under curve + stroke line, but do NOT draw through zero-coverage regions.
+        # We split into contiguous segments where depth > 0.
+        lines.append("0.23 0.36 0.86 rg 0.0 0.0 0.0 RG 0.9 w")
+        segments: List[List[Tuple[float, float]]] = []
+        cur: List[Tuple[float, float]] = []
+        # Determine "covered" from the original ys (not mapped y), using the same downsampling step.
+        for i in range(0, n, step):
+            x_m, y_m = _map_x(xs[i]), _map_y(ys[i])
+            covered = (float(ys[i] or 0.0) > 0.0)
+            if covered:
+                cur.append((x_m, y_m))
+            else:
+                if len(cur) >= 2:
+                    segments.append(cur)
+                cur = []
+        if len(cur) >= 2:
+            segments.append(cur)
+
+        for seg in segments:
+            x0, y0 = seg[0]
+            x_last, _y_last = seg[-1]
+            # Area polygon: baseline -> curve -> baseline
+            lines.append(f"{x0:.2f} {origin_y:.2f} m {x0:.2f} {y0:.2f} l")
+            for x, y in seg[1:]:
+                lines.append(f"{x:.2f} {y:.2f} l")
+            lines.append(f"{x_last:.2f} {origin_y:.2f} l h f")
+
+        # Stroke line on top (per segment)
+        lines.append("0.23 0.36 0.86 RG 1.3 w")
+        for seg in segments:
+            x0, y0 = seg[0]
+            lines.append(f"{x0:.2f} {y0:.2f} m")
+            for x, y in seg[1:]:
+                lines.append(f"{x:.2f} {y:.2f} l")
+            lines.append("S")
+
+        content = ("\n".join(lines) + "\n").encode("utf-8")
+
+        # Minimal PDF object writer.
+        # Objects: 1=catalog, 2=pages, 3=page, 4=content, 5=font
+        objs: List[bytes] = []
+        objs.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+        objs.append(b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        objs.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {W:.0f} {H:.0f}] "
+            f"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".encode("utf-8")
+        )
+        objs.append(b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"endstream")
+        objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+        # Assemble PDF with xref.
+        out = bytearray()
+        out.extend(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets = [0]
+        for i, obj in enumerate(objs, start=1):
+            offsets.append(len(out))
+            out.extend(f"{i} 0 obj\n".encode("ascii"))
+            out.extend(obj)
+            out.extend(b"\nendobj\n")
+        xref_pos = len(out)
+        out.extend(f"xref\n0 {len(objs) + 1}\n".encode("ascii"))
+        out.extend(b"0000000000 65535 f \n")
+        for off in offsets[1:]:
+            out.extend(f"{off:010d} 00000 n \n".encode("ascii"))
+        out.extend(
+            f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode("ascii")
+        )
+
+        out_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            out_pdf_path.write_bytes(bytes(out))
+        except Exception:
+            return False
+        return True
+
+    # Prefer matplotlib when available (nicer output), but fall back to minimal PDF when not.
+    plt = None
+    try:
+        import matplotlib  # type: ignore
+        matplotlib.use("Agg")  # headless
+        import matplotlib.pyplot as _plt  # type: ignore
+        plt = _plt
+    except Exception:
+        plt = None
+
+    if not isinstance(coverage_profile, dict):
+        return False
+    depths = coverage_profile.get("depths") or []
+    ref_len = int(coverage_profile.get("ref_len") or 0)
+    bin_size = float(coverage_profile.get("bin_size") or 1)
+    if not depths or ref_len <= 0:
+        return False
+
+    # X positions at bin midpoints.
+    xs = [min(ref_len, int((i + 0.5) * bin_size)) for i in range(len(depths))]
+    ys_raw = [float(y or 0.0) for y in depths]
+    if log_depth_corrected:
+        # Match interactive coverage visualization:
+        # use log10(depth + 1) to keep depths <1x non-negative and preserve zeros.
+        import math
+        ys = [max(0.0, float(math.log10(y + 1.0))) for y in ys_raw]
+        y_label = "log10(Depth + 1)"
+        sub = "Y transform: log10(depth + 1)"
+    else:
+        ys = ys_raw
+        y_label = "Depth (x)"
+        sub = ""
+
+    header = title.strip() if title else "Coverage profile"
+    # Keep the PDF figure clean: only show transform when enabled.
+
+    metrics = {
+        "reads": int(mapped_reads or 0),
+        "identity": float(avg_identity or 0.0),
+        "depth": float(coverage_depth or 0.0),
+        "breadth_pct": float(coverage_breadth or 0.0) * 100.0,
+        "nogr": int(nogr_regions or 0),
+    }
+    if plt is not None:
+        fig = plt.figure(figsize=(11.7, 4.2))  # ~A4 landscape-ish
+        ax = fig.add_subplot(111)
+        # Match the "card" background tone from the lightweight PDF renderer.
+        fig.patch.set_facecolor("#f2f5fc")
+        ax.set_facecolor("#f2f5fc")
+        ax.plot(xs, ys, color="#3b5bdb", linewidth=1.0)
+        ax.fill_between(xs, ys, 0, color="#3b5bdb", alpha=0.15, linewidth=0)
+        ax.set_xlim(0, ref_len)
+        ax.set_xlabel("Genome position (bp)")
+        ax.set_ylabel(y_label)
+        ax.grid(True, which="major", axis="y", alpha=0.25)
+        ax.set_title(header + (f"\n{sub}" if sub else ""), fontsize=12, pad=10)
+        out_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fig.tight_layout()
+            fig.savefig(out_pdf_path, format="pdf")
+        finally:
+            plt.close(fig)
+        return True
+
+    # Minimal PDF fallback.
+    y_max = max(ys) if ys else 1.0
+    return _write_minimal_pdf_lineplot(
+        xs=xs,
+        ys=ys,
+        x_max=float(ref_len),
+        y_max=float(y_max),
+        title_line1=header,
+        title_line2=sub,
+        y_axis_label=y_label,
+        accession=str(accession or ""),
+        segment=str(segment or ""),
+        metrics=metrics,
+    )
+
 
 def find_best_reference_with_index(
     sample_fastq: Path,
@@ -6962,8 +7552,18 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 logger.info(f"NOGR filter removed {dropped} reference(s) with NOGR < {int(min_nogr or 0)}")
 
         # Write curated JSON after per-reference outputs so it includes BAM-derived stats (e.g., NOGR).
+        # Keep this *sample-level* JSON lightweight: omit large per-base / per-bin vectors such as coverage_profile.
+        curated_for_final_json = []
+        for d in curated_descriptions:
+            if not isinstance(d, dict):
+                continue
+            if "coverage_profile" in d:
+                dd = {k: v for k, v in d.items() if k != "coverage_profile"}
+                curated_for_final_json.append(dd)
+            else:
+                curated_for_final_json.append(d)
         with open(curated_json_file, 'w') as f:
-            json.dump(curated_descriptions, f, indent=2)
+            json.dump(curated_for_final_json, f, indent=2)
         logger.info(f"Saved final selected references ({len(curated_descriptions)} entries total) to {curated_json_file}")
 
         if nextclade:
@@ -7560,6 +8160,30 @@ def generate_html_visualization(
         try:
             with open(json_file, 'r') as f:
                 data = json.load(f)
+
+            # Enrich hit rows with coverage_profile from per-hit sidecars (kept out of sample-level final JSON
+            # to avoid huge files). This keeps the HTML interactive coverage plots working.
+            try:
+                base_dir = json_file.parent  # contains per-accession folders
+                if isinstance(data, list):
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        if "coverage_profile" in item:
+                            continue
+                        acc = (item.get("accession") or "").strip()
+                        if not acc:
+                            continue
+                        sidecar = base_dir / acc / f"{acc}.json"
+                        if not sidecar.exists():
+                            continue
+                        with open(sidecar, "r", encoding="utf-8", errors="replace") as sf:
+                            payload = json.load(sf)
+                        hit = payload.get("hit") if isinstance(payload, dict) else None
+                        if isinstance(hit, dict) and "coverage_profile" in hit:
+                            item["coverage_profile"] = hit.get("coverage_profile")
+            except Exception:
+                pass
             
             rel_path = json_file.relative_to(output_dir)
             parts = rel_path.parts
@@ -7953,6 +8577,8 @@ def generate_html_visualization(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Virasign Results Summary - {database_name}</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <style>
         * {{
             margin: 0;
@@ -8294,6 +8920,114 @@ def generate_html_visualization(
         button:hover {{
             background: #764ba2;
         }}
+        tr[data-has-coverage="true"] {{
+            cursor: pointer;
+        }}
+        tr[data-has-coverage="true"]:hover {{
+            background: #eef1ff !important;
+        }}
+        .coverage-modal-overlay {{
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 10000;
+            justify-content: center;
+            align-items: center;
+        }}
+        .coverage-modal-overlay.active {{
+            display: flex;
+        }}
+        .coverage-modal {{
+            background: white;
+            border-radius: 12px;
+            width: 90vw;
+            max-width: 1400px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 25px 80px rgba(0,0,0,0.4);
+            position: relative;
+        }}
+        .coverage-modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 24px 28px 16px;
+            border-bottom: 1px solid #e9ecef;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 12px 12px 0 0;
+            color: white;
+        }}
+        .coverage-modal-header h2 {{
+            margin: 0;
+            font-size: 1.3em;
+            line-height: 1.3;
+            max-width: 90%;
+        }}
+        .coverage-modal-header .close-btn {{
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: white;
+            font-size: 1.5em;
+            cursor: pointer;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }}
+        .coverage-modal-header .close-btn:hover {{
+            background: rgba(255,255,255,0.35);
+        }}
+        .coverage-modal-body {{
+            padding: 24px 28px;
+        }}
+        .coverage-stats-row {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }}
+        .coverage-stat-box {{
+            background: #f8f9fa;
+            padding: 12px 16px;
+            border-radius: 8px;
+            text-align: center;
+        }}
+        .coverage-stat-box .cov-val {{
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #667eea;
+        }}
+        .coverage-stat-box .cov-lbl {{
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-top: 2px;
+        }}
+        .coverage-chart-wrap {{
+            position: relative;
+            width: 100%;
+            height: 350px;
+            margin-bottom: 16px;
+        }}
+        .coverage-controls {{
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }}
+        .coverage-controls button {{
+            font-size: 0.85em;
+            padding: 6px 12px;
+        }}
+        .coverage-controls .zoom-hint {{
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-left: auto;
+        }}
     </style>
 </head>
 <body>
@@ -8426,7 +9160,6 @@ def generate_html_visualization(
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <h2>Viral Species Heatmap (All Samples)</h2>
                     <div style="display: flex; gap: 10px;">
-                        <button onclick="downloadHeatmapAsPNG()">📥 Download PNG</button>
                         <button onclick="downloadAllSamplesCSV()">📥 Download CSV</button>
                     </div>
                 </div>
@@ -8434,6 +9167,33 @@ def generate_html_visualization(
                     <!-- Heatmap will be generated by JavaScript -->
                 </div>
             </div>
+"""
+
+        # Add coverage modal overlay (outside .content, shared across all samples)
+        html_content += """
+    <!-- Coverage Visualization Modal -->
+    <div class="coverage-modal-overlay" id="coverageModalOverlay" onclick="if(event.target===this)closeCoverageModal()">
+        <div class="coverage-modal">
+            <div class="coverage-modal-header">
+                <h2 id="coverageModalTitle">Coverage Profile</h2>
+                <button class="close-btn" onclick="closeCoverageModal()" title="Close">&times;</button>
+            </div>
+            <div class="coverage-modal-body">
+                <div class="coverage-stats-row" id="coverageStatsRow"></div>
+                <div class="coverage-controls">
+                    <button onclick="resetCoverageZoom()">🔍 Reset Zoom</button>
+                    <button onclick="toggleCoverageLog()">📊 Toggle Log Scale</button>
+                    <button onclick="downloadCoveragePNG()">PNG</button>
+                    <button onclick="downloadCoverageSVG()">SVG</button>
+                    <span class="zoom-hint">Scroll to zoom · Drag to select region · Shift+drag to pan</span>
+                </div>
+                <div id="coverageTransformInfo" style="font-size:0.85em;color:#6c757d;margin:6px 0 10px;"></div>
+                <div class="coverage-chart-wrap">
+                    <canvas id="coverageCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
 """
         
         # Add JavaScript
@@ -8576,14 +9336,18 @@ def generate_html_visualization(
                 const depth = ref.coverage_depth || 0;
                 const breadth = ref.coverage_breadth || 0;
                 const zscore = (ref.zscore !== undefined && ref.zscore !== null) ? ref.zscore : null;
+                const hasCov = !!(ref.coverage_profile && ref.coverage_profile.depths && ref.coverage_profile.depths.length > 0);
+                const covClick = hasCov ? `onclick="openCoverageModal('${{sampleName}}','${{accession}}')"` : '';
+                const covTitle = hasCov ? 'title="Click to view coverage plot"' : '';
                 
                 html += `
                     <tr data-accession="${{accession}}" data-organism="${{organism}}" data-species="${{species}}" 
                         data-clade="${{cladeAttr}}"
                         data-segment="${{segmentAttr}}"
                         data-reads="${{reads}}" data-nogr-regions="${{nogrRegions}}" data-nogr-bases="${{nogrBases}}"
-                        data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}" data-zscore="${{zscore === null ? '' : zscore}}">
-                        <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank">${{accession}}</a></td>
+                        data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}" data-zscore="${{zscore === null ? '' : zscore}}"
+                        data-has-coverage="${{hasCov}}" ${{covClick}} ${{covTitle}}>
+                        <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank" onclick="event.stopPropagation()">${{accession}}</a></td>
                         <td>${{organism}}</td>
                         <td>${{species}}</td>
                         <td>${{cladeDisp}}</td>
@@ -8591,7 +9355,7 @@ def generate_html_visualization(
                         <td class="stats">${{reads.toLocaleString()}}</td>
                         <td class="stats">${{identity.toFixed(2)}}%</td>
                         <td class="stats">${{depth.toFixed(2)}}x</td>
-                        <td class="stats">${{(breadth * 100).toFixed(1)}}%</td>
+                        <td class="stats">${{(breadth * 100).toFixed(1)}}%${{hasCov ? ' <span style="font-size:0.85em;opacity:0.7" title="View coverage plot">📊</span>' : ''}}</td>
                         <td class="stats">${{nogrDisp}}</td>
                         <td class="stats">${{zscore === null ? '—' : Number(zscore).toFixed(2)}}</td>
                     </tr>
@@ -8846,7 +9610,7 @@ def generate_html_visualization(
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h3>Mapped Reads</h3>
                         <div>
-                            <button onclick="downloadChart('${{sampleName}}', 'reads', 'png')">📥 Download PNG</button>
+                            <button onclick="downloadChart('${{sampleName}}', 'reads', 'svg')">SVG</button>
                         </div>
                     </div>
                     <div style="position: relative; width: 100%; height: 250px;">
@@ -8857,7 +9621,7 @@ def generate_html_visualization(
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h3>Identity (%)</h3>
                         <div>
-                            <button onclick="downloadChart('${{sampleName}}', 'identity', 'png')">📥 Download PNG</button>
+                            <button onclick="downloadChart('${{sampleName}}', 'identity', 'svg')">SVG</button>
                         </div>
                     </div>
                     <div style="position: relative; width: 100%; height: 250px;">
@@ -8868,7 +9632,7 @@ def generate_html_visualization(
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h3>Coverage Depth</h3>
                         <div>
-                            <button onclick="downloadChart('${{sampleName}}', 'depth', 'png')">📥 Download PNG</button>
+                            <button onclick="downloadChart('${{sampleName}}', 'depth', 'svg')">SVG</button>
                         </div>
                     </div>
                     <div style="position: relative; width: 100%; height: 250px;">
@@ -8879,7 +9643,7 @@ def generate_html_visualization(
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h3>Coverage Breadth (%)</h3>
                         <div>
-                            <button onclick="downloadChart('${{sampleName}}', 'breadth', 'png')">📥 Download PNG</button>
+                            <button onclick="downloadChart('${{sampleName}}', 'breadth', 'svg')">SVG</button>
                         </div>
                     </div>
                     <div style="position: relative; width: 100%; height: 250px;">
@@ -9034,29 +9798,173 @@ def generate_html_visualization(
             if (!chart) return;
             
             if (format === 'png') {{
-                // High quality PNG: temporarily increase canvas resolution
-                const originalWidth = canvas.width;
-                const originalHeight = canvas.height;
-                const scale = 3; // 3x resolution for high quality
+                // Document-quality PNG:
+                // - temporarily render at a larger CSS size (so labels/ticks are not tiny)
+                // - temporarily bump devicePixelRatio for crispness
+                const originalDpr = chart.options.devicePixelRatio || window.devicePixelRatio || 1;
+                const exportDpr = 3; // good for docs, not huge
+                const originalResponsive = chart.options.responsive;
+                const originalMaintain = chart.options.maintainAspectRatio;
+                const originalIndexAxis = chart.options.indexAxis;
+                const nBars = (chart.data && chart.data.labels) ? chart.data.labels.length : 0;
+                // For many viruses, a horizontal bar chart is much more readable in raster exports.
+                const exportW = 1800;
+                const exportH = Math.max(900, 220 + (nBars * 42));
+
+                try {{
+                    chart.options.responsive = false;
+                    chart.options.maintainAspectRatio = false;
+                    chart.options.devicePixelRatio = exportDpr;
+                    chart.options.indexAxis = 'y';
+                    if (chart.options.scales && chart.options.scales.x && typeof chart.options.scales.x === 'object') {{
+                        chart.options.scales.x.ticks = chart.options.scales.x.ticks || {{}};
+                        // no '%' suffix for non-percent charts; percent charts already set maxY=100 elsewhere
+                    }}
+                    if (chart.options.scales && chart.options.scales.y && typeof chart.options.scales.y === 'object') {{
+                        chart.options.scales.y.ticks = chart.options.scales.y.ticks || {{}};
+                        chart.options.scales.y.ticks.maxRotation = 0;
+                        chart.options.scales.y.ticks.minRotation = 0;
+                    }}
+                    // Explicit resize is more reliable than changing parent CSS in responsive mode.
+                    chart.resize(exportW, exportH);
+                    chart.update('none');
+
+                    const url = chart.toBase64Image('image/png', 1.0);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `${{sampleName}}_${{chartType}}.png`;
+                    link.click();
+                }} finally {{
+                    chart.options.devicePixelRatio = originalDpr;
+                    chart.options.responsive = originalResponsive;
+                    chart.options.maintainAspectRatio = originalMaintain;
+                    chart.options.indexAxis = originalIndexAxis;
+                    // Let Chart.js refit to container to avoid "squished" charts after export.
+                    chart.resize();
+                    chart.update('none');
+                }}
                 
-                // Temporarily resize canvas for high-res export
-                canvas.width = originalWidth * scale;
-                canvas.height = originalHeight * scale;
-                chart.resize();
-                
-                // Export at high resolution
-                const url = chart.toBase64Image('image/png', 1.0);
-                
-                // Restore original canvas size
-                canvas.width = originalWidth;
-                canvas.height = originalHeight;
-                chart.resize();
-                
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `${{sampleName}}_${{chartType}}.png`;
-                link.click();
             }}
+            if (format === 'svg') {{
+                const svg = chartToEditableBarSVG(chart, {{
+                    title: chartType === 'reads' ? 'Mapped Reads' :
+                           chartType === 'identity' ? 'Identity (%)' :
+                           chartType === 'depth' ? 'Coverage Depth (x)' :
+                           chartType === 'breadth' ? 'Coverage Breadth (%)' : chartType,
+                    yIsPercent: (chartType === 'identity' || chartType === 'breadth')
+                }});
+                downloadTextFile(svg, `${{sampleName}}_${{chartType}}.svg`, 'image/svg+xml;charset=utf-8');
+            }}
+        }}
+
+        function downloadTextFile(text, filename, mime) {{
+            const blob = new Blob([text], {{ type: mime || 'text/plain;charset=utf-8' }});
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+        }}
+
+        function xmlEscape(s) {{
+            return String(s ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\"/g, '&quot;')
+                .replace(/'/g, '&apos;');
+        }}
+
+        // Create an Illustrator-editable SVG from a Chart.js bar chart.
+        // This is intentionally "clean": axes + bars + labels; easy to restyle in Illustrator.
+        function chartToEditableBarSVG(chart, opts) {{
+            opts = opts || {{}};
+            const labels = (chart.data.labels || []).map(String);
+            const data = ((chart.data.datasets || [])[0] || {{}}).data || [];
+            const title = opts.title || 'Chart';
+            const yIsPercent = !!opts.yIsPercent;
+
+            const W = 2000, H = 1000;
+            const mL = 140, mR = 60, mT = 90, mB = 180;
+            const plotW = W - mL - mR;
+            const plotH = H - mT - mB;
+            const x0 = mL, y0 = mT + plotH;
+
+            const vals = data.map(v => Number(v) || 0);
+            const maxVal = Math.max(...vals, 0);
+            const yMax = yIsPercent ? 100 : (maxVal <= 0 ? 1 : maxVal * 1.05);
+
+            const n = Math.max(1, vals.length);
+            const gap = 8;
+            const barW = Math.max(2, (plotW - gap * (n - 1)) / n);
+
+            function yPix(v) {{
+                const vv = Math.max(0, Number(v) || 0);
+                return y0 - (vv / yMax) * plotH;
+            }}
+
+            // ticks
+            const ticks = yIsPercent ? [0, 20, 40, 60, 80, 100] : [0, yMax * 0.25, yMax * 0.5, yMax * 0.75, yMax];
+            function fmtTick(v) {{
+                if (yIsPercent) return `${{Math.round(v)}}%`;
+                if (v >= 1e6) return `${{(v/1e6).toFixed(1)}}M`;
+                if (v >= 1e3) return `${{(v/1e3).toFixed(1)}}k`;
+                if (v >= 10) return `${{v.toFixed(0)}}`;
+                return `${{v.toFixed(2)}}`.replace(/0+$/,'').replace(/\\.$/,'');
+            }}
+
+            let svg = '';
+            svg += `<?xml version="1.0" encoding="UTF-8"?>\\n`;
+            svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${{W}}" height="${{H}}" viewBox="0 0 ${{W}} ${{H}}">\\n`;
+            svg += `<rect x="0" y="0" width="${{W}}" height="${{H}}" fill="#ffffff"/>\\n`;
+            svg += `<text x="${{mL}}" y="55" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#111">${{xmlEscape(title)}}</text>\\n`;
+
+            // grid + y ticks
+            svg += `<g stroke="#dfe3ea" stroke-width="2">\\n`;
+            ticks.forEach(t => {{
+                const y = yPix(t);
+                svg += `<line x1="${{x0}}" y1="${{y}}" x2="${{x0+plotW}}" y2="${{y}}"/>\\n`;
+            }});
+            svg += `</g>\\n`;
+
+            // axes
+            svg += `<g stroke="#111" stroke-width="3">\\n`;
+            svg += `<line x1="${{x0}}" y1="${{y0}}" x2="${{x0+plotW}}" y2="${{y0}}"/>\\n`;
+            svg += `<line x1="${{x0}}" y1="${{mT}}" x2="${{x0}}" y2="${{y0}}"/>\\n`;
+            svg += `</g>\\n`;
+
+            // y labels
+            svg += `<g font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#333">\\n`;
+            ticks.forEach(t => {{
+                const y = yPix(t);
+                svg += `<text x="${{x0-12}}" y="${{y+7}}" text-anchor="end">${{xmlEscape(fmtTick(t))}}</text>\\n`;
+            }});
+            svg += `</g>\\n`;
+
+            // bars
+            svg += `<g fill="#667eea">\\n`;
+            for (let i=0;i<n;i++) {{
+                const v = vals[i];
+                const x = x0 + i * (barW + gap);
+                const y = yPix(v);
+                const h = Math.max(0, y0 - y);
+                svg += `<rect x="${{x}}" y="${{y}}" width="${{barW}}" height="${{h}}" rx="2" ry="2"/>\\n`;
+            }}
+            svg += `</g>\\n`;
+
+            // x labels (rotated)
+            svg += `<g font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#333">\\n`;
+            for (let i=0;i<n;i++) {{
+                const lbl = labels[i] || '';
+                const x = x0 + i * (barW + gap) + barW/2;
+                const y = y0 + 18;
+                const short = (lbl.length > 26) ? (lbl.slice(0,23) + '…') : lbl;
+                svg += `<text x="${{x}}" y="${{y}}" text-anchor="end" transform="rotate(-45 ${{x}} ${{y}})">${{xmlEscape(short)}}</text>\\n`;
+            }}
+            svg += `</g>\\n`;
+
+            svg += `</svg>\\n`;
+            return svg;
         }}
         
         // Get current filter values from the currently active sample
@@ -9307,26 +10215,348 @@ def generate_html_visualization(
             URL.revokeObjectURL(url);
         }}
 
-        function downloadHeatmapAsPNG() {{
-            const container = document.getElementById('heatmap-container');
-            if (!container) return;
-            
-            // High quality PNG: use higher scale
-            const scale = 3; // 3x resolution for high quality
-            html2canvas(container, {{
-                scale: scale,
-                useCORS: true,
-                logging: false,
-                backgroundColor: '#ffffff'
-            }}).then(canvas => {{
-                const url = canvas.toDataURL('image/png', 1.0);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = 'heatmap_all_samples.png';
-                link.click();
-            }});
-        }}
+        // Heatmap export: keep only CSV for reliability across browsers/zoom levels.
         
+        // ── Coverage Visualization Modal ──────────────────────────────
+        let coverageChart = null;
+        let coverageLogScale = false;
+
+        function findRefData(sampleName, accession) {{
+            const sd = samplesData[sampleName];
+            if (!sd) return null;
+            for (const db of Object.keys(sd)) {{
+                const refs = sd[db].references || [];
+                const match = refs.find(r => r.accession === accession);
+                if (match) return match;
+            }}
+            return null;
+        }}
+
+        function openCoverageModal(sampleName, accession) {{
+            const ref = findRefData(sampleName, accession);
+            if (!ref || !ref.coverage_profile) return;
+            const profile = ref.coverage_profile;
+            const depths = profile.depths || [];
+            const refLen = profile.ref_len || depths.length;
+            const binSize = profile.bin_size || 1;
+
+            // Title
+            const title = `${{ref.organism || ref.viral_species || accession}} (${{accession}})`;
+            document.getElementById('coverageModalTitle').textContent = title;
+
+            // Summary stats
+            const statsRow = document.getElementById('coverageStatsRow');
+            const maxDepth = Math.max(...depths, 0);
+            // Keep summary stats identical to the table when available.
+            const meanDepth = (ref.coverage_depth !== undefined && ref.coverage_depth !== null) ? Number(ref.coverage_depth) :
+                (depths.length ? (depths.reduce((a, b) => a + b, 0) / depths.length) : 0);
+            // IMPORTANT: keep breadth exactly consistent with table/JSON (coverage_breadth is computed in the pipeline).
+            const breadthPctRaw = (ref.coverage_breadth !== undefined && ref.coverage_breadth !== null)
+                ? (Number(ref.coverage_breadth) * 100)
+                : (depths.length ? ((depths.filter(d => d > 0).length / depths.length) * 100) : 0);
+            // Match the table’s 1-decimal display.
+            const breadthPct = Number(breadthPctRaw.toFixed(1));
+            statsRow.innerHTML = `
+                <div class="coverage-stat-box"><div class="cov-val">${{refLen.toLocaleString()}}</div><div class="cov-lbl">Genome Length (bp)</div></div>
+                <div class="coverage-stat-box"><div class="cov-val">${{(ref.mapped_reads || 0).toLocaleString()}}</div><div class="cov-lbl">Mapped Reads</div></div>
+                <div class="coverage-stat-box"><div class="cov-val">${{meanDepth.toFixed(1)}}x</div><div class="cov-lbl">Mean Depth</div></div>
+                <div class="coverage-stat-box"><div class="cov-val">${{maxDepth.toFixed(1)}}x</div><div class="cov-lbl">Max Depth</div></div>
+                <div class="coverage-stat-box"><div class="cov-val">${{breadthPct.toFixed(1)}}%</div><div class="cov-lbl">Breadth</div></div>
+                <div class="coverage-stat-box"><div class="cov-val">${{ref.nogr_regions || ref.non_overlapping_reads || 0}}</div><div class="cov-lbl">NOGR Regions</div></div>
+            `;
+
+            // Build labels (genomic positions)
+            const labels = depths.map((_, i) => Math.round(i * binSize));
+            coverageLogScale = false;
+            renderCoverageChart(labels, depths, binSize, refLen);
+
+            document.getElementById('coverageModalOverlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }}
+
+        function renderCoverageChart(labels, depths, binSize, refLen) {{
+            const canvas = document.getElementById('coverageCanvas');
+            if (coverageChart) {{
+                coverageChart.destroy();
+                coverageChart = null;
+            }}
+
+            // Log toggle uses log10(depth + 1) to avoid negative values for depths < 1x (e.g. 0.1x).
+            // Tooltips still show the raw depth values (x coverage).
+            const yValues = coverageLogScale
+                ? depths.map(d => Math.max(0, Math.log10((Number(d) || 0) + 1)))
+                : depths.map(d => Math.max(0, Number(d) || 0));
+
+            // Make the transform explicit in the UI (debug/clarity).
+            const yMin = yValues.length ? Math.min(...yValues) : 0;
+            const yMax = yValues.length ? Math.max(...yValues) : 0;
+            const info = document.getElementById('coverageTransformInfo');
+            if (info) {{
+                info.textContent = coverageLogScale
+                    ? `Y transform: log10(depth + 1). Plotted min=${{yMin.toFixed(4)}}, max=${{yMax.toFixed(4)}}`
+                    : `Y transform: depth (x). Plotted min=${{yMin.toFixed(2)}}x, max=${{yMax.toFixed(2)}}x`;
+            }}
+
+            coverageChart = new Chart(canvas, {{
+                type: 'line',
+                data: {{
+                    labels: labels,
+                    datasets: [{{
+                        label: coverageLogScale ? 'log₁₀(Depth + 1)' : 'Coverage Depth',
+                        data: yValues,
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102,126,234,0.15)',
+                        fill: true,
+                        pointRadius: 0,
+                        borderWidth: 1.5,
+                        // Avoid cubic overshoot below zero (can look like "negative spikes" in log mode).
+                        tension: 0,
+                        cubicInterpolationMode: 'monotone'
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {{ duration: 0 }},
+                    interaction: {{
+                        mode: 'index',
+                        intersect: false
+                    }},
+                    plugins: {{
+                        legend: {{ display: false }},
+                        tooltip: {{
+                            callbacks: {{
+                                title: function(ctx) {{
+                                    const idx = ctx[0].dataIndex;
+                                    const start = Math.round(idx * binSize);
+                                    const end = Math.min(Math.round((idx + 1) * binSize), refLen);
+                                    return `Position: ${{start.toLocaleString()}} – ${{end.toLocaleString()}} bp`;
+                                }},
+                                label: function(ctx) {{
+                                    const raw = depths[ctx.dataIndex];
+                                    return `Depth: ${{raw.toFixed(1)}}x`;
+                                }}
+                            }}
+                        }},
+                        zoom: {{
+                            pan: {{
+                                enabled: true,
+                                mode: 'x',
+                                modifierKey: 'shift'
+                            }},
+                            zoom: {{
+                                wheel: {{ enabled: true, speed: 0.1 }},
+                                pinch: {{ enabled: true }},
+                                drag: {{
+                                    enabled: true,
+                                    backgroundColor: 'rgba(102,126,234,0.1)',
+                                    borderColor: '#667eea',
+                                    borderWidth: 1
+                                }},
+                                mode: 'x'
+                            }}
+                        }}
+                    }},
+                    scales: {{
+                        x: {{
+                            type: 'linear',
+                            title: {{ display: true, text: 'Genome Position (bp)' }},
+                            ticks: {{
+                                callback: function(v) {{
+                                    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+                                    if (v >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+                                    return v;
+                                }},
+                                maxTicksLimit: 15
+                            }},
+                            min: 0,
+                            max: refLen
+                        }},
+                        y: {{
+                            beginAtZero: true,
+                            min: 0,
+                            title: {{ display: true, text: coverageLogScale ? 'log₁₀(Depth + 1)' : 'Depth (x)' }},
+                            ticks: {{
+                                callback: function(v) {{
+                                    if (coverageLogScale) return v.toFixed(1);
+                                    return v.toLocaleString();
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+            }});
+
+            // Store profile data for toggle/download
+            coverageChart._covData = {{ labels, depths, binSize, refLen }};
+        }}
+
+        function closeCoverageModal() {{
+            document.getElementById('coverageModalOverlay').classList.remove('active');
+            document.body.style.overflow = '';
+            if (coverageChart) {{
+                coverageChart.destroy();
+                coverageChart = null;
+            }}
+        }}
+
+        function resetCoverageZoom() {{
+            if (coverageChart) coverageChart.resetZoom();
+        }}
+
+        function toggleCoverageLog() {{
+            if (!coverageChart || !coverageChart._covData) return;
+            coverageLogScale = !coverageLogScale;
+            const d = coverageChart._covData;
+            renderCoverageChart(d.labels, d.depths, d.binSize, d.refLen);
+        }}
+
+        function downloadCoveragePNG() {{
+            if (!coverageChart) return;
+            // Document-quality PNG export for coverage plot (bigger render + moderate DPR).
+            const originalDpr = coverageChart.options.devicePixelRatio || window.devicePixelRatio || 1;
+            const exportDpr = 3;
+            const originalResponsive = coverageChart.options.responsive;
+            const originalMaintain = coverageChart.options.maintainAspectRatio;
+            const exportW = 2200;
+            const exportH = 1100;
+
+            try {{
+                coverageChart.options.responsive = false;
+                coverageChart.options.maintainAspectRatio = false;
+                coverageChart.options.devicePixelRatio = exportDpr;
+                coverageChart.resize(exportW, exportH);
+                coverageChart.update('none');
+
+                const url = coverageChart.toBase64Image('image/png', 1.0);
+                const a = document.createElement('a');
+                a.href = url;
+                const title = document.getElementById('coverageModalTitle').textContent || 'coverage';
+                a.download = title.replace(/[^a-zA-Z0-9_-]/g, '_') + '_coverage.png';
+                a.click();
+            }} finally {{
+                coverageChart.options.devicePixelRatio = originalDpr;
+                coverageChart.options.responsive = originalResponsive;
+                coverageChart.options.maintainAspectRatio = originalMaintain;
+                // Let Chart.js refit to container to avoid "squished" chart after export.
+                coverageChart.resize();
+                coverageChart.update('none');
+            }}
+        }}
+
+        function downloadCoverageSVG() {{
+            if (!coverageChart || !coverageChart._covData) return;
+            const d = coverageChart._covData;
+            // Use the currently displayed transform (linear vs log) for the SVG’s y-values,
+            // but keep raw-depth tooltips out (SVG is for Illustrator editing).
+            const yVals = coverageLogScale
+                ? d.depths.map(v => Math.max(0, Math.log10((Number(v) || 0) + 1)))
+                : d.depths.map(v => Math.max(0, Number(v) || 0));
+            const svg = coverageToEditableLineSVG(d.labels, yVals, {{
+                title: document.getElementById('coverageModalTitle')?.textContent || 'Coverage',
+                yLabel: coverageLogScale ? 'log10(Depth + 1)' : 'Depth (x)',
+                xLabel: 'Genome position (bp)',
+            }});
+            const title = document.getElementById('coverageModalTitle').textContent || 'coverage';
+            downloadTextFile(svg, title.replace(/[^a-zA-Z0-9_-]/g, '_') + '_coverage.svg', 'image/svg+xml;charset=utf-8');
+        }}
+
+        function coverageToEditableLineSVG(xVals, yVals, opts) {{
+            opts = opts || {{}};
+            const W = 2400, H = 1200;
+            const mL = 160, mR = 60, mT = 110, mB = 140;
+            const plotW = W - mL - mR;
+            const plotH = H - mT - mB;
+            const x0 = mL, y0 = mT + plotH;
+            const title = opts.title || 'Coverage';
+            const xLabel = opts.xLabel || 'Position';
+            const yLabel = opts.yLabel || 'Value';
+
+            const xs = (xVals || []).map(v => Number(v) || 0);
+            const ys = (yVals || []).map(v => Math.max(0, Number(v) || 0));
+            const n = Math.min(xs.length, ys.length);
+            if (n < 2) return '';
+            const xMin = 0;
+            const xMax = Math.max(...xs, 1);
+            const yMax = Math.max(...ys, 1);
+
+            function xPix(x) {{ return x0 + ((x - xMin) / (xMax - xMin)) * plotW; }}
+            function yPix(y) {{ return y0 - (y / yMax) * plotH; }}
+            function fmtK(v) {{
+                v = Number(v) || 0;
+                if (v >= 1e6) return (v/1e6).toFixed(1)+'M';
+                if (v >= 1e3) return (v/1e3).toFixed(1)+'k';
+                return String(Math.round(v));
+            }}
+
+            const xTicks = [0, xMax*0.25, xMax*0.5, xMax*0.75, xMax];
+            const yTicks = [0, yMax*0.25, yMax*0.5, yMax*0.75, yMax];
+
+            let svg = '';
+            svg += `<?xml version="1.0" encoding="UTF-8"?>\\n`;
+            svg += `<svg xmlns="http://www.w3.org/2000/svg" width="${{W}}" height="${{H}}" viewBox="0 0 ${{W}} ${{H}}">\\n`;
+            svg += `<rect x="0" y="0" width="${{W}}" height="${{H}}" fill="#ffffff"/>\\n`;
+            svg += `<text x="${{mL}}" y="60" font-family="Helvetica, Arial, sans-serif" font-size="30" fill="#111">${{xmlEscape(title)}}</text>\\n`;
+
+            // grid
+            svg += `<g stroke="#dfe3ea" stroke-width="2">\\n`;
+            yTicks.forEach(t => {{
+                const y = yPix(t);
+                svg += `<line x1="${{x0}}" y1="${{y}}" x2="${{x0+plotW}}" y2="${{y}}"/>\\n`;
+            }});
+            xTicks.forEach(t => {{
+                const x = xPix(t);
+                svg += `<line x1="${{x}}" y1="${{mT}}" x2="${{x}}" y2="${{y0}}"/>\\n`;
+            }});
+            svg += `</g>\\n`;
+
+            // axes
+            svg += `<g stroke="#111" stroke-width="3">\\n`;
+            svg += `<line x1="${{x0}}" y1="${{y0}}" x2="${{x0+plotW}}" y2="${{y0}}"/>\\n`;
+            svg += `<line x1="${{x0}}" y1="${{mT}}" x2="${{x0}}" y2="${{y0}}"/>\\n`;
+            svg += `</g>\\n`;
+
+            // tick labels
+            svg += `<g font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#333">\\n`;
+            yTicks.forEach(t => {{
+                const y = yPix(t);
+                svg += `<text x="${{x0-12}}" y="${{y+7}}" text-anchor="end">${{xmlEscape(t.toFixed(2).replace(/0+$/,'').replace(/\\.$/,''))}}</text>\\n`;
+            }});
+            xTicks.forEach(t => {{
+                const x = xPix(t);
+                svg += `<text x="${{x}}" y="${{y0+35}}" text-anchor="middle">${{xmlEscape(fmtK(t))}}</text>\\n`;
+            }});
+            svg += `</g>\\n`;
+
+            // axis labels
+            svg += `<text x="${{x0 + plotW/2}}" y="${{H-40}}" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#111">${{xmlEscape(xLabel)}}</text>\\n`;
+            svg += `<text x="40" y="${{mT + plotH/2}}" text-anchor="middle" transform="rotate(-90 40 ${{mT + plotH/2}})" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#111">${{xmlEscape(yLabel)}}</text>\\n`;
+
+            // path
+            let dLine = '';
+            let dArea = '';
+            for (let i=0;i<n;i++) {{
+                const x = xPix(xs[i]);
+                const y = yPix(ys[i]);
+                dLine += (i===0 ? `M ${{x}} ${{y}}` : ` L ${{x}} ${{y}}`);
+            }}
+            // area closes at baseline
+            const xStart = xPix(xs[0]);
+            const xEnd = xPix(xs[n-1]);
+            dArea = `M ${{xStart}} ${{y0}} ` + dLine.replace(/^M [^ ]+ [^ ]+/, `L ${{xStart}} ${{yPix(ys[0])}}`) + ` L ${{xEnd}} ${{y0}} Z`;
+
+            svg += `<path d="${{dArea}}" fill="rgba(102,126,234,0.18)" stroke="none"/>\\n`;
+            svg += `<path d="${{dLine}}" fill="none" stroke="#667eea" stroke-width="3"/>\\n`;
+
+            svg += `</svg>\\n`;
+            return svg;
+        }}
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', function(e) {{
+            if (e.key === 'Escape') closeCoverageModal();
+        }});
+
         // Initialize on page load
         window.addEventListener('DOMContentLoaded', function() {{
             createHeatmap();
@@ -9338,7 +10568,7 @@ def generate_html_visualization(
             }}
         }});
     </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- html2canvas no longer needed (PNG heatmap export removed) -->
 </body>
 </html>
 """
