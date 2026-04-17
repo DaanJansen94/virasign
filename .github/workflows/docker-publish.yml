@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Git tag to build (e.g. v0.0.5). Leave empty to build current ref."
+        description: "Git tag to build (e.g. v0.0.6). Leave empty to build current ref."
         required: false
         default: ""
 

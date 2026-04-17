@@ -7,7 +7,7 @@ with readme_path.open("r", encoding="utf-8") as fh:
 
 setup(
     name="virasign",
-    version="0.0.5",
+    version="0.0.6",
     author="Virasign Team",
     description="Virasign: Viral Read ASSIGNment from nanopore sequencing",
     long_description=long_description,
