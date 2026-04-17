@@ -5512,34 +5512,62 @@ def compute_coverage_profile_from_bam(
     if not bam_path.exists():
         return None
 
-    # samtools depth supports -@/--threads; use run threads when available.
+    # samtools depth flags vary across versions/distributions.
+    # Try a small set of commands from "best" to "most compatible".
     t = max(1, int(threads or 1))
-    cmd = ["samtools", "depth", "-a", "-J", "-@", str(max(0, t - 1)), str(bam_path)]
-    try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    except Exception:
-        return None
+    cmd_variants = [
+        # Prefer: include all positions (-a), no max depth cap (-d 0), allow deletions/overlaps handling when supported.
+        ["samtools", "depth", "-a", "-d", "0", "-J", "-@", str(max(0, t - 1)), str(bam_path)],
+        # Same but without -J (older samtools).
+        ["samtools", "depth", "-a", "-d", "0", "-@", str(max(0, t - 1)), str(bam_path)],
+        # No threads option (very old/packaged builds).
+        ["samtools", "depth", "-a", "-d", "0", str(bam_path)],
+        # Absolute fallback: just -a.
+        ["samtools", "depth", "-a", str(bam_path)],
+    ]
 
     per_base: list = []
-    try:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) >= 3:
-                try:
-                    per_base.append(int(parts[2]))
-                except ValueError:
-                    per_base.append(0)
-    finally:
+    last_err = ""
+    for cmd in cmd_variants:
+        per_base = []
         try:
-            if proc.stdout:
-                proc.stdout.close()
-        except Exception:
-            pass
-        proc.wait()
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        except Exception as e:
+            last_err = str(e)
+            continue
+
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) >= 3:
+                    try:
+                        per_base.append(int(parts[2]))
+                    except ValueError:
+                        per_base.append(0)
+        finally:
+            try:
+                if proc.stdout:
+                    proc.stdout.close()
+            except Exception:
+                pass
+            stderr = ""
+            try:
+                stderr = proc.stderr.read() if proc.stderr else ""
+            except Exception:
+                stderr = ""
+            rc = proc.wait()
+
+        if rc == 0 and per_base:
+            break
+        # If samtools depth failed (unknown option etc.), try the next variant.
+        last_err = (stderr or "").strip()
+        per_base = []
 
     ref_len = len(per_base)
     if ref_len == 0:
+        if last_err:
+            logger.debug(f"samtools depth failed for {bam_path} (no coverage profile): {last_err}")
         return None
 
     actual_bins = min(num_bins, ref_len)
@@ -5957,6 +5985,183 @@ def export_coverage_profile_pdf(
         segment=str(segment or ""),
         metrics=metrics,
     )
+
+
+def _ensure_per_accession_coverage_pdfs(
+    sample_dir: Path,
+    sample_name: str,
+    rows: List[dict],
+    *,
+    threads: int = 1,
+) -> None:
+    """
+    Ensure `coverage.pdf` and `log_coverage.pdf` exist in each accession folder.
+
+    This is a robustness pass: some samtools builds or earlier steps may skip/avoid producing
+    coverage artifacts during streaming remap. When the per-accession BAM exists, we can always
+    compute a binned profile and emit the PDFs.
+    """
+    try:
+        sample_dir = Path(sample_dir)
+    except Exception:
+        return
+    if not sample_dir.exists():
+        return
+    t = max(1, int(threads or 1))
+
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        acc = (row.get("accession") or "").strip()
+        if not acc:
+            continue
+        acc_dir = sample_dir / acc
+        bam_path = acc_dir / f"{acc}.bam"
+        if not bam_path.exists():
+            continue
+
+        out_cov = acc_dir / "coverage.pdf"
+        out_log = acc_dir / "log_coverage.pdf"
+        if out_cov.exists() and out_log.exists():
+            continue
+
+        try:
+            cov_profile = compute_coverage_profile_from_bam(bam_path, threads=t)
+        except Exception as e:
+            logger.debug(f"Could not compute coverage profile for {sample_name}:{acc}: {e}")
+            cov_profile = None
+        if cov_profile is None:
+            continue
+
+        title = f"{sample_name}: {(row.get('viral_species') or row.get('organism') or acc)} ({acc})"
+        try:
+            if not out_cov.exists():
+                export_coverage_profile_pdf(
+                    cov_profile,
+                    out_cov,
+                    title=title,
+                    accession=acc,
+                    segment=row.get("segment"),
+                    mapped_reads=row.get("mapped_reads"),
+                    avg_identity=row.get("avg_identity"),
+                    coverage_depth=row.get("coverage_depth"),
+                    coverage_breadth=row.get("coverage_breadth"),
+                    nogr_regions=row.get("nogr_regions"),
+                    threads=t,
+                )
+            if not out_log.exists():
+                export_coverage_profile_pdf(
+                    cov_profile,
+                    out_log,
+                    title=title,
+                    accession=acc,
+                    segment=row.get("segment"),
+                    mapped_reads=row.get("mapped_reads"),
+                    avg_identity=row.get("avg_identity"),
+                    coverage_depth=row.get("coverage_depth"),
+                    coverage_breadth=row.get("coverage_breadth"),
+                    nogr_regions=row.get("nogr_regions"),
+                    log_depth_corrected=True,
+                    threads=t,
+                )
+            # Only log when we actually created something.
+            if out_cov.exists() or out_log.exists():
+                logger.info(f"  Wrote coverage PDFs for {acc}: {out_cov.name}, {out_log.name}")
+        except Exception as e:
+            logger.debug(f"Could not export coverage PDFs for {sample_name}:{acc}: {e}")
+
+
+def _ensure_per_accession_coverage_profiles_and_pdfs(
+    sample_dir: Path,
+    sample_name: str,
+    rows: List[dict],
+    *,
+    threads: int = 1,
+) -> None:
+    """
+    Ensure each hit row has `coverage_profile` (for HTML) and that per-accession PDFs exist.
+
+    This computes the binned profile from the per-accession BAM when needed, stores it on the row
+    (so it will be written into the per-hit sidecar JSON), and emits `coverage.pdf` + `log_coverage.pdf`.
+    """
+    try:
+        sample_dir = Path(sample_dir)
+    except Exception:
+        return
+    if not sample_dir.exists():
+        return
+    t = max(1, int(threads or 1))
+
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        acc = (row.get("accession") or "").strip()
+        if not acc:
+            continue
+        # Support both single-DB layout: sample_dir/<acc>/ and multi-DB layout: sample_dir/<DB>/<acc>/.
+        acc_dir = _per_reference_folder_for_row(sample_dir, row) or (sample_dir / acc)
+        bam_path = acc_dir / f"{acc}.bam"
+        if not bam_path.exists():
+            continue
+
+        cov_profile = row.get("coverage_profile")
+        if not (isinstance(cov_profile, dict) and cov_profile.get("depths")):
+            try:
+                cov_profile = compute_coverage_profile_from_bam(bam_path, threads=t)
+            except Exception as e:
+                logger.debug(f"Could not compute coverage profile for {sample_name}:{acc}: {e}")
+                cov_profile = None
+            if cov_profile is not None:
+                row["coverage_profile"] = cov_profile
+
+        # If we have a profile now, ensure PDFs (this uses the same profile).
+        cov_profile = row.get("coverage_profile")
+        if not (isinstance(cov_profile, dict) and cov_profile.get("depths")):
+            continue
+
+        out_cov = acc_dir / "coverage.pdf"
+        out_log = acc_dir / "log_coverage.pdf"
+        if out_cov.exists() and out_log.exists():
+            continue
+
+        title = f"{sample_name}: {(row.get('viral_species') or row.get('organism') or acc)} ({acc})"
+        try:
+            wrote_any = False
+            if not out_cov.exists():
+                export_coverage_profile_pdf(
+                    cov_profile,
+                    out_cov,
+                    title=title,
+                    accession=acc,
+                    segment=row.get("segment"),
+                    mapped_reads=row.get("mapped_reads"),
+                    avg_identity=row.get("avg_identity"),
+                    coverage_depth=row.get("coverage_depth"),
+                    coverage_breadth=row.get("coverage_breadth"),
+                    nogr_regions=row.get("nogr_regions"),
+                    threads=t,
+                )
+                wrote_any = wrote_any or out_cov.exists()
+            if not out_log.exists():
+                export_coverage_profile_pdf(
+                    cov_profile,
+                    out_log,
+                    title=title,
+                    accession=acc,
+                    segment=row.get("segment"),
+                    mapped_reads=row.get("mapped_reads"),
+                    avg_identity=row.get("avg_identity"),
+                    coverage_depth=row.get("coverage_depth"),
+                    coverage_breadth=row.get("coverage_breadth"),
+                    nogr_regions=row.get("nogr_regions"),
+                    log_depth_corrected=True,
+                    threads=t,
+                )
+                wrote_any = wrote_any or out_log.exists()
+            if wrote_any:
+                logger.info(f"  Wrote coverage artifacts for {acc}: coverage_profile + PDFs")
+        except Exception as e:
+            logger.debug(f"Could not export coverage artifacts for {sample_name}:{acc}: {e}")
 
 
 def find_best_reference_with_index(
@@ -7569,7 +7774,11 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         if nextclade:
             _cleanup_nextclade_intermediates(sample_dir, sample_name)
 
+        # Ensure coverage artifacts exist and coverage_profile is present on each hit row (for HTML + sidecars).
+        _ensure_per_accession_coverage_profiles_and_pdfs(sample_dir, sample_name, curated_descriptions, threads=threads)
+
         # Per-accession sidecar (taxonomy, stats, Nextclade, artifact names) for downstream pipelines / HTML parity.
+        # Must run AFTER coverage_profile enrichment so the sidecar JSON includes it.
         _write_virasign_hit_json_sidecars(sample_dir, sample_name, curated_descriptions, gzip_fastq)
 
         # Write a single final FASTA containing only references that passed final thresholds.
