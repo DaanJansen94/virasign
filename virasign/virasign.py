@@ -3706,8 +3706,10 @@ def extract_accessions_from_fasta(database_fasta: Path) -> set:
 
 def build_header_mapping(database_fasta: Path) -> dict:
     """
-    Build a mapping from accession to full header description.
-    This helps match SAM headers (which may be truncated) to full FASTA headers.
+    Build a mapping from accession to FASTA title (text after '>', stripped).
+
+    For selected-reference FASTAs this title is usually the accession only, so the map
+    doubles as accession -> display name for remapped SAM stats.
     """
     header_map = {}
     
@@ -4090,6 +4092,29 @@ def _canonical_curated_accession(to_canon: Dict[str, str], raw: str) -> str:
     return to_canon.get(base, raw)
 
 
+def _fasta_seq_name_for_export(header: str, fallback: str = "") -> str:
+    """
+    Single-word FASTA name for remapping and exported reference FASTAs (consensus-friendly).
+
+    Uses NCBI-style accession when parsable; avoids pipe/colon-heavy DB headers in SAM/BAM SN.
+    """
+    h = (header or "").strip()
+    acc = extract_accession_from_header(h)
+    if acc:
+        return acc
+    if h:
+        first = h.split()[0].strip()
+        if first:
+            return first
+    fb = (fallback or "").strip()
+    if fb:
+        acc2 = extract_accession_from_header(fb)
+        if acc2:
+            return acc2
+        return fb.split()[0].strip() or "reference"
+    return "reference"
+
+
 def extract_selected_references(database_fasta: Path, selected_headers: list, out_fasta: Path) -> int:
     """
     Extract multiple reference sequences from database FASTA matching the given headers.
@@ -4134,7 +4159,8 @@ def extract_selected_references(database_fasta: Path, selected_headers: list, ou
                             header_acc_base = header_acc.split('.')[0] if '.' in header_acc else header_acc
                             write = (header_acc in selected_accessions_set or header_acc_base in selected_accessions_set)
                     if write:
-                        out.write(line)
+                        seq_name = _fasta_seq_name_for_export(header)
+                        out.write(f">{seq_name}\n")
                         found_count += 1
                 else:
                     if write:
@@ -4162,7 +4188,8 @@ def _updated_stats_from_remapped_sam(
     min_identity: float,
 ) -> Dict[str, dict]:
     """
-    Parse remapped SAM (same alignment set as sorted BAM) into stats keyed by full FASTA description.
+    Parse remapped SAM (same alignment set as sorted BAM) into stats keyed by FASTA title
+    (typically the accession when references were exported with consensus-friendly headers).
     """
     selected_header_map = build_header_mapping(selected_refs_fasta)
     for acc_key, hdr in list(selected_header_map.items()):
@@ -6630,7 +6657,8 @@ def extract_fasta_record(database_fasta: Path, target_header: str, out_fasta: Pa
                     # Match on full header
                     write = (header == target_header)
                     if write:
-                        out.write(line)
+                        seq_name = _fasta_seq_name_for_export(header, fallback=target_header)
+                        out.write(f">{seq_name}\n")
                         found = True
                 else:
                     if write:
@@ -6665,7 +6693,8 @@ def extract_fasta_record_by_accession(database_fasta: Path, accession: str, out_
                     header_acc = extract_accession_from_header(header)
                     write = (header_acc == accession)
                     if write:
-                        out.write(line)
+                        # Use curated accession so folder name, FASTA, and BAM RNAME stay identical.
+                        out.write(f">{accession}\n")
                         found = True
                 else:
                     if write:
@@ -11437,6 +11466,22 @@ Examples
     logger.info("Precomputing shared database context...")
     for database_fasta_path in database_fasta_paths:
         prepare_database_context(Path(database_fasta_path))
+
+    # Taxonomy SQLite lives under each database directory. Without this, parallel sample
+    # workers each call ensure_taxonomy_resources() and can race: duplicate NCBI dump
+    # parsing ("Processed ... lines... (kept ... virus accessions)" interleaved in logs).
+    # RVDB/RefSeq FASTA download still happens only in resolve_database_path() above.
+    logger.info("Ensuring taxonomy resources (parent process, once per database)...")
+    for database_fasta_path in database_fasta_paths:
+        try:
+            ensure_taxonomy_resources(
+                Path(database_fasta_path),
+                force_rebuild=getattr(args, "rebuild", False),
+            )
+        except Exception as e:
+            logger.warning(
+                f"Taxonomy preparation failed for {database_fasta_path} (workers may retry): {e}"
+            )
 
     # Prepare DB only mode: download/unpack/index completed, no sample processing.
     if getattr(args, "prepare_db", False):
