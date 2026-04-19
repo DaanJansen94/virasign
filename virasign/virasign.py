@@ -3706,10 +3706,8 @@ def extract_accessions_from_fasta(database_fasta: Path) -> set:
 
 def build_header_mapping(database_fasta: Path) -> dict:
     """
-    Build a mapping from accession to FASTA title (text after '>', stripped).
-
-    For selected-reference FASTAs this title is usually the accession only, so the map
-    doubles as accession -> display name for remapped SAM stats.
+    Build a mapping from accession to full header description.
+    This helps match SAM headers (which may be truncated) to full FASTA headers.
     """
     header_map = {}
     
@@ -4092,29 +4090,6 @@ def _canonical_curated_accession(to_canon: Dict[str, str], raw: str) -> str:
     return to_canon.get(base, raw)
 
 
-def _fasta_seq_name_for_export(header: str, fallback: str = "") -> str:
-    """
-    Single-word FASTA name for remapping and exported reference FASTAs (consensus-friendly).
-
-    Uses NCBI-style accession when parsable; avoids pipe/colon-heavy DB headers in SAM/BAM SN.
-    """
-    h = (header or "").strip()
-    acc = extract_accession_from_header(h)
-    if acc:
-        return acc
-    if h:
-        first = h.split()[0].strip()
-        if first:
-            return first
-    fb = (fallback or "").strip()
-    if fb:
-        acc2 = extract_accession_from_header(fb)
-        if acc2:
-            return acc2
-        return fb.split()[0].strip() or "reference"
-    return "reference"
-
-
 def extract_selected_references(database_fasta: Path, selected_headers: list, out_fasta: Path) -> int:
     """
     Extract multiple reference sequences from database FASTA matching the given headers.
@@ -4159,8 +4134,7 @@ def extract_selected_references(database_fasta: Path, selected_headers: list, ou
                             header_acc_base = header_acc.split('.')[0] if '.' in header_acc else header_acc
                             write = (header_acc in selected_accessions_set or header_acc_base in selected_accessions_set)
                     if write:
-                        seq_name = _fasta_seq_name_for_export(header)
-                        out.write(f">{seq_name}\n")
+                        out.write(line)
                         found_count += 1
                 else:
                     if write:
@@ -4188,8 +4162,7 @@ def _updated_stats_from_remapped_sam(
     min_identity: float,
 ) -> Dict[str, dict]:
     """
-    Parse remapped SAM (same alignment set as sorted BAM) into stats keyed by FASTA title
-    (typically the accession when references were exported with consensus-friendly headers).
+    Parse remapped SAM (same alignment set as sorted BAM) into stats keyed by full FASTA description.
     """
     selected_header_map = build_header_mapping(selected_refs_fasta)
     for acc_key, hdr in list(selected_header_map.items()):
@@ -6657,8 +6630,7 @@ def extract_fasta_record(database_fasta: Path, target_header: str, out_fasta: Pa
                     # Match on full header
                     write = (header == target_header)
                     if write:
-                        seq_name = _fasta_seq_name_for_export(header, fallback=target_header)
-                        out.write(f">{seq_name}\n")
+                        out.write(line)
                         found = True
                 else:
                     if write:
@@ -6693,8 +6665,7 @@ def extract_fasta_record_by_accession(database_fasta: Path, accession: str, out_
                     header_acc = extract_accession_from_header(header)
                     write = (header_acc == accession)
                     if write:
-                        # Use curated accession so folder name, FASTA, and BAM RNAME stay identical.
-                        out.write(f">{accession}\n")
+                        out.write(line)
                         found = True
                 else:
                     if write:
@@ -8117,12 +8088,57 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
         logger.info(f"  Coverage breadth: {best_stats.get('coverage_breadth', 0.0):.4f}")
     return confident_names
 
+
+def _seed_empty_rvdb_final_jsons(output_dir: Path, sample_names: List[str]) -> None:
+    """
+    Create sample/RVDB/<sample>_final_selected_references.json with [] so generate_html_visualization
+    can emit the normal results_summary_RVDB.html / .csv (same UI as a zero-hit run).
+    Does not overwrite a non-empty existing final JSON.
+    """
+    output_dir = Path(output_dir)
+    for raw in sample_names:
+        s = str(raw).strip()
+        if not s or s.startswith("."):
+            continue
+        db_dir = output_dir / s / "RVDB"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        jf = db_dir / f"{s}_final_selected_references.json"
+        if jf.exists():
+            try:
+                with open(jf, "r", encoding="utf-8") as fh:
+                    prev = json.load(fh)
+                if isinstance(prev, list) and len(prev) > 0:
+                    logger.info(f"Skipping seed (existing non-empty JSON): {jf}")
+                    continue
+            except Exception:
+                pass
+        jf.write_text("[]\n", encoding="utf-8")
+        logger.info(f"Seeded empty RVDB final JSON for summary HTML: {jf}")
+
+
+def _atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Write text via a temp file then os.replace so summary files reliably replace any prior file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding=encoding)
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
 def generate_html_visualization(
     output_dir: Path,
     *,
     zscore_enabled: bool = True,
     zscore_controls: Optional[str] = None,
     sample_fastq_by_name: Optional[Dict[str, str]] = None,
+    _retry_depth: int = 0,
 ):
     """
     Generate separate comprehensive HTML reports for each database with:
@@ -8385,9 +8401,22 @@ def generate_html_visualization(
             all_sample_names.add(parts[0])
     
     if not all_sample_names:
-        logger.warning("No samples found for HTML visualization")
+        if _retry_depth > 1:
+            logger.error("generate_html_visualization: could not infer samples after seeding; aborting summary HTML.")
+            return
+        logger.warning(
+            "No samples found for HTML visualization; seeding placeholder Summary/RVDB empty JSON and retrying once."
+        )
+        _seed_empty_rvdb_final_jsons(output_dir, ["Summary"])
+        generate_html_visualization(
+            output_dir,
+            zscore_enabled=zscore_enabled,
+            zscore_controls=zscore_controls,
+            sample_fastq_by_name=sample_fastq_by_name,
+            _retry_depth=_retry_depth + 1,
+        )
         return
-    
+
     # Collect data from all JSON files
     samples_data = {}
     samples_metadata = {}
@@ -8702,9 +8731,45 @@ def generate_html_visualization(
                 all_databases.add(db_name)
     
     if not all_databases:
-        logger.warning("No databases found for HTML visualization")
+        if _retry_depth > 1:
+            logger.error("generate_html_visualization: still no databases after RVDB seed; aborting summary HTML.")
+            return
+        if all_sample_names:
+            logger.warning(
+                "No databases found for HTML visualization; seeding empty RVDB final JSON per sample and retrying once."
+            )
+            _seed_empty_rvdb_final_jsons(output_dir, sorted(all_sample_names))
+            generate_html_visualization(
+                output_dir,
+                zscore_enabled=zscore_enabled,
+                zscore_controls=zscore_controls,
+                sample_fastq_by_name=sample_fastq_by_name,
+                _retry_depth=_retry_depth + 1,
+            )
+            return
+        if _retry_depth == 0:
+            logger.warning(
+                "No databases and no sample names; seeding placeholder Summary/RVDB empty JSON and retrying once."
+            )
+            _seed_empty_rvdb_final_jsons(output_dir, ["Summary"])
+            generate_html_visualization(
+                output_dir,
+                zscore_enabled=zscore_enabled,
+                zscore_controls=zscore_controls,
+                sample_fastq_by_name=sample_fastq_by_name,
+                _retry_depth=_retry_depth + 1,
+            )
+            return
+        logger.warning("No databases and no samples for HTML visualization; aborting.")
         return
-    
+
+    # Remove prior top-level summary reports so this run always replaces them (avoids stale HTML/CSV).
+    for stale in list(output_dir.glob("results_summary_*.html")) + list(output_dir.glob("results_summary_*.csv")):
+        try:
+            stale.unlink()
+        except OSError as e:
+            logger.warning("Could not remove prior summary file %s: %s", stale, e)
+
     # Generate separate HTML file for each database
     for database_name in sorted(all_databases):
         # Filter data for this database only
@@ -8807,7 +8872,19 @@ def generate_html_visualization(
         samples_json_str = json_module.dumps(db_samples_json).replace('</', '<\\/')
         heatmap_data_str = json_module.dumps(heatmap_data).replace('</', '<\\/')
         all_samples_list = sorted(db_samples_list)
-        
+
+        any_hits = any(
+            len(per_db.get(database_name, [])) > 0 for per_db in db_samples_data.values()
+        )
+        empty_banner_html = ""
+        if not any_hits:
+            empty_banner_html = (
+                '            <div class="virasign-no-hits-notice" style="margin-bottom:20px;padding:14px 18px;'
+                "background:#e3f2fd;border:1px solid #64b5f6;border-radius:8px;color:#0d47a1;font-size:1.05em;\">"
+                "No viruses were identified in this summary."
+                "</div>\n"
+            )
+
         html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9275,7 +9352,7 @@ def generate_html_visualization(
             <p>Viral Read ASSIGNment from nanopore sequencing</p>
         </div>
         <div class="content">
-            <div class="sample-selector">
+{empty_banner_html}            <div class="sample-selector">
                 <label for="sampleSelect">Select Sample:</label>
                 <select id="sampleSelect" onchange="showSample(this.value)">
                     <option value="">-- Select a sample --</option>
@@ -10811,47 +10888,49 @@ def generate_html_visualization(
 </html>
 """
         
-        # Write HTML file for this database
+        # Write HTML file for this database (atomic replace so prior file is always superseded)
         html_file = output_dir / f"results_summary_{database_name}.html"
-        with open(html_file, 'w') as f:
-            f.write(html_content)
-        
+        _atomic_write_text(html_file, html_content)
+
         logger.info(f"Generated HTML visualization for {database_name}: {html_file}")
 
         # Write combined CSV table (all samples, same columns as per-sample HTML table)
         import csv as csv_module
+        import io
+
         csv_file = output_dir / f"results_summary_{database_name}.csv"
-        with open(csv_file, "w", newline="") as cf:
-            writer = csv_module.writer(cf)
-            writer.writerow([
-                "Sample", "Accession", "Organism", "Viral Species",
-                "Nextclade Clade", "Segment",
-                "Mapped Reads (#)", "Avg Identity (%)", "Coverage Depth (x)", "Coverage Breadth (%)",
-                "NOGR (#/bases)", "Z-score",
-            ])
-            for sname in sorted(db_samples_list):
-                refs = []
-                if sname in db_samples_data and database_name in db_samples_data[sname]:
-                    refs = db_samples_data[sname][database_name]
-                if not refs:
-                    writer.writerow([sname] + [""] * 11)
-                    continue
-                for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
-                    nogr = f"{int(ref.get('nogr_regions', ref.get('non_overlapping_reads', 0)) or 0)}|{int(ref.get('nogr_bases', ref.get('non_overlapping_bases', 0)) or 0)}"
-                    writer.writerow([
-                        sname,
-                        ref.get("accession", ""),
-                        ref.get("organism", ""),
-                        ref.get("viral_species", ""),
-                        ref.get("nextclade_clade", ""),
-                        ref.get("segment", ""),
-                        ref.get("mapped_reads", 0),
-                        f"{ref.get('avg_identity', 0):.2f}",
-                        f"{ref.get('coverage_depth', 0):.2f}",
-                        f"{ref.get('coverage_breadth', 0) * 100:.1f}",
-                        nogr,
-                        "" if ref.get("zscore", None) is None else f"{float(ref.get('zscore') or 0.0):.2f}",
-                    ])
+        csv_buf = io.StringIO()
+        writer = csv_module.writer(csv_buf)
+        writer.writerow([
+            "Sample", "Accession", "Organism", "Viral Species",
+            "Nextclade Clade", "Segment",
+            "Mapped Reads (#)", "Avg Identity (%)", "Coverage Depth (x)", "Coverage Breadth (%)",
+            "NOGR (#/bases)", "Z-score",
+        ])
+        for sname in sorted(db_samples_list):
+            refs = []
+            if sname in db_samples_data and database_name in db_samples_data[sname]:
+                refs = db_samples_data[sname][database_name]
+            if not refs:
+                writer.writerow([sname] + [""] * 11)
+                continue
+            for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
+                nogr = f"{int(ref.get('nogr_regions', ref.get('non_overlapping_reads', 0)) or 0)}|{int(ref.get('nogr_bases', ref.get('non_overlapping_bases', 0)) or 0)}"
+                writer.writerow([
+                    sname,
+                    ref.get("accession", ""),
+                    ref.get("organism", ""),
+                    ref.get("viral_species", ""),
+                    ref.get("nextclade_clade", ""),
+                    ref.get("segment", ""),
+                    ref.get("mapped_reads", 0),
+                    f"{ref.get('avg_identity', 0):.2f}",
+                    f"{ref.get('coverage_depth', 0):.2f}",
+                    f"{ref.get('coverage_breadth', 0) * 100:.1f}",
+                    nogr,
+                    "" if ref.get("zscore", None) is None else f"{float(ref.get('zscore') or 0.0):.2f}",
+                ])
+        _atomic_write_text(csv_file, csv_buf.getvalue())
         logger.info(f"Generated CSV summary for {database_name}: {csv_file}")
 
 
@@ -10909,6 +10988,24 @@ def find_samples(input_path):
 
     return []
 
+
+def resolve_default_virasign_output_dir() -> Path:
+    """
+    Default Virasign output root when -o/--output is omitted (same rules as a normal classification run).
+    Does not create the directory.
+    """
+    try:
+        current_dir = Path.cwd()
+    except (OSError, FileNotFoundError):
+        try:
+            current_dir = Path(os.getcwd())
+        except (OSError, FileNotFoundError):
+            current_dir = Path(os.environ.get("HOME", "/tmp"))
+    if current_dir.name.lower() == "virasign_output":
+        return current_dir.resolve()
+    return (current_dir / "Virasign_output").resolve()
+
+
 class VirasignArgumentParser(argparse.ArgumentParser):
     """Argparse with small help formatting tweaks for Virasign."""
 
@@ -10942,6 +11039,13 @@ Examples
 
   3) RVDB + RefSeq + extra accessions:
      virasign -i input_dir -d RVDB,RefSeq -o output_dir -a PX852146.1,NC_123456.1 -t 16
+
+  4) After per-sample runs with --no-html, merge outputs then build cross-sample HTML+CSV:
+     virasign --build-html -o merged_results_dir
+     # or use the same path you passed as -o for a combined run:
+     virasign --build-html -i merged_results_dir
+     # or from the same cwd as a normal run (uses ./Virasign_output when -o was omitted there):
+     virasign --build-html
         """
     )
 
@@ -11156,6 +11260,17 @@ Examples
         help="Disable interactive HTML report generation (default: HTML enabled).",
     )
     reporting.add_argument(
+        "--build-html",
+        dest="build_html",
+        action="store_true",
+        default=False,
+        help=(
+            "Only (re)generate results_summary_<DB>.html and matching .csv under an existing Virasign output tree "
+            "(no FASTQs; skips mapping). If -o/-i is omitted, uses the same default as a normal run: ./Virasign_output "
+            "(or the current directory when it is already named Virasign_output)."
+        ),
+    )
+    reporting.add_argument(
         "--no-gzip-fastq",
         dest="gzip_fastq",
         action="store_false",
@@ -11268,7 +11383,72 @@ Examples
     if hasattr(args, 'list_blinding') and args.list_blinding:
         print(list_blinding_abbreviations())
         sys.exit(0)
-    
+
+    # Report-only: scan existing output tree for JSONs and write results_summary_*.html + .csv (no mapping).
+    if getattr(args, "build_html", False):
+        if getattr(args, "prepare_db", False):
+            parser.error("--build-html cannot be used together with --prepare-db")
+        if getattr(args, "rebuild", False):
+            parser.error("--build-html cannot be used together with --rebuild")
+        out_arg = args.output or args.input
+        if out_arg:
+            results_root = Path(out_arg).expanduser().resolve()
+        else:
+            results_root = resolve_default_virasign_output_dir()
+        if not results_root.exists():
+            parser.error(
+                f"--build-html: output directory does not exist: {results_root}\n"
+                "  Pass -o/--output or -i/--input to your results tree, or run from the directory that contains "
+                "Virasign_output (same default as when you omit -o on a normal run)."
+            )
+        if not results_root.is_dir():
+            parser.error(f"--build-html: not a directory: {results_root}")
+        json_glob = list(results_root.rglob("*_final_selected_references.json"))
+        setup_logging(results_root, verbose=True)
+        zscore_enabled = str(getattr(args, "zscore", "true") or "true").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+        if not out_arg:
+            logger.info(
+                "--build-html: no -o/--output or -i/--input; using default results root (same as when -o is omitted on a normal run): %s",
+                results_root,
+            )
+        if not json_glob:
+            logger.warning(
+                f"--build-html: no *_final_selected_references.json under {results_root}; "
+                "seeding empty RVDB JSONs (if needed) and generating the standard summary HTML."
+            )
+            sample_dirs = [
+                d.name
+                for d in results_root.iterdir()
+                if d.is_dir() and not d.name.startswith(".")
+            ]
+            if sample_dirs:
+                _seed_empty_rvdb_final_jsons(results_root, sample_dirs)
+            else:
+                _seed_empty_rvdb_final_jsons(results_root, ["Summary"])
+            generate_html_visualization(
+                results_root,
+                zscore_enabled=zscore_enabled,
+                zscore_controls=getattr(args, "zscore_controls", None),
+                sample_fastq_by_name=None,
+            )
+            return 0
+        logger.info(f"--build-html: using results tree {results_root} ({len(json_glob)} final JSON file(s) found)")
+        if getattr(args, "generate_html", True) is False:
+            logger.info("--no-html was ignored because --build-html always generates HTML and companion CSV.")
+        generate_html_visualization(
+            results_root,
+            zscore_enabled=zscore_enabled,
+            zscore_controls=getattr(args, "zscore_controls", None),
+            sample_fastq_by_name=None,
+        )
+        logger.info("--build-html: finished writing summary HTML/CSV next to sample outputs.")
+        return 0
+
     # Validate that input is provided (unless --blinding or --prepare-db was used)
     if not args.input and not getattr(args, "prepare_db", False):
         parser.error("the following arguments are required: -i/--input")
@@ -11466,22 +11646,6 @@ Examples
     logger.info("Precomputing shared database context...")
     for database_fasta_path in database_fasta_paths:
         prepare_database_context(Path(database_fasta_path))
-
-    # Taxonomy SQLite lives under each database directory. Without this, parallel sample
-    # workers each call ensure_taxonomy_resources() and can race: duplicate NCBI dump
-    # parsing ("Processed ... lines... (kept ... virus accessions)" interleaved in logs).
-    # RVDB/RefSeq FASTA download still happens only in resolve_database_path() above.
-    logger.info("Ensuring taxonomy resources (parent process, once per database)...")
-    for database_fasta_path in database_fasta_paths:
-        try:
-            ensure_taxonomy_resources(
-                Path(database_fasta_path),
-                force_rebuild=getattr(args, "rebuild", False),
-            )
-        except Exception as e:
-            logger.warning(
-                f"Taxonomy preparation failed for {database_fasta_path} (workers may retry): {e}"
-            )
 
     # Prepare DB only mode: download/unpack/index completed, no sample processing.
     if getattr(args, "prepare_db", False):

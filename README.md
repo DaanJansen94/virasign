@@ -110,6 +110,7 @@ virasign --help
 
 - **Reporting**
   - `--no-html`: Disable interactive HTML report generation (default: HTML enabled).
+  - `--build-html`: Regenerate summary HTML/CSV from an existing output tree. If `-o`/`-i` is omitted, uses the same default as a normal run (`./Virasign_output`, or the current directory when it is already named `Virasign_output`).
   - `--no-gzip-fastq`: Write per-virus mapped reads as plain `.fastq` (default: `.fastq.gz`).
 
 - **Performance**
@@ -164,6 +165,12 @@ virasign -i input_dir -d my_accessions.txt -o output_dir
 
 # Blind incidental findings of chronic viruses
 virasign -i input_dir -d RVDB -b HEP,HIV,HTLV
+
+# Run without summary HTML, then build summary from the same output folder
+virasign -i input_dir -o output_dir --no-html
+virasign --build-html -o output_dir
+# Same, when you used the default ./Virasign_output (run from the parent of Virasign_output):
+virasign --build-html
 ```
 
 ---
