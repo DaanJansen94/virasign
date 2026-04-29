@@ -18,4 +18,8 @@ RUN mamba install -y -c conda-forge -c bioconda \
 
 RUN pip install --no-deps /opt/virasign
 
-ENTRYPOINT ["virasign"]
+# Do not hard-set ENTRYPOINT to the tool binary.
+# Nextflow runs containers via `/bin/bash -c <script>`, and a fixed ENTRYPOINT would turn that into
+# `virasign /bin/bash -c ...` and fail. Use CMD so `virasign` remains the default while still
+# allowing Nextflow (and users) to override the command.
+CMD ["virasign"]
