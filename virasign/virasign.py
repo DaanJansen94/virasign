@@ -4414,7 +4414,11 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                     total += n
             return total, aligned_m
 
-        sam_header_lines = []
+        # Store SAM header lines, but keep @SQ lines per-contig so we can write
+        # per-accession BAMs with a *single* @SQ in the header (important for
+        # downstream tools using `mpileup -aa` which otherwise may traverse all contigs).
+        sam_header_common = []  # all header lines except @SQ
+        sam_sq_by_accession = {}  # canonical accession -> list[@SQ line]
         bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam, ref_bai_path)
         samtools_threads = max(1, min(int(threads or 1), 16))
         read_ids_by_reference = {}  # accession -> set(read_id)
@@ -4522,8 +4526,22 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                     view_p.stdout.close()
 
             assert view_p.stdin is not None
-            for h in sam_header_lines:
+            # Write a single-contig header for this accession.
+            # Keep common header lines (@HD, @PG, @RG, etc.) and include only the matching @SQ.
+            sq_lines = sam_sq_by_accession.get(accession) or []
+            if not sq_lines:
+                # Fallback: if we can't find a matching @SQ (shouldn't happen), write all common lines
+                # without any @SQ. samtools may fail later; log for debugging.
+                logger.warning(f"Could not find @SQ header line for accession {accession}; writing header without @SQ")
+            # Keep @HD first (if present), then @SQ, then the remaining common headers.
+            for h in sam_header_common:
+                if h.startswith("@HD"):
+                    view_p.stdin.write(h)
+            for h in sq_lines:
                 view_p.stdin.write(h)
+            for h in sam_header_common:
+                if not h.startswith("@HD"):
+                    view_p.stdin.write(h)
 
             bam_pipes[accession] = {"view_p": view_p, "sort_p": sort_p, "stdin": view_p.stdin, "ref_bam": ref_bam}
 
@@ -4538,7 +4556,6 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
             if not line:
                 continue
             if line.startswith("@SQ"):
-                sam_header_lines.append(line)
                 parts = line.strip().split("\t")
                 header = None
                 length = None
@@ -4549,9 +4566,14 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
                         length = int(part[3:])
                 if header and length:
                     ref_lengths[header] = length
+                    # Index @SQ lines by canonical accession (so we can write per-accession BAMs with a single @SQ).
+                    acc_raw = extract_accession_from_header(header) or ""
+                    if _sam_accession_in_curated(curated_acc_expanded, acc_raw):
+                        acc_canon = _canonical_curated_accession(acc_to_canon, acc_raw)
+                        sam_sq_by_accession.setdefault(acc_canon, []).append(line)
                 continue
             if line.startswith("@"):
-                sam_header_lines.append(line)
+                sam_header_common.append(line)
                 continue
             if not line.strip():
                 continue
@@ -4961,7 +4983,11 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
     read_ids_by_reference = {}  # accession -> set of read IDs
     curated_accessions = [stat.get("accession", "") for stat in curated_descriptions if stat.get("accession", "")]
     curated_acc_expanded, acc_to_canon = _curated_accession_expansion_and_canon(curated_accessions)
-    sam_header_lines = []
+    # Keep common header lines and store @SQ per contig so per-accession BAMs
+    # can be written with a single @SQ (prevents downstream tools from traversing
+    # unrelated contigs when using `mpileup -aa`).
+    sam_header_common = []  # all header lines except @SQ
+    sam_sq_by_accession = {}  # canonical accession -> list[@SQ line]
     bam_pipes = {}  # accession -> dict(view_p, sort_p, stdin, ref_bam)
     samtools_threads = max(1, min(int(threads or 1), 16))
 
@@ -4988,8 +5014,18 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
                 view_p.stdout.close()
 
         assert view_p.stdin is not None
-        for h in sam_header_lines:
+        sq_lines = sam_sq_by_accession.get(accession) or []
+        if not sq_lines:
+            logger.warning(f"Could not find @SQ header line for accession {accession}; writing header without @SQ")
+        # @HD first, then @SQ, then remaining common header lines
+        for h in sam_header_common:
+            if h.startswith("@HD"):
+                view_p.stdin.write(h)
+        for h in sq_lines:
             view_p.stdin.write(h)
+        for h in sam_header_common:
+            if not h.startswith("@HD"):
+                view_p.stdin.write(h)
 
         bam_pipes[accession] = {
             "view_p": view_p,
@@ -5119,7 +5155,20 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
             if not line:
                 continue
             if line.startswith("@"):
-                sam_header_lines.append(line)
+                if line.startswith("@SQ"):
+                    # Index @SQ by canonical accession if it's a curated hit
+                    header = None
+                    for part in line.strip().split("\t"):
+                        if part.startswith("SN:"):
+                            header = part[3:]
+                            break
+                    if header:
+                        acc_raw = extract_accession_from_header(header) or ""
+                        if _sam_accession_in_curated(curated_acc_expanded, acc_raw):
+                            acc_canon = _canonical_curated_accession(acc_to_canon, acc_raw)
+                            sam_sq_by_accession.setdefault(acc_canon, []).append(line)
+                else:
+                    sam_header_common.append(line)
                 continue
             if not line.strip():
                 continue
