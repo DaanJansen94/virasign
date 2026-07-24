@@ -596,6 +596,24 @@ def is_refseq(description: str) -> bool:
     """Check if a reference is from RefSeq based on description."""
     return "|REFSEQ|" in description or description.startswith("acc|REFSEQ|")
 
+# Water/NTC sample names for Z-score autodetection:
+# - substring: water / h2o / h20
+# - NC/CN + digits (NC1, CN2, …), not bare "nc"/"cn" (too common in clinical names)
+_WATER_NAME_NC_CN_RE = re.compile(r"(?:^|[^a-z0-9])(?:nc|cn)\d+")
+
+def is_water_sample_name(name: str) -> bool:
+    """True if sample name looks like a water/NTC control for Z-score autodetection."""
+    n = (name or "").strip().lower()
+    if not n:
+        return False
+    for suf in (".fastq.gz", ".fq.gz", ".fastq", ".fq", ".fast"):
+        if n.endswith(suf):
+            n = n[: -len(suf)]
+            break
+    if ("water" in n) or ("h2o" in n) or ("h20" in n):
+        return True
+    return bool(_WATER_NAME_NC_CN_RE.search(n))
+
 def get_taxonomy_dir(base_dir: Path, create: bool = False) -> Path:
     """
     Return taxonomy support directory under a database directory.
@@ -8212,8 +8230,7 @@ def generate_html_visualization(
 
     # Helper: sample name heuristics for water controls (auto-detect).
     def _is_water_sample_name(name: str) -> bool:
-        n = (name or "").lower()
-        return ("water" in n) or ("h2o" in n) or ("h20" in n)
+        return is_water_sample_name(name)
 
     def _label_for_zscore(hit: dict) -> str:
         # Use the same "practical virus label" used throughout outputs when available.
@@ -8239,7 +8256,7 @@ def generate_html_visualization(
         - Requires >=2 controls; otherwise no Z-scores are written.
         - Controls are either:
           - manually specified by --zscore-controls (CSV of exact FASTQ paths), or
-          - auto-detected by sample folder name containing water/h2o/h20.
+          - auto-detected by sample name: water/h2o/h20, or NC/CN + digits (NC1, CN2, …).
 
         Returns:
           - controls_used: set of sample names used as controls
@@ -11334,7 +11351,7 @@ Examples
         type=str,
         default="true",
         metavar="",
-        help="Compute background-corrected Z-score using water controls (default: true).",
+        help="Compute background-corrected Z-score using water controls (default: true; auto-detect names with water/h2o/h20 or NC/CN+digits e.g. NC1/CN2).",
     )
     zscore_group.add_argument(
         "--zscore-controls",
@@ -11750,8 +11767,7 @@ Examples
     zscore_enabled = str(getattr(args, "zscore", "true") or "true").strip().lower() not in ("0", "false", "no", "off")
 
     def _is_water_sample_name(name: str) -> bool:
-        n = (name or "").lower()
-        return ("water" in n) or ("h2o" in n) or ("h20" in n)
+        return is_water_sample_name(name)
 
     def _parse_zscore_controls_to_sample_names(raw: Optional[str]) -> List[str]:
         if not raw:

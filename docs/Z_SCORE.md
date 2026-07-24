@@ -20,7 +20,9 @@ By comparing each virus to your water controls in the same run, the Z-score answ
 ## When Virasign computes it
 
 - Z-scores are computed only when ≥2 water controls are available.
-- Water controls are auto-detected when the sample name contains `water`, `h2o`, or `h20` (case-insensitive).
+- Water controls are auto-detected when the sample name (case-insensitive):
+  - contains `water`, `h2o`, or `h20`, or
+  - has `NC`/`CN` immediately followed by digits (e.g. `NC1`, `CN2`, `NC1.fastq`), so bare `NC`/`CN` in clinical names do not match.
 - You can override auto-detection with exact input FASTQ paths:
 
 ```bash
