@@ -9005,6 +9005,20 @@ def generate_html_visualization(
                             heatmap_data[species][sample_name] = []
                         heatmap_data[species][sample_name].append(ref)  # Store full ref data for filtering
         
+        # Controls are background only: never show a Z-score on control sample hits.
+        if _controls_used:
+            for sname in list(db_samples_data.keys()):
+                if sname not in _controls_used:
+                    continue
+                per_db = db_samples_data.get(sname) or {}
+                for _db, refs in per_db.items():
+                    if not isinstance(refs, list):
+                        continue
+                    for ref in refs:
+                        if isinstance(ref, dict):
+                            ref.pop("zscore", None)
+                            ref.pop("zscore_controls", None)
+
         # Prepare data for JavaScript (only this database)
         # Include ALL samples, even if they have no viruses detected
         db_samples_json = {}
@@ -11097,10 +11111,19 @@ def generate_html_visualization(
             if sname in db_samples_data and database_name in db_samples_data[sname]:
                 refs = db_samples_data[sname][database_name]
             if not refs:
-                writer.writerow([sname] + [""] * 11)
+                # Empty control samples: still mark Z-score as dash (no numeric score).
+                z_empty = "-" if sname in (_controls_used or set()) else ""
+                writer.writerow([sname] + [""] * 10 + [z_empty])
                 continue
             for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
                 nogr = f"{int(ref.get('nogr_regions', ref.get('non_overlapping_reads', 0)) or 0)}|{int(ref.get('nogr_bases', ref.get('non_overlapping_bases', 0)) or 0)}"
+                # Controls are used only to compute Z-scores for non-control samples.
+                if sname in (_controls_used or set()):
+                    z_cell = "-"
+                elif ref.get("zscore", None) is None:
+                    z_cell = "-"
+                else:
+                    z_cell = f"{float(ref.get('zscore') or 0.0):.2f}"
                 writer.writerow([
                     sname,
                     ref.get("accession", ""),
@@ -11113,7 +11136,7 @@ def generate_html_visualization(
                     f"{ref.get('coverage_depth', 0):.2f}",
                     f"{ref.get('coverage_breadth', 0) * 100:.1f}",
                     nogr,
-                    "" if ref.get("zscore", None) is None else f"{float(ref.get('zscore') or 0.0):.2f}",
+                    z_cell,
                 ])
         _atomic_write_text(csv_file, csv_buf.getvalue())
         logger.info(f"Generated CSV summary for {database_name}: {csv_file}")
