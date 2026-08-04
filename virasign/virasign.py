@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 import gzip
 import zipfile
 import sqlite3
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any, Tuple, Iterable
 
 def setup_logging(output_dir, verbose=True):
     """Set up logging configuration.
@@ -613,6 +613,114 @@ def is_water_sample_name(name: str) -> bool:
     if ("water" in n) or ("h2o" in n) or ("h20" in n):
         return True
     return bool(_WATER_NAME_NC_CN_RE.search(n))
+
+
+def _fastq_stem(name: str) -> str:
+    """Strip common FASTQ suffixes from a path basename or sample-like token."""
+    n = (name or "").strip()
+    lower = n.lower()
+    for suf in (".fastq.gz", ".fq.gz", ".fastq", ".fq"):
+        if lower.endswith(suf):
+            return n[: -len(suf)]
+    return n
+
+
+def parse_zscore_controls_tokens(raw: Optional[str]) -> List[str]:
+    """
+    Split --zscore-controls into tokens.
+
+    Accepts a comma-separated string, or a file path with one token per line.
+    Tokens may be sample IDs (BG_1) or FASTQ paths.
+    """
+    if not raw:
+        return []
+    text = str(raw).strip()
+    if not text:
+        return []
+    try:
+        p = Path(text).expanduser()
+        if p.exists() and p.is_file():
+            out: List[str] = []
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    out.append(line)
+            return out
+    except Exception:
+        pass
+    return [x.strip() for x in text.split(",") if x.strip()]
+
+
+def resolve_zscore_control_sample_names(
+    raw: Optional[str],
+    *,
+    known_sample_names: Optional[Iterable[str]] = None,
+    sample_fastq_by_name: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    """
+    Resolve --zscore-controls to sample names (stable order, de-duplicated).
+
+    Accepts, in priority order per token:
+      1) exact sample ID present in known_sample_names (e.g. H20_1,BG_1)
+      2) exact FASTQ path matching a value in sample_fastq_by_name
+      3) FASTQ basename / stem matching a known sample name
+    """
+    tokens = parse_zscore_controls_tokens(raw)
+    if not tokens:
+        return []
+
+    known = {str(s) for s in (known_sample_names or []) if s}
+    # Also accept names from the FASTQ map.
+    for s in (sample_fastq_by_name or {}).keys():
+        if s:
+            known.add(str(s))
+
+    inv: Dict[str, str] = {}
+    for s, fp in (sample_fastq_by_name or {}).items():
+        if not fp:
+            continue
+        try:
+            inv[str(Path(fp).expanduser().resolve())] = str(s)
+        except Exception:
+            continue
+
+    controls: List[str] = []
+    seen = set()
+
+    def _add(sname: str) -> None:
+        if not sname or sname in seen:
+            return
+        seen.add(sname)
+        controls.append(sname)
+
+    for tok in tokens:
+        # 1) Sample ID (samplesheet names work for FASTQ / fastq_pass / POD5).
+        if tok in known:
+            _add(tok)
+            continue
+
+        # 2) Exact FASTQ path → sample name.
+        try:
+            p_res = str(Path(tok).expanduser().resolve())
+        except Exception:
+            p_res = tok
+        if p_res in inv:
+            _add(inv[p_res])
+            continue
+
+        # 3) Basename / stem match (e.g. /path/BG_1.fastq.gz → BG_1).
+        stem = _fastq_stem(Path(tok).name)
+        if stem in known:
+            _add(stem)
+            continue
+
+        logger.warning(
+            f"Z-score control '{tok}' not found as sample ID or input FASTQ path (skipping)"
+        )
+
+    return controls
 
 def get_taxonomy_dir(base_dir: Path, create: bool = False) -> Path:
     """
@@ -8255,7 +8363,7 @@ def generate_html_visualization(
         - Z-score is computed on log10(mapped_reads + 1) per virus label.
         - Requires >=2 controls; otherwise no Z-scores are written.
         - Controls are either:
-          - manually specified by --zscore-controls (CSV of exact FASTQ paths), or
+          - manually specified by --zscore-controls (sample IDs and/or FASTQ paths), or
           - auto-detected by sample name: water/h2o/h20, or NC/CN + digits (NC1, CN2, …).
 
         Returns:
@@ -8265,43 +8373,16 @@ def generate_html_visualization(
         if not zscore_enabled:
             return set(), {}
 
-        # Resolve controls.
-        controls: List[str] = []
+        # Resolve controls: sample IDs and/or FASTQ paths (manual overrides auto-detect).
+        known_names = [d.name for d in all_sample_dirs]
         if zscore_control_fastqs_csv:
-            raw = (zscore_control_fastqs_csv or "").strip()
-            requested_raw: List[str] = []
-            try:
-                p = Path(raw).expanduser()
-                if raw and p.exists() and p.is_file():
-                    # File of paths (one per line).
-                    with open(p, "r", encoding="utf-8", errors="replace") as fh:
-                        for line in fh:
-                            line = line.strip()
-                            if not line or line.startswith("#"):
-                                continue
-                            requested_raw.append(line)
-                else:
-                    # Comma-separated paths.
-                    requested_raw = [x.strip() for x in raw.split(",") if x.strip()]
-            except Exception as e:
-                logger.warning(f"Z-score controls could not be parsed from '{raw}': {e}")
-                requested_raw = []
-
-            requested = [str(Path(x).expanduser().resolve()) for x in requested_raw if x]
-            # Match exact fastq paths to sample names.
-            inv = {str(Path(fp).expanduser().resolve()): s for s, fp in (sample_fastq_by_name or {}).items() if fp}
-            for p in requested:
-                if p in inv:
-                    controls.append(inv[p])
-                else:
-                    logger.warning(f"Z-score control FASTQ not found in inputs: {p} (skipping)")
+            controls = resolve_zscore_control_sample_names(
+                zscore_control_fastqs_csv,
+                known_sample_names=known_names,
+                sample_fastq_by_name=(sample_fastq_by_name or {}),
+            )
         else:
             controls = [d.name for d in all_sample_dirs if _is_water_sample_name(d.name)]
-
-        # De-duplicate, stable order.
-        seen = set()
-        controls = [c for c in controls if not (c in seen or seen.add(c))]
-
         if len(controls) < 2:
             logger.info("Z-score: <2 water controls available; skipping Z-score computation.")
             return set(), {}
@@ -8379,6 +8460,44 @@ def generate_html_visualization(
 
         for sample_name, hits in list(sample_hits.items()):
             if sample_name in controls_set:
+                # Controls themselves should not carry Z-scores; clear any stale values.
+                cleared = False
+                for h in hits:
+                    if not isinstance(h, dict):
+                        continue
+                    if "zscore" in h or "zscore_controls" in h:
+                        h.pop("zscore", None)
+                        h.pop("zscore_controls", None)
+                        cleared = True
+                if cleared:
+                    try:
+                        for jf in final_json_files:
+                            if jf.parent.name != sample_name:
+                                continue
+                            with open(jf, "w") as f:
+                                json.dump(hits, f, indent=2)
+                            base_dir = jf.parent
+                            for h in hits:
+                                if not isinstance(h, dict):
+                                    continue
+                                acc = (h.get("accession") or "").strip()
+                                if not acc:
+                                    continue
+                                sidecar = base_dir / acc / f"{acc}.json"
+                                if not sidecar.exists():
+                                    continue
+                                try:
+                                    with open(sidecar, "r") as sf:
+                                        payload = json.load(sf)
+                                    if isinstance(payload, dict):
+                                        payload.pop("zscore", None)
+                                        payload.pop("zscore_controls", None)
+                                        with open(sidecar, "w") as sf:
+                                            json.dump(payload, sf, indent=2)
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        logger.debug(f"Z-score: could not clear control JSON for {sample_name}: {e}")
                 continue
             changed = False
             for h in hits:
@@ -11359,7 +11478,7 @@ Examples
         type=str,
         default=None,
         metavar="",
-        help="Override auto-detected water controls with exact FASTQ paths (>=2 waters): comma-separated or a file (one path per line).",
+        help="Override auto-detected water controls (>=2): sample IDs (e.g. H20_1,BG_1) and/or FASTQ paths; comma-separated or a file (one per line).",
     )
 
     # Nextclade runs by default when the CLI is installed; flags omitted from --help.
@@ -11770,38 +11889,11 @@ Examples
         return is_water_sample_name(name)
 
     def _parse_zscore_controls_to_sample_names(raw: Optional[str]) -> List[str]:
-        if not raw:
-            return []
-        raw = str(raw).strip()
-        requested_raw: List[str] = []
-        try:
-            p = Path(raw).expanduser()
-            if raw and p.exists() and p.is_file():
-                with open(p, "r", encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        requested_raw.append(line)
-            else:
-                requested_raw = [x.strip() for x in raw.split(",") if x.strip()]
-        except Exception:
-            requested_raw = []
-
-        requested = [str(Path(x).expanduser().resolve()) for x in requested_raw if x]
-        inv = {str(Path(fp).expanduser().resolve()): s for s, fp in (sample_fastq_by_name or {}).items() if fp}
-        controls: List[str] = []
-        seen = set()
-        for pth in requested:
-            sname = inv.get(pth)
-            if not sname:
-                logger.warning(f"Z-score control FASTQ not found in inputs: {pth} (skipping)")
-                continue
-            if sname in seen:
-                continue
-            seen.add(sname)
-            controls.append(sname)
-        return controls
+        return resolve_zscore_control_sample_names(
+            raw,
+            known_sample_names=list(sample_fastq_by_name.keys()),
+            sample_fastq_by_name=sample_fastq_by_name,
+        )
 
     zscore_controls_raw = getattr(args, "zscore_controls", None)
     manual_controls = _parse_zscore_controls_to_sample_names(zscore_controls_raw)
