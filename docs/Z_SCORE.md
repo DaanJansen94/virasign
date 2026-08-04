@@ -23,13 +23,20 @@ By comparing each virus to your water controls in the same run, the Z-score answ
 - Water controls are auto-detected when the sample name (case-insensitive):
   - contains `water`, `h2o`, or `h20`, or
   - has `NC`/`CN` immediately followed by digits (e.g. `NC1`, `CN2`, `NC1.fastq`), so bare `NC`/`CN` in clinical names do not match.
-- You can override auto-detection with exact input FASTQ paths:
+- You can override auto-detection with **sample IDs** (folder / samplesheet names) and/or exact FASTQ paths (≥2 controls):
 
 ```bash
+# Sample IDs (recommended when running via Metatropics samplesheet / POD5.csv)
+virasign -i input_dir --zscore-controls H20_1,H20_2,BG_1,BG_2
+
+# Exact FASTQ paths
 virasign -i input_dir --zscore-controls /path/to/water1.fastq.gz,/path/to/water2.fastq.gz
+
+# Or a text file (one sample ID or path per line)
+virasign -i input_dir --zscore-controls water_controls.txt
 ```
 
-When `--zscore-controls` is provided, Virasign does not use auto-detection (so you can exclude some “H2O_*” samples intentionally).
+When `--zscore-controls` is provided, Virasign does not use auto-detection (so you can exclude some “H2O_*” samples intentionally). Control samples themselves show `-` in the Z-score column; numeric Z-scores are only reported for non-control samples.
 
 ---
 

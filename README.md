@@ -123,7 +123,7 @@ virasign --help
 
 - **Z-score (optional)**: Background-correct hits using water controls. See [`docs/Z_SCORE.md`](docs/Z_SCORE.md).
   - `--zscore`: Z-score computation (default: `true`, auto-detect water controls by name: `water`/`h2o`/`h20`, or `NC`/`CN` + digits e.g. `NC1`/`CN2`).
-  - `--zscore-controls`: Override auto-detection with exact input paths (example: `--zscore-controls /path/water1.fastq.gz,/path/water2.fastq.gz` or `--zscore-controls water_controls.txt` with one path per line).
+  - `--zscore-controls`: Override auto-detection with sample IDs and/or FASTQ paths (≥2 controls). Examples: `--zscore-controls H20_1,H20_2,BG_1,BG_2` (sample folder / samplesheet names), `--zscore-controls /path/water1.fastq.gz,/path/water2.fastq.gz`, or `--zscore-controls water_controls.txt` (one sample ID or path per line). When set, replaces auto-detect. Control samples show `-` in the Z-score column (they are used only to score other samples).
 
 - **RVDB clustering (optional)**: Cluster RVDB to reduce database size and speed up runtime.
   - `--enable-clustering`: Enable clustering for RVDB (default: off).
