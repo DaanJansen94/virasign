@@ -1923,19 +1923,9 @@ def download_refseq_database(
     return output_fasta
 
 def _get_refseq_phage_annotation_csv() -> Optional[Path]:
-    """
-    Locate the curated RefSeq phage annotation CSV shipped with Virasign.
-    Prefer the packaged copy under virasign/assets/; fall back to docs/assets/ in a source checkout.
-    """
-    here = Path(__file__).resolve().parent
-    candidates = [
-        here / "assets" / "refseq_references_phage_annotation.csv",
-        here.parents[1] / "docs" / "assets" / "refseq_references_phage_annotation.csv",
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    return None
+    """Locate the curated RefSeq phage annotation CSV shipped under virasign/assets/."""
+    path = Path(__file__).resolve().parent / "assets" / "refseq_references_phage_annotation.csv"
+    return path if path.exists() else None
 
 
 def _load_refseq_phage_accessions(csv_path: Path) -> set:
@@ -1963,7 +1953,7 @@ def _load_refseq_phage_accessions(csv_path: Path) -> set:
 def _filter_refseq_phages(fasta_path: Path, metadata_file: Path) -> None:
     """
     Remove bacteriophage / prokaryotic-virus references from a RefSeq FASTA using the
-    curated annotation CSV (docs/assets + packaged virasign/assets).
+    curated annotation CSV shipped under virasign/assets/.
     Skips if metadata already records phages_filtered=True.
     """
     try:
