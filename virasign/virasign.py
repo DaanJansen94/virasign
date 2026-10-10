@@ -1715,6 +1715,8 @@ def download_refseq_database(
                 logger.warning(f"Could not apply orthopox human-only filter to RefSeq: {e}")
         # Always filter non-viral contaminants (host background, variola, etc.)
         _filter_refseq_non_viral_contaminants(output_fasta, metadata_file)
+        # Always remove curated phage / prokaryotic-virus references before mapping.
+        _filter_refseq_phages(output_fasta, metadata_file)
         return output_fasta
 
     if not allow_download:
@@ -1737,48 +1739,55 @@ def download_refseq_database(
             # Use curl to download and pipe to gunzip (most efficient, like the user's command)
             logger.info("Using curl to download and extract directly (like: curl ... | gunzip > output)...")
             
-            # Download part 1 (always exists)
+            # Download part 1 (always exists).
+            # Avoid curl --progress-bar with stderr=PIPE: progress fills the pipe buffer
+            # (~64KB) and deadlocks curl while Python waits on gunzip.communicate().
             url1 = "https://ftp.ncbi.nlm.nih.gov/refseq/release/viral/viral.1.1.genomic.fna.gz"
             logger.info(f"Downloading and extracting: {url1}")
-            curl_proc1 = subprocess.Popen(
-                ['curl', '--progress-bar', url1],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            gunzip_proc1 = subprocess.Popen(
-                ['gunzip', '-c'],
-                stdin=curl_proc1.stdout,
-                stdout=open(output_fasta, 'wb'),
-                stderr=subprocess.PIPE
-            )
-            curl_proc1.stdout.close()
-            gunzip_proc1.communicate()
-            exit_code1 = curl_proc1.wait()
-            gunzip_exit1 = gunzip_proc1.wait()
-            
-            if exit_code1 != 0:
-                raise subprocess.CalledProcessError(exit_code1, 'curl')
-            
+            with open(output_fasta, 'wb') as out_f:
+                curl_proc1 = subprocess.Popen(
+                    ['curl', '-L', '--fail', '--silent', '--show-error', url1],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                gunzip_proc1 = subprocess.Popen(
+                    ['gunzip', '-c'],
+                    stdin=curl_proc1.stdout,
+                    stdout=out_f,
+                    stderr=subprocess.PIPE,
+                )
+                curl_proc1.stdout.close()
+                _, gunzip_err1 = gunzip_proc1.communicate()
+                exit_code1 = curl_proc1.wait()
+
+            if exit_code1 != 0 or gunzip_proc1.returncode not in (0, None):
+                err = (gunzip_err1 or b'').decode('utf-8', errors='replace').strip()
+                raise subprocess.CalledProcessError(
+                    exit_code1 or gunzip_proc1.returncode or 1,
+                    'curl|gunzip',
+                    stderr=err,
+                )
+
             # Try to download part 2 (may not exist)
             url2 = "https://ftp.ncbi.nlm.nih.gov/refseq/release/viral/viral.2.1.genomic.fna.gz"
             logger.info(f"Attempting to download: {url2}")
-            curl_proc2 = subprocess.Popen(
-                ['curl', '--progress-bar', '--fail', '--silent', url2],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            gunzip_proc2 = subprocess.Popen(
-                ['gunzip', '-c'],
-                stdin=curl_proc2.stdout,
-                stdout=open(output_fasta, 'ab'),  # Append mode
-                stderr=subprocess.PIPE
-            )
-            curl_proc2.stdout.close()
-            gunzip_proc2.communicate()
-            exit_code2 = curl_proc2.wait()
-            
-            if exit_code2 == 0:
-                gunzip_proc2.wait()
+            with open(output_fasta, 'ab') as out_f:
+                curl_proc2 = subprocess.Popen(
+                    ['curl', '-L', '--fail', '--silent', '--show-error', url2],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+                gunzip_proc2 = subprocess.Popen(
+                    ['gunzip', '-c'],
+                    stdin=curl_proc2.stdout,
+                    stdout=out_f,
+                    stderr=subprocess.PIPE,
+                )
+                curl_proc2.stdout.close()
+                gunzip_proc2.communicate()
+                exit_code2 = curl_proc2.wait()
+
+            if exit_code2 == 0 and gunzip_proc2.returncode == 0:
                 logger.info("Part 2 downloaded and appended")
             else:
                 logger.info("Part 2 not available (only part 1 exists - this is normal)")
@@ -1900,6 +1909,8 @@ def download_refseq_database(
 
         # Always filter non-viral contaminants (host background, variola, etc.)
         _filter_refseq_non_viral_contaminants(output_fasta, metadata_file)
+        # Always remove curated phage / prokaryotic-virus references before mapping.
+        _filter_refseq_phages(output_fasta, metadata_file)
         
     except Exception as e:
         logger.error(f"Failed to download RefSeq: {e}")
@@ -1910,6 +1921,135 @@ def download_refseq_database(
         raise
     
     return output_fasta
+
+def _get_refseq_phage_annotation_csv() -> Optional[Path]:
+    """
+    Locate the curated RefSeq phage annotation CSV shipped with Virasign.
+    Prefer the packaged copy under virasign/assets/; fall back to docs/assets/ in a source checkout.
+    """
+    here = Path(__file__).resolve().parent
+    candidates = [
+        here / "assets" / "refseq_references_phage_annotation.csv",
+        here.parents[1] / "docs" / "assets" / "refseq_references_phage_annotation.csv",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _load_refseq_phage_accessions(csv_path: Path) -> set:
+    """Return accession IDs (versioned + unversioned) marked Phage=Yes in the annotation CSV."""
+    import csv as _csv
+
+    phage_accs = set()
+    with csv_path.open("r", encoding="utf-8", newline="") as fh:
+        reader = _csv.DictReader(fh)
+        if not reader.fieldnames or "accession" not in reader.fieldnames or "Phage" not in reader.fieldnames:
+            raise ValueError(
+                f"Phage annotation CSV must have 'accession' and 'Phage' columns: {csv_path}"
+            )
+        for row in reader:
+            if str(row.get("Phage", "")).strip().lower() != "yes":
+                continue
+            acc = str(row.get("accession", "")).strip()
+            if not acc:
+                continue
+            phage_accs.add(acc)
+            phage_accs.add(acc.split(".")[0])
+    return phage_accs
+
+
+def _filter_refseq_phages(fasta_path: Path, metadata_file: Path) -> None:
+    """
+    Remove bacteriophage / prokaryotic-virus references from a RefSeq FASTA using the
+    curated annotation CSV (docs/assets + packaged virasign/assets).
+    Skips if metadata already records phages_filtered=True.
+    """
+    try:
+        meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+    except Exception:
+        meta = {}
+    if meta.get("phages_filtered"):
+        logger.info("RefSeq phage filter already applied (metadata). Skipping.")
+        return
+
+    csv_path = _get_refseq_phage_annotation_csv()
+    if csv_path is None:
+        logger.warning(
+            "RefSeq phage annotation CSV not found; skipping phage filter. "
+            "Expected virasign/assets/refseq_references_phage_annotation.csv"
+        )
+        return
+
+    try:
+        phage_accs = _load_refseq_phage_accessions(csv_path)
+    except Exception as e:
+        logger.warning(f"Could not load RefSeq phage annotation CSV ({csv_path}): {e}")
+        return
+
+    if not phage_accs:
+        logger.warning(f"No Phage=Yes entries in {csv_path}; skipping phage filter.")
+        return
+
+    tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_phages")
+    kept = 0
+    removed = 0
+    with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+        tmp_out, "w", encoding="utf-8", newline="\n"
+    ) as f_out:
+        write = False
+        for line in f_in:
+            if line.startswith(">"):
+                header = line[1:].strip()
+                acc = header.split()[0].strip() if header else ""
+                acc_base = acc.split(".")[0] if acc else ""
+                if acc in phage_accs or acc_base in phage_accs:
+                    write = False
+                    removed += 1
+                else:
+                    write = True
+                    kept += 1
+            if write:
+                f_out.write(line)
+
+    if removed > 0:
+        tmp_out.replace(fasta_path)
+        # Drop stale minimap index so it is rebuilt from the filtered FASTA.
+        for idx in (
+            Path(str(fasta_path) + ".mmi"),
+            fasta_path.with_suffix(fasta_path.suffix + ".mmi"),
+        ):
+            if idx.exists():
+                try:
+                    idx.unlink()
+                except Exception:
+                    pass
+        logger.info(
+            f"RefSeq phage filter applied ({csv_path.name}): removed {removed:,} phage reference(s), "
+            f"kept {kept:,} total sequence(s)."
+        )
+    else:
+        try:
+            tmp_out.unlink()
+        except FileNotFoundError:
+            pass
+        logger.info(
+            f"RefSeq phage filter ({csv_path.name}): no phage accessions found in FASTA "
+            f"(already filtered or CSV out of date)."
+        )
+
+    meta["phages_filtered"] = True
+    meta["phage_annotation_csv"] = csv_path.name
+    meta["phage_references_removed"] = removed
+    meta["sequence_count"] = kept
+    try:
+        metadata_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not update RefSeq metadata after phage filter: {e}")
+
 
 def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path) -> None:
     """
@@ -11239,7 +11379,7 @@ def main(args=None):
         epilog="""
 Examples
 --------
-  1) Basic run (default database: RVDB):
+  1) Basic run (default database: RefSeq):
      virasign -i input_dir
 
   2) Choose RVDB version:
@@ -11358,10 +11498,10 @@ Examples
         "--database",
         type=str,
         required=False,
-        default="RVDB",
+        default="RefSeq",
         dest="database",
         metavar="",
-        help="RVDB|RefSeq|RVDB,RefSeq|accession|FASTA|species name (default RVDB).",
+        help="RVDB|RefSeq|RVDB,RefSeq|accession|FASTA|species name (default RefSeq).",
     )
     choose_db.add_argument(
         "--rvdb-version",

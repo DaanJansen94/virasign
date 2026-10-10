@@ -50,7 +50,7 @@ pip install .
 Optional download of the database(s) so you can store them in a location of interest (few GB).
 
 - `--prepare-db`: Download/unpack/index the selected database(s) into `--db-dir`
-- `-d, --database`: Which database(s) to prepare (default: `RVDB`).
+- `-d, --database`: Which database(s) to prepare (default: `RefSeq`).
 - `--db-dir`: Database storage directory (default: `./Databases`).
 - `--max-ambiguous-fraction`: Drop references with ≥ this fraction of Ns (default: `0.10`).
 - `--rebuild`: Remove existing prepared database files and rebuild from scratch (default: off).
@@ -95,7 +95,7 @@ virasign --help
   - `-o, --output`: Output directory (default: creates `Virasign_output/`).
 
 - **Choose database (auto-downloads on first run)**
-  - `-d, --database`: `RVDB` (default), `RefSeq`, `RVDB,RefSeq`, an accession (e.g. `OZ254622.1`), or a species name (e.g. `Orthopoxvirus monkeypox`).
+  - `-d, --database`: `RefSeq` (default), `RVDB`, `RVDB,RefSeq`, an accession (e.g. `OZ254622.1`), or a species name (e.g. `Orthopoxvirus monkeypox`).
   - `--rvdb-version`: Which RVDB release to download (default: `31.0`). See [available versions](https://rvdb.dbi.udel.edu/previous-release).
   - `-a, --accession`: Extra NCBI accessions to include in the run (merged with selected database).
   - `--db-dir`: Reuse an existing database folder (optional; example: `/path/to/Databases/`).
@@ -134,7 +134,7 @@ virasign --help
 ### Examples
 
 ```bash
-# Basic usage with default RVDB database (creates Virasign_output in current directory)
+# Basic usage with default RefSeq database (creates Virasign_output in current directory)
 virasign -i input_dir
 
 # Basic usage with specified output directory
