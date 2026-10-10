@@ -6837,7 +6837,11 @@ def find_best_reference_with_index(
         filtered_all_stats = all_stats
     
     # Create curated JSON with hardcoded thresholds: 50% identity and 100 mapped reads
-    curated_stats = [s for s in all_stats if s["avg_identity"] >= 50.0 and s["mapped_reads"] >= 100]
+    curated_min_mapped_reads = 100
+    curated_stats = [
+        s for s in all_stats
+        if s["avg_identity"] >= 50.0 and s["mapped_reads"] >= curated_min_mapped_reads
+    ]
     
     # Further curate: only keep entries with avg_identity >= min_identity AND coverage_depth >= coverage_depth_threshold AND coverage_breadth >= coverage_breadth_threshold
     # Filter out entries with missing/invalid coverage or below thresholds
@@ -6856,6 +6860,44 @@ def find_best_reference_with_index(
         logger.info(f"After strict curation (identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {effective_breadth_threshold}): {len(curated_stats)} references remain (filtered out {filtered_out})")
     else:
         logger.info(f"After strict curation (identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {effective_breadth_threshold}): {len(curated_stats)} references remain")
+
+    # RefSeq low-input rescue: if every hit is below the curated read gate (100),
+    # still keep the single highest-read hit that passes identity/depth/breadth
+    # (and min_mapped_reads when that was lowered, e.g. -u -> 10).
+    if not curated_stats and all_stats and "refseq" in str(database_fasta).lower():
+        all_below_curated_reads = all(
+            int(s.get("mapped_reads", 0) or 0) < curated_min_mapped_reads for s in all_stats
+        )
+        if all_below_curated_reads:
+            rescue_min_reads = int(min_mapped_reads) if int(min_mapped_reads) < curated_min_mapped_reads else 1
+            rescue_candidates = [
+                s for s in all_stats
+                if int(s.get("mapped_reads", 0) or 0) >= rescue_min_reads
+                and s.get("avg_identity", 0.0) >= min_identity
+                and s.get("coverage_depth", 0.0) >= coverage_depth_threshold
+                and s.get("coverage_depth", 0.0) > 0.0
+                and s.get("coverage_breadth", 0.0) >= effective_breadth_threshold
+            ]
+            if rescue_candidates:
+                rescued = max(rescue_candidates, key=lambda s: int(s.get("mapped_reads", 0) or 0))
+                curated_stats = [rescued]
+                logger.info(
+                    f"RefSeq low-input rescue: all hits had < {curated_min_mapped_reads} mapped reads; "
+                    f"keeping highest-read hit that still passes identity>={min_identity}%, "
+                    f"depth>={coverage_depth_threshold}, breadth>={effective_breadth_threshold}"
+                    + (f", reads>={rescue_min_reads}" if rescue_min_reads > 1 else "")
+                    + f": {rescued.get('accession')} ({int(rescued.get('mapped_reads', 0) or 0)} reads, "
+                    f"identity={rescued.get('avg_identity', 0.0):.2f}%, "
+                    f"depth={rescued.get('coverage_depth', 0.0):.2f}, "
+                    f"breadth={rescued.get('coverage_breadth', 0.0):.4f})"
+                )
+            else:
+                logger.info(
+                    f"RefSeq low-input rescue: all hits had < {curated_min_mapped_reads} mapped reads, "
+                    f"but none passed identity/depth/breadth"
+                    + (f"/reads>={rescue_min_reads}" if rescue_min_reads > 1 else "")
+                    + "; no curated reference."
+                )
     
     if not filtered_all_stats:
         logger.warning(f"No references meet the filtering criteria (identity >= {min_identity:.1f}% AND mapped_reads >= {min_mapped_reads})")
@@ -6870,9 +6912,9 @@ def find_best_reference_with_index(
     
     # Log curated stats info (handle empty case gracefully)
     if curated_stats:
-        logger.info(f"Curated JSON: {len(curated_stats)} references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {effective_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= 100) out of {len(all_stats)} total")
+        logger.info(f"Curated JSON: {len(curated_stats)} references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {effective_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= {curated_min_mapped_reads}) out of {len(all_stats)} total")
     else:
-        logger.info(f"Curated JSON: 0 references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {effective_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= 100) out of {len(all_stats)} total")
+        logger.info(f"Curated JSON: 0 references (identity >= {min_identity}% AND coverage_depth >= {coverage_depth_threshold} AND coverage_breadth >= {effective_breadth_threshold} from initial set of identity >= 50.0% AND mapped_reads >= {curated_min_mapped_reads}) out of {len(all_stats)} total")
         logger.warning("No references meet curated criteria - results may be limited")
     
     # Choose best by mapped read count from filtered results (now working with aggregated stats)
