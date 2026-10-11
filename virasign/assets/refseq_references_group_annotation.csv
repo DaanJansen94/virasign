@@ -949,7 +949,7 @@ NC_040784.1,"Fusarium graminearum mycotymovirus 1 isolate SX64, complete genome"
 NC_040562.1,"Porcine parvovirus 7 isolate GX49, complete genome",vertebrate,Keep,Parvoviridae
 NC_040188.1,"Triumfetta yellow mosaic virus isolate BR-Msj1-10 segment DNA-B, complete sequence",plant,exclude,Geminiviridae
 NC_040670.1,"Culex tritaeniorhynchus totivirus isolate CTV_NJ3, complete genome",invertebrate,exclude,Orthototiviridae
-NC_040530.1,"Eimeria stiedai RNA virus 1 isolate TQCBD-12/0909, complete genome",unknown,Keep,Orthototiviridae
+NC_040530.1,"Eimeria stiedai RNA virus 1 isolate TQCBD-12/0909, complete genome",fungi,exclude,Orthototiviridae
 NC_040785.1,"Rusa timorensis papillomavirus type 2 isolate IZW 39/08, complete genome",vertebrate,Keep,Papillomaviridae
 NC_040190.1,"Common bean severe mosaic virus isolate Cuba:Mayabeque 99:2014 segment DNA-B, complete sequence",plant,exclude,Geminiviridae
 NC_040529.1,"Sodiomyces alkalinus fusarivirus 1, complete genome",fungi,exclude,Fusariviridae
@@ -1063,8 +1063,8 @@ NC_040703.1,"Chrysanthemum virus R strain BJ, complete genome",plant,exclude,Bet
 NC_040817.1,"Camellia chlorotic dwarf-associated virus isolate Ca-1, complete genome",plant,exclude,Geminiviridae
 NC_040714.1,"Porcine polyomavirus strain 180230, complete genome",vertebrate,Keep,Polyomaviridae
 NC_040802.1,"Lily yellow mosaic virus, complete genome",plant,exclude,Potyviridae
-NC_040608.1,"Pythium polare RNA virus 1 PpRV1-OPU1176 genomic RNA, complete genome",unknown,Keep,Ootiviridae
-NC_040678.1,"Pythium polare RNA virus 2 PpRV2-OPU1176 genomic RNA, nearly complete genome",unknown,Keep,Orthototiviridae
+NC_040608.1,"Pythium polare RNA virus 1 PpRV1-OPU1176 genomic RNA, complete genome",fungi,exclude,Ootiviridae
+NC_040678.1,"Pythium polare RNA virus 2 PpRV2-OPU1176 genomic RNA, nearly complete genome",fungi,exclude,Orthototiviridae
 NC_040568.1,"Mume virus A isolate pm14, complete genome",plant,exclude,Betaflexiviridae
 NC_040826.1,"Dragonfly associated cyclovirus isolate DfCyV-FZ1, complete genome",invertebrate,exclude,Circoviridae
 NC_040710.1,"Sogatella furcifera hepe-like virus isolate Guangdong, complete genome",invertebrate,exclude,Hepeviridae
@@ -11639,9 +11639,9 @@ NC_105619.1,"Escherichia phage vB_EcoS_SA32RD, complete genome",Phage,exclude,Dr
 NC_105724.1,"Klebsiella phage vB_1086, complete genome",Phage,exclude,Drexlerviridae
 NC_103120.1,"Klebsiella phage 066039, complete genome",Phage,exclude,Drexlerviridae
 NC_103859.1,"Klebsiella phage ABTNL-2, complete genome",Phage,exclude,Drexlerviridae
-NC_116642.1,"Pythium ultimum RNA virus 2 PuRV2-UOP226T RNA, complete genome",unknown,Keep,Ootiviridae
-NC_116760.1,"Cyclopterus lumpus toti-like virus strain TN18, complete genome",unknown,Keep,Pistolviridae
-NC_131357.1,"Common carp toti-like virus 1 isolate CCTLV-1/USA/MN/2018, complete genome",unknown,Keep,Pistolviridae
+NC_116642.1,"Pythium ultimum RNA virus 2 PuRV2-UOP226T RNA, complete genome",fungi,exclude,Ootiviridae
+NC_116760.1,"Cyclopterus lumpus toti-like virus strain TN18, complete genome",fungi,exclude,Pistolviridae
+NC_131357.1,"Common carp toti-like virus 1 isolate CCTLV-1/USA/MN/2018, complete genome",fungi,exclude,Pistolviridae
 NC_117365.1,"Pseudostellaria heterophylla carlavirus 2, complete genome",plant,exclude,Betaflexiviridae
 NC_116567.1,"Cole mild mosaic virus strain T25, complete genome",plant,exclude,Betaflexiviridae
 NC_117258.1,"Blueberry virus S isolate V2, complete genome",plant,exclude,Betaflexiviridae
@@ -11939,7 +11939,7 @@ NC_115783.1,"Cronartium ribicola totivirus 5 isolate OR4-2, complete genome",fun
 NC_116558.1,"Rhodosporidiobolus odoratus RNA virus 1, complete genome",fungi,exclude,Orthototiviridae
 NC_116608.1,"Torulaspora delbrueckii virus LA strain TdV-LAbarr1, complete genome",fungi,exclude,Orthototiviridae
 NC_115782.1,"Cronartium ribicola totivirus 4 isolate SC2, complete genome",fungi,exclude,Orthototiviridae
-NC_139174.1,"Plasmopara viticola lesion associated toti 1 isolate DMS3_DN31113 putative coat protein and putative RNA dependent RNA polymerase genes, complete cds",unknown,Keep,Orthototiviridae
+NC_139174.1,"Plasmopara viticola lesion associated toti 1 isolate DMS3_DN31113 putative coat protein and putative RNA dependent RNA polymerase genes, complete cds",fungi,exclude,Orthototiviridae
 NC_115781.1,"Cronartium ribicola totivirus 3 isolate SC2, complete genome",fungi,exclude,Orthototiviridae
 NC_115918.1,"Totivirus nijyuroku isolate MrV40L, complete genome",fungi,exclude,Orthototiviridae
 NC_115780.1,"Cronartium ribicola totivirus 2 isolate SC2, complete genome",fungi,exclude,Orthototiviridae
@@ -11952,12 +11952,12 @@ NC_139179.1,"MAG: Alehxovirus faecadaptatum isolate R30-k141_32906, complete gen
 NC_139180.1,"MAG: Alehxovirus faecicola isolate 167-k141_355194, complete genome",Phage,exclude,Steitzviridae
 NC_139181.1,"MAG: Alehxovirus faecihabitans isolate 46-k141_129773, complete genome",Phage,exclude,Steitzviridae
 NC_139182.1,"MAG: Alehxovirus faecivicinum isolate 168-k141_288144, complete genome",Phage,exclude,Steitzviridae
-NC_139183.1,"Plasmopara viticola lesion associated toti 3 isolate DMS6_DN42927 putative coat protein and putative RNA dependent RNA polymerase genes, complete cds",unknown,Keep,Orthototiviridae
+NC_139183.1,"Plasmopara viticola lesion associated toti 3 isolate DMS6_DN42927 putative coat protein and putative RNA dependent RNA polymerase genes, complete cds",fungi,exclude,Orthototiviridae
 NC_116679.1,"Conidiobolus heterosporus totivirus 1, complete genome",fungi,exclude,Orthototiviridae
 NC_116680.1,"Tea-oil camellia-associated totivirus 1 isolate Jiangxi, complete genome",plant,exclude,Orthototiviridae
 NC_139184.1,"Rhizoctonia solani dsRNA virus 10 isolate B hypothetical protein and RNA-dependent RNA polymerase genes, complete cds",fungi,exclude,Phlegiviridae
 NC_139185.1,"Lentinula edodes mycovirus HKB isolate Le33WIL RdRp and hypothetical protein genes, complete cds",fungi,exclude,Phlegiviridae
-NC_139186.1,"Eimeriavirus sani strain GUNCC_DN54384-11 capsid protein and RNA-dependent RNA polymerase genes, complete cds",vertebrate,Keep,Pseudototiviridae
+NC_139186.1,"Eimeriavirus sani strain GUNCC_DN54384-11 capsid protein and RNA-dependent RNA polymerase genes, complete cds",fungi,exclude,Pseudototiviridae
 NC_139187.1,"MAG: Alehxovirus faecivivens isolate 248-k141_244285, complete genome",Phage,exclude,Steitzviridae
 NC_139188.1,"MAG: Alehxovirus frumenticola isolate 159-k141_217068, complete genome",Phage,exclude,Steitzviridae
 NC_139189.1,"MAG: Alehxovirus frumentivicinum isolate 157-k141_37639, complete genome",Phage,exclude,Steitzviridae
@@ -11971,7 +11971,7 @@ NC_139196.1,"MAG: Alehxovirus nemoriscola isolate 376R-k141_1198757, complete ge
 NC_139197.1,"MAG: Alehxovirus nemorisvivens isolate 376R-k141_462894, complete genome",Phage,exclude,Steitzviridae
 NC_139198.1,"MAG: Alehxovirus pratenecus isolate R72-k141_249948, complete genome",Phage,exclude,Steitzviridae
 NC_139199.1,"MAG: Alehxovirus pseudofaecenecus isolate 174-k141_58336, complete genome",Phage,exclude,Steitzviridae
-NC_139200.1,"TPA: Trichomonas vaginalis virus 5 strain TVV5-NYCE32(NYU) RNA-dependent RNA polymerase and capsid protein genes, complete cds",unknown,Keep,Pseudototiviridae
+NC_139200.1,"TPA: Trichomonas vaginalis virus 5 strain TVV5-NYCE32(NYU) RNA-dependent RNA polymerase and capsid protein genes, complete cds",fungi,exclude,Pseudototiviridae
 NC_139201.1,"Botryosphaeria dothidea victorivirus 2 strain MSD53 CP and RdRp genes, complete cds",fungi,exclude,Pseudototiviridae
 NC_116288.1,"Aspergillus lentulus totivirus 1 J-YC genomic RNA, complete genome",fungi,exclude,Pseudototiviridae
 NC_116875.1,"Neofusicoccum parvum victorivirus 3 isolate NpVV3, complete genome",fungi,exclude,Pseudototiviridae
@@ -11981,17 +11981,17 @@ NC_139202.1,"Neofusicoccum parvum victorivirus 2 isolate COLB coat protein and R
 NC_139203.1,"Fusarium sambucinum victorivirus 1 Fs2242v genomic RNA, complete genome",fungi,exclude,Pseudototiviridae
 NC_139204.1,"Botrytis cinerea victorivirus 2 isolate BCS8_DN1217, complete genome",fungi,exclude,Pseudototiviridae
 NC_115871.1,"Scaphoideus titanus toti-like virus 1 isolate St_FR, complete genome",invertebrate,exclude,Spiciviridae
-NC_116725.1,"Bemisia tabaci toti-like virus 1 isolate B, complete genome",unknown,Keep,Spiciviridae
-NC_116726.1,"Bemisia tabaci toti-like virus 2 isolate Q, complete genome",unknown,Keep,Spiciviridae
+NC_116725.1,"Bemisia tabaci toti-like virus 1 isolate B, complete genome",fungi,exclude,Spiciviridae
+NC_116726.1,"Bemisia tabaci toti-like virus 2 isolate Q, complete genome",fungi,exclude,Spiciviridae
 NC_139205.1,"Thrips tabaci associated dsRNA virus 1 isolate THR-E_DN24095 hypothetical protein and putative RNA dependent RNA polymerase genes, complete cds",invertebrate,exclude,Spiciviridae
 NC_139206.1,"Thrips tabaci associated dsRNA virus 2 isolate THR-E_DN23955 hypothetical protein and putative RNA dependent RNA polymerase genes, complete cds",invertebrate,exclude,Spiciviridae
-NC_131270.1,"Schistocephalus solidus toti-like virus 2 isolate SsTV2-SsAE, complete genome",unknown,Keep,Spiciviridae
+NC_131270.1,"Schistocephalus solidus toti-like virus 2 isolate SsTV2-SsAE, complete genome",fungi,exclude,Spiciviridae
 NC_139207.1,"Aedes aegypti toti-like virus strain 2017-PB-AAM-5 capsid (orf1) and RNA-dependent RNA polymerase (orf2) genes, complete cds",invertebrate,exclude,Spiciviridae
 NC_139208.1,"Culex vishnui subgroup totivirus 17CxITNGK genes for capsid protein, RNA-dependent RNA polymerase, complete cds",invertebrate,exclude,Spiciviridae
 NC_139209.1,"Soybean thrips-associated totivirus 2 strain STN1 putative capsid protein (STaTV2_gp1) and RNA-dependent RNA polymerase (STaTV2_gp2) genes, complete cds",plant,exclude,Artiviridae
 NC_139210.1,"Omono River virus genes for capsid protein, RNA-dependent RNA polymerase, complete cds, strain: AK4",invertebrate,exclude,Artiviridae
-NC_116337.1,"Bactrocera dorsalis toti-like virus 1 strain BDTLV1.abc7, complete genome",unknown,Keep,Inseviridae
-NC_116338.1,"Bactrocera dorsalis toti-like virus 2 strain BDTLV2.abc8, complete genome",unknown,Keep,Inseviridae
+NC_116337.1,"Bactrocera dorsalis toti-like virus 1 strain BDTLV1.abc7, complete genome",fungi,exclude,Inseviridae
+NC_116338.1,"Bactrocera dorsalis toti-like virus 2 strain BDTLV2.abc8, complete genome",fungi,exclude,Inseviridae
 NC_139211.1,"Aedes aegypti totivirus strain 2017-Ab-AAF-5 capsid (orf1) and RNA-dependent RNA polymerase (orf2) genes, complete cds",invertebrate,exclude,Inseviridae
 NC_139212.1,"Culex inatomii totivirus isolate CiTV_Leuven_Pool4, complete genome",invertebrate,exclude,Inseviridae
 NC_139213.1,"Anopheles totivirus putative capsid and RdRp genes, complete cds",invertebrate,exclude,Inseviridae
@@ -12018,7 +12018,7 @@ NC_139267.1,"MAG: Inari rhabdovirus isolate FIN/L-2018/84, complete genome",unkn
 NC_139268.1,"Perhabdovirus trutta isolate 18/203 nucleoprotein (N), phosphoprotein (P), matrix (M), glycoprotein (G), and polymerase (L) genes, complete cds",unknown,Keep,Rhabdoviridae
 NC_139269.1,"Jopcycgri virus 1 isolate NCg19 nucleoprotein (N), phosphoprotein (P), matrix protein (M), glycoprotein (G), and RNA-dependent RNA polymerase (L) mRNAs, complete cds",unknown,Keep,Rhabdoviridae
 NC_116297.1,"Lettuce waikavirus 1 isolate JG1, complete genome",plant,exclude,Secoviridae
-NC_139259.1,"Linepithema humile toti-like virus 1 putative RdRp-complex and putative poly-capsid genes, complete cds",unknown,Keep,Lebotiviridae
+NC_139259.1,"Linepithema humile toti-like virus 1 putative RdRp-complex and putative poly-capsid genes, complete cds",fungi,exclude,Lebotiviridae
 NC_139270.1,"TPA: Rhododendron delavayi secovirus isolate Kun Ming, complete sequence",plant,exclude,Secoviridae
 NC_139260.1,"Rosellinia necatrix megatotivirus 1 genes for hypothetical protein, RNA-dependent RNA polymerase, complete cds, contig: Pool-2_176",fungi,exclude,Megatotiviridae
 NC_139271.1,"Ageratum virus 2 isolate Fuding, complete genome",unknown,Keep,Solemoviridae
@@ -12041,11 +12041,11 @@ NC_116313.1,"TPA: Cardamom polerovirus isolate Kerala, complete genome",plant,ex
 NC_117428.1,"Cnidium polerovirus 1 isolate SK, complete genome",unknown,Keep,Solemoviridae
 NC_139278.1,"Chickpea leafroll virus isolate GIRD, complete genome",plant,exclude,Solemoviridae
 NC_139279.1,"Dregea volubilis polerovirus 1 isolate YN, complete sequence",plant,exclude,Solemoviridae
-NC_116530.1,"Picoa juniperi megatotivirus 1 isolate ANK_VIR-88, complete genome",unknown,Keep,Megatotiviridae
+NC_116530.1,"Picoa juniperi megatotivirus 1 isolate ANK_VIR-88, complete genome",fungi,exclude,Megatotiviridae
 NC_139280.1,"Plasmopara viticola lesion associated totivirus-like 2 isolate DMS6_DN13622 putative coat protein and putative RNA dependent RNA polymerase genes, complete cds",fungi,exclude,Ootiviridae
-NC_115506.1,"Pythium splendens RNA virus 1 PsRV1-425508 genomic RNA, complete genome",unknown,Keep,Ootiviridae
-NC_116651.1,"Phytophthora condilina RNA virus 1 isolate PcoRV1/BD661, complete genome",unknown,Keep,Ootiviridae
-NC_115946.1,"Phytophthora cactorum RNA virus 1 strain PcRV1-pc1, complete genome",unknown,Keep,Ootiviridae
+NC_115506.1,"Pythium splendens RNA virus 1 PsRV1-425508 genomic RNA, complete genome",fungi,exclude,Ootiviridae
+NC_116651.1,"Phytophthora condilina RNA virus 1 isolate PcoRV1/BD661, complete genome",fungi,exclude,Ootiviridae
+NC_115946.1,"Phytophthora cactorum RNA virus 1 strain PcRV1-pc1, complete genome",fungi,exclude,Ootiviridae
 NC_139281.1,"Plasmopara viticola lesion associated totivirus-like 1 isolate DMG-E_DN28110 putative coat protein and putative RNA dependent RNA polymerase genes, complete cds",fungi,exclude,Ootiviridae
 NC_139282.1,"TPA: Foeniculum vulgare polerovirus isolate Foe vul, partial genome",unknown,Keep,Solemoviridae
 NC_139283.1,"Grapevine polerovirus 1 KC RNA, complete genome",plant,exclude,Solemoviridae
@@ -12111,7 +12111,7 @@ NC_001803.1,"Human respiratory syncytial virus A isolate HRSV/A/UK/S2.ts1C/1995,
 NC_038235.1,"Human respiratory syncytial virus isolate HRSV/A/USA/001/198X, complete genome",human,Keep,Pneumoviridae
 NC_139403.1,"Cat Tien Odontotermes delta-like virus isolate hdv-like, complete genome",unknown,Keep,Kolmioviridae
 NC_116500.1,"Perideltavirus desmodi isolate DesRot/Peru/AYA14_DrDV-A, complete genome",vertebrate,Keep,Kolmioviridae
-NC_115481.1,"Solenopsis midden virus isolate Formosa, complete genome",unknown,Keep,Lebotiviridae
+NC_115481.1,"Solenopsis midden virus isolate Formosa, complete genome",fungi,exclude,Lebotiviridae
 NC_012532.1,"Zika virus strain MR 766, complete genome",human,Keep,Flaviviridae
 NC_139440.1,"Thurisazvirus desmodi isolate DesRot/Peru/AYA11_DrDV-B, complete genome",unknown,Keep,Kolmioviridae
 NC_139441.1,"Yasminevirus sp. GU-2018 strain A1 genome assembly, contig: Scaffold_1, whole genome shotgun sequence",unknown,Keep,Mimiviridae
@@ -12393,7 +12393,7 @@ NC_030200.1,"Macaca nemestrina herpesvirus 7, complete genome",vertebrate,Keep,O
 NC_030203.1,"Sclerotinia sclerotiorum umbra-like virus 1 isolate IL1 RNA-dependent RNA polymerase and replication-associated protein genes, complete cds",fungi,exclude,Ambiguiviridae
 NC_030205.1,"Water chestnut soymovirus 1 isolate TuanFeng, complete genome",plant,exclude,Caulimoviridae
 NC_030202.1,"Fusarium poae dsRNA virus 3 isolate SX63, complete genome",fungi,exclude,Fusagraviridae
-NC_030295.1,"Golden shiner totivirus isolate GSTV/US/MN/2014, partial genome",vertebrate,Keep,Orthototiviridae
+NC_030295.1,"Golden shiner totivirus isolate GSTV/US/MN/2014, partial genome",fungi,exclude,Orthototiviridae
 NC_030296.1,"Diaphorina citri densovirus, complete genome",invertebrate,exclude,Parvoviridae
 NC_030291.1,"GB virus D strain 68 polyprotein precursor, gene, complete cds",vertebrate,Keep,Hepaciviridae
 NC_030294.1,"Negev virus genes for hypothetical proteins, complete cds, strain: PL17",invertebrate,exclude,
@@ -12540,7 +12540,7 @@ NC_027641.1,"Microviridae Fen4707_41, complete genome",Phage,exclude,Pichovirida
 NC_027640.1,"Microviridae Fen418_41, complete genome",Phage,exclude,Pichoviridae
 NC_027639.1,"Microviridae Fen2266_11, complete genome",Phage,exclude,unclassified Microviridae
 NC_027638.1,"Microviridae Bog9017_22, complete genome",Phage,exclude,Pichoviridae
-NC_027701.1,"Trichomonas vaginalis virus 1 strain TVV1-UR1-1, complete genome",unknown,Keep,Pseudototiviridae
+NC_027701.1,"Trichomonas vaginalis virus 1 strain TVV1-UR1-1, complete genome",fungi,exclude,Pseudototiviridae
 NC_027714.1,"Alfalfa leaf curl virus isolate 44-1E, complete genome",plant,exclude,Geminiviridae
 NC_027710.2,"Opium poppy mosaic virus isolate PHEL5235, complete genome",plant,exclude,Tombusviridae
 NC_027712.1,"Tobacco virus 1 isolate AnHui, complete genome",plant,exclude,Closteroviridae
@@ -12828,7 +12828,7 @@ NC_029131.1,"Delisea pulchra RNA virus isolate Delisea predicted replication-ass
 NC_029300.1,"Bat bocavirus isolate YNJH, complete genome",vertebrate,Keep,Parvoviridae
 NC_029303.1,"Blackberry Virus F isolate BBV-3X, complete genome",plant,exclude,Caulimoviridae
 NC_029301.1,"Currant virus A, complete genome",plant,exclude,Betaflexiviridae
-NC_029302.1,"Piscine myocarditis-like virus isolate Golden shiner/PMCLV/USA/MN/2014, complete genome",vertebrate,Keep,Pistolviridae
+NC_029302.1,"Piscine myocarditis-like virus isolate Golden shiner/PMCLV/USA/MN/2014, complete genome",fungi,exclude,Pistolviridae
 NC_029311.1,"Leporid herpesvirus 4 isolate LHV4012612, complete genome",vertebrate,Keep,Orthoherpesviridae
 NC_029312.1,"Camponotus nipponicus virus genes for capsid protein, RdRp, complete cds, strain: SS-2014a",invertebrate,exclude,Inseviridae
 NC_029313.1,"Bhindi yellow vein alphasatellite replication protein gene, complete cds",plant,exclude,Alphasatellitidae
@@ -13584,7 +13584,7 @@ NC_032422.1,"Shahe arthropod virus 1 strain SHWC0209c12762 hypothetical protein 
 NC_032471.1,"Sanxia water strider virus 15 strain SXSSP1894 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_032474.1,"Sanxia tombus-like virus 7 strain SXSSP2567 hypothetical protein 1, hypothetical protein 2, hypothetical protein 3, and hypothetical protein 4 genes, complete cds",unknown,Keep,
 NC_032472.1,"Hubei virga-like virus 18 strain fly97447 RdRp and hypothetical protein genes, complete cds",unknown,Keep,
-NC_032424.1,"Hubei toti-like virus 19 strain horsefly123848 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Lebotiviridae
+NC_032424.1,"Hubei toti-like virus 19 strain horsefly123848 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Lebotiviridae
 NC_032431.1,"Hubei tombus-like virus 37 strain WHBL72297 hypothetical protein gene, complete cds",unknown,Keep,
 NC_032425.1,"Hubei tombus-like virus 34 strain WHBL73047 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
 NC_032419.1,"Hubei tombus-like virus 32 strain WHBL71139 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
@@ -13883,7 +13883,7 @@ NC_033166.1,"Wenzhou bivalvia virus 3 strain beimix38484 hypothetical protein 1 
 NC_033100.1,"Wenzhou bivalvia virus 2 strain beimix75763 RNA-dependent RNA polymerase and hypothetical protein genes, complete cds",unknown,Keep,
 NC_032827.1,"Wenzhou bivalvia virus 1 strain beimix75829 hypothetical protein gene, complete cds",unknown,Keep,
 NC_033197.1,"Wenling zhaovirus-like virus 1 strain WLJQ103300 RNA-dependent RNA polymerase and hypothetical protein genes, complete cds",unknown,Keep,
-NC_033012.1,"Wenling toti-like virus 2 strain WLJQ104148 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Artiviridae
+NC_033012.1,"Wenling toti-like virus 2 strain WLJQ104148 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Artiviridae
 NC_033090.1,"Wenling tombus-like virus 5 strain WLJQ104103 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
 NC_033024.1,"Wenling tombus-like virus 4 strain WLJQ100551 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
 NC_033073.1,"Wenling tombus-like virus 3 strain WLJQ76752 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
@@ -13926,7 +13926,7 @@ NC_032793.1,"Wenling crustacean virus 12 strain WLJQ47777 putative nucleoprotein
 NC_032781.1,"Wenling crustacean virus 11 strain WLJQ201798 hypothetical protein 1, hypothetical protein 2, hypothetical protein 3, putative glycoprotein, and RNA-dependent RNA polymerase genes, complete cds",invertebrate,exclude,Rhabdoviridae
 NC_032739.1,"Wenling crustacean virus 10 strain WLJQ101844 hypothetical protein 1, hypothetical protein 2, hypothetical protein 3, putative glycoprotein, and RNA-dependent RNA polymerase genes, complete cds",invertebrate,exclude,Rhabdoviridae
 NC_033065.1,"Wenling crustacean virus 1 strain WLJQ101409 RdRp, hypothetical protein, and putative structural protein genes, complete cds",invertebrate,exclude,
-NC_032851.1,"Shuangao toti-like virus strain insectZJ97483 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Lebotiviridae
+NC_032851.1,"Shuangao toti-like virus strain insectZJ97483 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Lebotiviridae
 NC_033072.1,"Shuangao sobemo-like virus 3 strain insectZJ66198 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_033089.1,"Shuangao sobemo-like virus 2 strain insectZJ89114 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_033084.1,"Shuangao sobemo-like virus 1 strain insectZJ66941 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
@@ -13972,7 +13972,7 @@ NC_033173.1,"Sanxia water strider virus 9 strain SXSSP2367 hypothetical protein 
 NC_033194.1,"Sanxia water strider virus 8 strain SXSSP2580 hypothetical protein gene, complete cds",unknown,Keep,
 NC_033180.1,"Sanxia water strider virus 7 strain SXSSP2499 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
 NC_033189.1,"Sanxia water strider virus 21 strain SXSSP2576 hypothetical protein gene, complete cds",unknown,Keep,
-NC_032931.1,"Sanxia water strider virus 20 strain SXSSP2584 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Lebotiviridae
+NC_032931.1,"Sanxia water strider virus 20 strain SXSSP2584 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Lebotiviridae
 NC_033196.1,"Sanxia water strider virus 19 strain SXSSP2568 RdRp and hypothetical protein genes, complete cds",unknown,Keep,
 NC_033077.1,"Sanxia water strider virus 17 strain SXSSP1704 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_033139.1,"Sanxia water strider virus 16 strain SXXX38069 hypothetical protein gene, complete cds",unknown,Keep,
@@ -14032,17 +14032,17 @@ NC_032848.1,"Hubei unio douglasiae virus 3 strain WHBL73106 hypothetical protein
 NC_032811.1,"Hubei unio douglasiae virus 2 strain WHBL72658 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
 NC_033280.1,"Hubei unio douglasiae virus 1 strain WHBL72336 RNA-dependent RNA polymerase and B2-like protein genes, complete cds",unknown,Keep,
 NC_033281.1,"Hubei unio douglasiae virus 1 strain WHBL72336 capsid protein gene, complete cds",unknown,Keep,
-NC_032883.1,"Hubei toti-like virus 9 strain QTM27092 hypothetical protein gene, complete cds",unknown,Keep,
-NC_032954.1,"Hubei toti-like virus 5 strain WHSWHC37547 hypothetical protein gene, complete cds",unknown,Keep,
-NC_032938.1,"Hubei toti-like virus 24 strain tick106628 hypothetical protein and hypothetical protein 2 genes, complete cds",unknown,Keep,Inseviridae
-NC_032819.1,"Hubei toti-like virus 21 strain CC64629 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
-NC_032806.1,"Hubei toti-like virus 20 strain CC62244 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Lebotiviridae
-NC_032734.1,"Hubei toti-like virus 2 strain arthropodmix13450 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Orthototiviridae
-NC_032948.1,"Hubei toti-like virus 18 strain WHCC116098 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Lebotiviridae
-NC_032942.1,"Hubei toti-like virus 17 strain tick107859 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
-NC_032924.1,"Hubei toti-like virus 16 strain spider123775 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
-NC_032919.1,"Hubei toti-like virus 15 strain SCM51462 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Inseviridae
-NC_032878.1,"Hubei toti-like virus 13 strain QTM25941 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Inseviridae
+NC_032883.1,"Hubei toti-like virus 9 strain QTM27092 hypothetical protein gene, complete cds",fungi,exclude,
+NC_032954.1,"Hubei toti-like virus 5 strain WHSWHC37547 hypothetical protein gene, complete cds",fungi,exclude,
+NC_032938.1,"Hubei toti-like virus 24 strain tick106628 hypothetical protein and hypothetical protein 2 genes, complete cds",fungi,exclude,Inseviridae
+NC_032819.1,"Hubei toti-like virus 21 strain CC64629 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,
+NC_032806.1,"Hubei toti-like virus 20 strain CC62244 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Lebotiviridae
+NC_032734.1,"Hubei toti-like virus 2 strain arthropodmix13450 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Orthototiviridae
+NC_032948.1,"Hubei toti-like virus 18 strain WHCC116098 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Lebotiviridae
+NC_032942.1,"Hubei toti-like virus 17 strain tick107859 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",fungi,exclude,
+NC_032924.1,"Hubei toti-like virus 16 strain spider123775 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",fungi,exclude,
+NC_032919.1,"Hubei toti-like virus 15 strain SCM51462 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Inseviridae
+NC_032878.1,"Hubei toti-like virus 13 strain QTM25941 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Inseviridae
 NC_033273.1,"Hibiscus leaf curl alphasatellite alpha Rep gene, isolate C22A1",plant,exclude,Alphasatellitidae
 NC_033271.1,"Ageratum yellow vein Pakistan alphasatellite alpha Rep gene, isolate H5A1",plant,exclude,Alphasatellitidae
 NC_033274.1,"Tomato leaf curl alphasatellite complete sequence, isolate SA150, clone KL-21",plant,exclude,Alphasatellitidae
@@ -14090,7 +14090,7 @@ NC_033066.1,"Beihai weivirus-like virus 11 strain BWBFG40530 RNA-dependent RNA p
 NC_033031.1,"Beihai weivirus-like virus 1 strain BWBFG40821 RNA-dependent RNA polymerase and hypothetical protein genes, complete cds",unknown,Keep,
 NC_032786.1,"Beihai victori-like virus 1 strain BHZC37363 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_032746.1,"Beihai uca arcuata virus 1 strain BFZCX5633 hypothetical protein gene, complete cds",unknown,Keep,Inseviridae
-NC_032841.1,"Beihai toti-like virus 4 strain HOU154008 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
+NC_032841.1,"Beihai toti-like virus 4 strain HOU154008 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,
 NC_032914.1,"Beihai tombus-like virus 9 strain BHZY58393 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
 NC_032951.1,"Beihai tombus-like virus 8 strain BHZY60516 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_033208.1,"Beihai tombus-like virus 7 strain BHBJDX18773 hypothetical protein 1, hypothetical protein 2, hypothetical protein 3, and hypothetical protein 4 genes, complete cds",unknown,Keep,
@@ -14296,8 +14296,8 @@ NC_033190.1,"Hubei picorna-like virus 25 strain QTM27237 hypothetical protein 1 
 NC_033227.1,"Hubei picorna-like virus 22 strain WHSF7472 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_033218.1,"Hubei picorna-like virus 8 strain QTM27288 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_033160.1,"Hubei picorna-like virus 79 strain WHCCII12350 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
-NC_032831.1,"Hubei toti-like virus 12 strain HC21305 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Inseviridae
-NC_032733.1,"Hubei toti-like virus 10 strain 3mos6210 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,Spiciviridae
+NC_032831.1,"Hubei toti-like virus 12 strain HC21305 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Inseviridae
+NC_032733.1,"Hubei toti-like virus 10 strain 3mos6210 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",fungi,exclude,Spiciviridae
 NC_032768.1,"Hubei tombus-like virus 9 strain WHBL63242 hypothetical protein 1 and hypothetical protein 2 genes, complete cds",unknown,Keep,
 NC_032884.1,"Hubei tombus-like virus 8 strain WHCC116238 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
 NC_032782.1,"Hubei tombus-like virus 7 strain WHBL69243 hypothetical protein 1, hypothetical protein 2, and hypothetical protein 3 genes, complete cds",unknown,Keep,
@@ -14847,7 +14847,7 @@ NC_034172.1,"Fall chinook aquareovirus isolate GSH1 segment 5, complete sequence
 NC_034162.1,"Fall chinook aquareovirus isolate GSH1 segment 7, complete sequence",vertebrate,Keep,Spinareoviridae
 NC_034173.1,"Fall chinook aquareovirus isolate GSH1 segment 6, complete sequence",vertebrate,Keep,Spinareoviridae
 NC_024116.1,"Tomato leaf curl Barka virus isolate Tom-55, complete genome",plant,exclude,Geminiviridae
-NC_024115.1,"Leishmania aethiopica RNA virus isolate LRV2-Lae-L494, complete genome",unknown,Keep,Pseudototiviridae
+NC_024115.1,"Leishmania aethiopica RNA virus isolate LRV2-Lae-L494, complete genome",fungi,exclude,Pseudototiviridae
 NC_024119.1,"PoSCV Kor J481, complete genome",vertebrate,Keep,Smacoviridae
 NC_024118.1,"New Jersey polyomavirus-2013 isolate NJ-PyV-2013, complete genome",human,Keep,Polyomaviridae
 NC_024151.1,"Beauveria bassiana victorivirus NZL/1980 isolate 6887, complete genome",fungi,exclude,Pseudototiviridae
@@ -15386,7 +15386,7 @@ NC_026170.1,"Sewage-associated circular DNA molecule-1 isolate NZ-BS4111-2012, c
 NC_026141.2,"Adelie penguin polyomavirus isolate AdPyV_Crozier_2012, complete genome",vertebrate,Keep,Polyomaviridae
 NC_026138.1,"Seal anellovirus 4 ORF1 gene, complete cds",vertebrate,Keep,Anelloviridae
 NC_026144.1,"Sewage-associated gemycircularvirus-4 isolate BS3913, complete sequence",unknown,Keep,Genomoviridae
-NC_026140.1,"Eimeria tenella RNA virus 1 strain JL610V coat protein (EtRv1gp1) and RNA-dependent RNA polymerase (RDRP) genes, complete cds",unknown,Keep,Pseudototiviridae
+NC_026140.1,"Eimeria tenella RNA virus 1 strain JL610V coat protein (EtRv1gp1) and RNA-dependent RNA polymerase (RDRP) genes, complete cds",fungi,exclude,Pseudototiviridae
 NC_026143.1,"Sewage-associated circular DNA molecule-3 isolate NZ-BS2940-2012, complete sequence",unknown,Keep,
 NC_026136.1,"Alternaria brassicicola endornavirus isolate 1, complete genome",fungi,exclude,Endornaviridae
 NC_026139.1,"Botrytis cinerea RNA virus 1 strain BerBc-1, complete genome",fungi,exclude,Fusagraviridae
@@ -16506,7 +16506,7 @@ NC_002657.1,"Classical swine fever virus, complete genome",vertebrate,Keep,Pesti
 NC_001593.1,"Human papillomavirus type 53, complete genome",human,Keep,Papillomaviridae
 NC_016403.1,"Quail picornavirus QPV1/HUN/2010, complete genome",vertebrate,Keep,Picornaviridae
 NC_016404.1,"Actinidia virus B, complete genome",plant,exclude,Betaflexiviridae
-NC_017084.1,"Tianjin totivirus, complete genome",vertebrate,Keep,Orthototiviridae
+NC_017084.1,"Tianjin totivirus, complete genome",fungi,exclude,Orthototiviridae
 NC_017091.1,"Gyrovirus GyV3, complete genome",human,Keep,Anelloviridae
 NC_007376.1,"Influenza A virus (A/Korea/426/1968(H2N2)) segment 3, complete sequence",human,Keep,Orthomyxoviridae
 NC_007377.1,"Influenza A virus (A/Korea/426/1968(H2N2)) segment 7, complete sequence",human,Keep,Orthomyxoviridae
@@ -16597,7 +16597,7 @@ NC_004071.1,"Hollyhock leaf crumple virus, complete genome",plant,exclude,Gemini
 NC_005330.1,"Sida micrantha mosaic virus segment A, complete sequence",plant,exclude,Geminiviridae
 NC_004169.1,"Drosophila x virus segment B, complete sequence",invertebrate,exclude,Birnaviridae
 NC_003776.1,"Rice stripe virus RNA 3, complete sequence",plant,exclude,Phenuiviridae
-NC_003824.1,"Trichomonas vaginalis virus, complete genome",unknown,Keep,Orthototiviridae
+NC_003824.1,"Trichomonas vaginalis virus, complete genome",fungi,exclude,Orthototiviridae
 NC_003833.1,"Tulare apple mosaic virus RNA1, complete sequence",plant,exclude,Bromoviridae
 NC_003834.1,"Tulare apple mosaic virus RNA2, complete sequence",plant,exclude,Bromoviridae
 NC_003835.1,"Tulare apple mosaic virus RNA3, complete sequence",plant,exclude,Bromoviridae
@@ -16700,7 +16700,7 @@ NC_012754.1,"Stretch Lagoon orbivirus segment 1, complete genome",unknown,Keep,
 NC_013117.1,"Francolinus leucoscepus papillomavirus 1, complete genome",vertebrate,Keep,Papillomaviridae
 NC_006006.1,"St Croix River virus chromosome segment 10, complete genome",invertebrate,exclude,Sedoreoviridae
 NC_003557.1,"Garlic latent virus, complete genome",plant,exclude,Betaflexiviridae
-NC_002063.1,"Leishmania RNA virus 1 - 1, complete genome",unknown,Keep,Pseudototiviridae
+NC_002063.1,"Leishmania RNA virus 1 - 1, complete genome",fungi,exclude,Pseudototiviridae
 NC_007999.1,"Campoletis sonorensis ichnovirus segment P, complete genome",invertebrate,exclude,Polydnaviriformidae
 NC_004199.1,"Kadipiro virus chromosome segment 12, complete genome",invertebrate,exclude,Sedoreoviridae
 NC_005903.1,"Agropyron mosaic virus, complete genome",plant,exclude,Potyviridae
@@ -16756,7 +16756,7 @@ NC_014528.1,"Great Island virus segment 7, complete genome",human,Keep,Sedoreovi
 NC_014530.1,"Great Island virus segment 9, complete genome",human,Keep,Sedoreoviridae
 NC_014531.1,"Great Island virus segment 10, complete genome",human,Keep,Sedoreoviridae
 NC_000960.1,"Cryphonectria hypovirus 3, complete genome",fungi,exclude,Parahypoviridae
-NC_002064.1,"Leishmania RNA virus 2 - 1, complete genome",unknown,Keep,Pseudototiviridae
+NC_002064.1,"Leishmania RNA virus 2 - 1, complete genome",fungi,exclude,Pseudototiviridae
 NC_002543.1,"Horseradish curly top virus, complete genome",plant,exclude,Geminiviridae
 NC_002551.1,"Vesicular exanthema of swine virus, complete genome",vertebrate,Keep,Caliciviridae
 NC_002562.1,"Trichoplusia ni cytoplasmic polyhedrosis virus 15 segment 7, complete sequence",invertebrate,exclude,Spinareoviridae
@@ -16796,7 +16796,7 @@ NC_003723.1,"Potato mop-top virus RNA 1, complete sequence",plant,exclude,Virgav
 NC_003749.1,"Rice ragged stunt virus segment S1 P1 gene, complete cds",plant,exclude,Spinareoviridae
 NC_011500.2,"Rotavirus A segment 5, complete genome",human,Keep,Sedoreoviridae
 NC_003543.1,"Cowpea chlorotic mottle virus RNA 1, complete sequence",plant,exclude,Bromoviridae
-NC_003601.1,"Leishmania RNA virus 1 - 4, complete genome",unknown,Keep,Pseudototiviridae
+NC_003601.1,"Leishmania RNA virus 1 - 4, complete genome",fungi,exclude,Pseudototiviridae
 NC_003612.1,"Grapevine yellow speckle viroid 2, complete genome",plant,exclude,Pospiviroidae
 NC_003756.1,"Red clover necrotic mosaic virus RNA-1, complete sequence",plant,exclude,Tombusviridae
 NC_003757.1,"Rice ragged stunt virus segment 9, complete sequence",plant,exclude,Spinareoviridae
@@ -16891,7 +16891,7 @@ NC_010348.1,"Rose cryptic virus 1 RNA 3, complete sequence",plant,exclude,Partit
 NC_010352.1,"Eragrostis streak virus, complete genome",plant,exclude,Geminiviridae
 NC_024779.1,"Dolichos yellow mosaic virus isolate DA segment DNA B, complete sequence",plant,exclude,Geminiviridae
 NC_002691.1,"Nodamura virus RNA2, complete genome",vertebrate,Keep,Nodaviridae
-NC_002701.1,"Eimeria brunetti RNA virus 1, complete genome",unknown,Keep,Orthototiviridae
+NC_002701.1,"Eimeria brunetti RNA virus 1, complete genome",fungi,exclude,Orthototiviridae
 NC_003102.1,"Spodoptera litura NPV, complete genome",invertebrate,exclude,Baculoviridae
 NC_006150.1,"Macacine herpesvirus 3, complete genome",vertebrate,Keep,Orthoherpesviridae
 NC_003369.1,"Bean leafroll virus, complete genome",plant,exclude,Tombusviridae
@@ -17231,7 +17231,7 @@ NC_003707.1,"Eyach virus segment 12, complete genome",vertebrate,Keep,Spinareovi
 NC_003710.1,"Discula destructiva virus 2 segment 1, complete genome",fungi,exclude,Partitiviridae
 NC_003711.1,"Discula destructiva virus 2 segment 2, complete genome",fungi,exclude,Partitiviridae
 NC_003906.1,"Velvet tobacco mottle virus Satellite RNA, complete genome",plant,exclude,
-NC_004034.1,"Trichomonas vaginalis virus 3, complete genome",unknown,Keep,Pseudototiviridae
+NC_004034.1,"Trichomonas vaginalis virus 3, complete genome",fungi,exclude,Pseudototiviridae
 NC_003546.1,"Citrus leaf rugose virus RNA 3, complete sequence",plant,exclude,Bromoviridae
 NC_003725.1,"Potato mop-top virus RNA 2, complete sequence",plant,exclude,Virgaviridae
 NC_014907.1,"Malvastrum yellow mosaic Cameroon alphasatellite, complete genome",plant,exclude,Alphasatellitidae
@@ -17439,7 +17439,7 @@ NC_005338.2,"Dolichos yellow mosaic virus isolate DA segment DNA A, complete seq
 NC_015317.1,"Sweet potato leaf curl South Carolina virus, complete genome",plant,exclude,Geminiviridae
 NC_015328.1,"Sweet potato caulimo-like virus, complete genome",plant,exclude,Caulimoviridae
 NC_015553.1,"Eragrostis minor streak virus, complete genome",plant,exclude,Geminiviridae
-NC_015639.1,"Piscine myocarditis virus AL V-708, complete genome",vertebrate,Keep,Pistolviridae
+NC_015639.1,"Piscine myocarditis virus AL V-708, complete genome",fungi,exclude,Pistolviridae
 NC_013097.1,"Faba bean necrotic stunt virus DNA M, complete genome",plant,exclude,Nanoviridae
 NC_009991.1,"Phlox Virus B, complete genome",plant,exclude,Betaflexiviridae
 NC_009646.1,"Corchorus golden mosaic virus DNA-B, complete sequence",plant,exclude,Geminiviridae
@@ -17986,7 +17986,7 @@ NC_004627.1,"Ageratum yellow vein Taiwan virus, complete genome",plant,exclude,G
 NC_013469.1,"Fusarium graminearum dsRNA mycovirus-3, complete genome",fungi,exclude,Fusagraviridae
 NC_013470.1,"Fusarium graminearum dsRNA mycovirus-4 dsRNA1, complete genome",fungi,exclude,Curvulaviridae
 NC_013471.1,"Fusarium graminearum dsRNA mycovirus-4 dsRNA2, complete genome",fungi,exclude,Curvulaviridae
-NC_003873.1,"Trichomonas vaginalis virus II, complete genome",unknown,Keep,Pseudototiviridae
+NC_003873.1,"Trichomonas vaginalis virus II, complete genome",fungi,exclude,Pseudototiviridae
 NC_006960.1,"Pleurotus ostreatus virus 1 RNA-2, complete genome",fungi,exclude,Partitiviridae
 NC_003987.1,"Porcine sapelovirus 1, complete genome",vertebrate,Keep,Picornaviridae
 NC_007574.1,"Rotavirus C segment 4, complete sequence",human,Keep,Sedoreoviridae
@@ -19097,7 +19097,7 @@ NC_038696.1,"Rockport virus isolate MSB57412 segment S, complete sequence",verte
 NC_038697.1,"Scheffersomyces segobiensis virus L isolate NRRL Y-11571, complete genome",fungi,exclude,Orthototiviridae
 NC_038698.1,"Tuber aestivum virus 1 capsid protein and RNA polymerase genes, complete cds",fungi,exclude,Orthototiviridae
 NC_038699.1,"Xanthophyllomyces dendrorhous virus L1b capsid protein (CP) and RNA-dependent RNA polymerase (RdRp) genes, complete cds",fungi,exclude,Orthototiviridae
-NC_038700.1,"Trichomonas vaginalis virus 4 strain TVV4-OC3, complete genome",unknown,Keep,Pseudototiviridae
+NC_038700.1,"Trichomonas vaginalis virus 4 strain TVV4-OC3, complete genome",fungi,exclude,Pseudototiviridae
 NC_038701.1,"Satellite tobacco necrosis virus 2 coat protein gene, complete cds",plant,exclude,Tonesaviridae
 NC_038703.1,"Tobacco latent virus, complete sequence",plant,exclude,
 NC_038704.1,"Yakeshi virus strain Yakeshi-Si-210 nucleocapsid gene, complete cds",human,Keep,
