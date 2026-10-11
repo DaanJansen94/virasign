@@ -1715,8 +1715,8 @@ def download_refseq_database(
                 logger.warning(f"Could not apply orthopox human-only filter to RefSeq: {e}")
         # Always filter non-viral contaminants (host background, variola, etc.)
         _filter_refseq_non_viral_contaminants(output_fasta, metadata_file)
-        # Always remove curated phage / prokaryotic-virus references before mapping.
-        _filter_refseq_phages(output_fasta, metadata_file)
+        # Always remove curated out-of-scope groups (phage/plant/fungi/invertebrate) before mapping.
+        _filter_refseq_excluded_groups(output_fasta, metadata_file)
         return output_fasta
 
     if not allow_download:
@@ -1909,8 +1909,8 @@ def download_refseq_database(
 
         # Always filter non-viral contaminants (host background, variola, etc.)
         _filter_refseq_non_viral_contaminants(output_fasta, metadata_file)
-        # Always remove curated phage / prokaryotic-virus references before mapping.
-        _filter_refseq_phages(output_fasta, metadata_file)
+        # Always remove curated out-of-scope groups (phage/plant/fungi/invertebrate) before mapping.
+        _filter_refseq_excluded_groups(output_fasta, metadata_file)
         
     except Exception as e:
         logger.error(f"Failed to download RefSeq: {e}")
@@ -1922,67 +1922,215 @@ def download_refseq_database(
     
     return output_fasta
 
-def _get_refseq_phage_annotation_csv() -> Optional[Path]:
-    """Locate the curated RefSeq phage annotation CSV shipped under virasign/assets/."""
-    path = Path(__file__).resolve().parent / "assets" / "refseq_references_phage_annotation.csv"
+def _get_refseq_group_annotation_csv() -> Optional[Path]:
+    """Locate the curated RefSeq group annotation CSV shipped under virasign/assets/."""
+    path = Path(__file__).resolve().parent / "assets" / "refseq_references_group_annotation.csv"
     return path if path.exists() else None
 
 
-def _load_refseq_phage_accessions(csv_path: Path) -> set:
-    """Return accession IDs (versioned + unversioned) marked Phage=Yes in the annotation CSV."""
+def _load_refseq_excluded_group_accessions(csv_path: Path) -> set:
+    """
+    Return accession IDs (versioned + unversioned) marked status=exclude in the
+    curated annotation CSV (phage / plant / fungi / invertebrate groups).
+    """
     import csv as _csv
 
-    phage_accs = set()
+    excluded = set()
     with csv_path.open("r", encoding="utf-8", newline="") as fh:
         reader = _csv.DictReader(fh)
-        if not reader.fieldnames or "accession" not in reader.fieldnames or "Phage" not in reader.fieldnames:
+        fields = reader.fieldnames or []
+        if "accession" not in fields or "status" not in fields:
             raise ValueError(
-                f"Phage annotation CSV must have 'accession' and 'Phage' columns: {csv_path}"
+                f"Group annotation CSV must have 'accession' and 'status' columns: {csv_path}"
             )
         for row in reader:
-            if str(row.get("Phage", "")).strip().lower() != "yes":
+            if str(row.get("status", "")).strip().lower() != "exclude":
                 continue
             acc = str(row.get("accession", "")).strip()
             if not acc:
                 continue
-            phage_accs.add(acc)
-            phage_accs.add(acc.split(".")[0])
-    return phage_accs
+            excluded.add(acc)
+            excluded.add(acc.split(".")[0])
+    return excluded
 
 
-def _filter_refseq_phages(fasta_path: Path, metadata_file: Path) -> None:
+# Cached accession -> {group, family} from the curated RefSeq annotation CSV.
+_REFSEQ_HOST_FAMILY_ANNOTATION_CACHE: Optional[dict] = None
+
+
+def _load_refseq_host_family_annotations() -> dict:
     """
-    Remove bacteriophage / prokaryotic-virus references from a RefSeq FASTA using the
-    curated annotation CSV shipped under virasign/assets/.
-    Skips if metadata already records phages_filtered=True.
+    Load accession -> {'group': ..., 'family': ...} from the curated annotation CSV.
+    Keys include both versioned and unversioned accessions.
+    """
+    global _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE
+    if _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE is not None:
+        return _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE
+
+    import csv as _csv
+
+    out: dict = {}
+    csv_path = _get_refseq_group_annotation_csv()
+    if csv_path is None:
+        _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE = out
+        return out
+
+    try:
+        with csv_path.open("r", encoding="utf-8", newline="") as fh:
+            reader = _csv.DictReader(fh)
+            fields = reader.fieldnames or []
+            if "accession" not in fields:
+                logger.warning(f"Group annotation CSV missing 'accession' column: {csv_path}")
+                _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE = out
+                return out
+            for row in reader:
+                acc = str(row.get("accession", "")).strip()
+                if not acc:
+                    continue
+                meta = {
+                    "group": str(row.get("group", "")).strip(),
+                    "family": str(row.get("family", "")).strip(),
+                }
+                out[acc] = meta
+                out[acc.split(".")[0]] = meta
+    except Exception as e:
+        logger.warning(f"Could not load RefSeq host/family annotations ({csv_path}): {e}")
+        out = {}
+
+    _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE = out
+    return out
+
+
+def _annotate_stat_host_family(stat: dict, annotations: dict) -> None:
+    """Attach host_group / viral_family on a stats dict from the curated CSV (in-place)."""
+    acc = str(stat.get("accession", "") or "").strip()
+    meta = annotations.get(acc) or annotations.get(acc.split(".")[0] if acc else "")
+    if not meta:
+        # Preserve any values already set; otherwise leave empty.
+        stat.setdefault("host_group", "")
+        stat.setdefault("viral_family", "")
+        return
+    stat["host_group"] = meta.get("group", "") or stat.get("host_group", "")
+    stat["viral_family"] = meta.get("family", "") or stat.get("viral_family", "")
+
+
+def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
+    """
+    Family-level false-positive reduction for mixed host signals.
+
+    Default species-level dedup is unchanged. Extra rule only when a viral family
+    contains ≥1 human hit AND ≥1 non-human hit (vertebrate/unknown/other):
+    drop the non-human hits in that family only; keep human hits (still at
+    species/subtype/segment resolution among themselves).
+
+    Families with only-human or only-non-human hits are left untouched (e.g. dengue
+    serotypes all human → no family collapse).
+    """
+    if not stats_list:
+        return []
+
+    annotations = _load_refseq_host_family_annotations()
+    if not annotations:
+        logger.info(
+            "Host/family annotation CSV unavailable; skipping mixed-family host collapse."
+        )
+        return stats_list
+
+    for stat in stats_list:
+        _annotate_stat_host_family(stat, annotations)
+
+    by_family: dict = {}
+    no_family = []
+    for stat in stats_list:
+        family = (stat.get("viral_family") or "").strip()
+        if not family:
+            no_family.append(stat)
+            continue
+        by_family.setdefault(family, []).append(stat)
+
+    kept = list(no_family)
+    dropped = 0
+    collapsed_families = []
+    for family, members in by_family.items():
+        humans = []
+        nonhumans = []
+        unclassified = []
+        for stat in members:
+            group = (stat.get("host_group") or "").strip().lower()
+            if group == "human":
+                humans.append(stat)
+            elif group:
+                # vertebrate / unknown / plant / fungi / invertebrate / Phage / ...
+                nonhumans.append(stat)
+            else:
+                unclassified.append(stat)
+
+        if humans and nonhumans:
+            kept.extend(humans)
+            kept.extend(unclassified)  # no host label → do not drop
+            dropped += len(nonhumans)
+            collapsed_families.append(
+                (
+                    family,
+                    len(humans),
+                    len(nonhumans),
+                    [s.get("accession", "?") for s in nonhumans[:8]],
+                )
+            )
+        else:
+            kept.extend(members)
+
+    if collapsed_families:
+        logger.info(
+            f"Mixed-host family collapse: removed {dropped} non-human hit(s) across "
+            f"{len(collapsed_families)} family(ies) that also had human hits "
+            f"(species-level dedup unchanged for human-only / non-human-only families)."
+        )
+        for family, n_h, n_nh, accs in collapsed_families:
+            extra = "" if len(accs) <= 8 else "..."
+            logger.info(
+                f"  - {family}: kept {n_h} human, dropped {n_nh} non-human "
+                f"[{', '.join(accs)}{extra}]"
+            )
+    else:
+        logger.info("Mixed-host family collapse: no mixed human/non-human families to collapse.")
+
+    return kept
+
+
+def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
+    """
+    Remove phage / plant / fungi / invertebrate references from a RefSeq FASTA using the
+    curated group annotation CSV shipped under virasign/assets/.
+    Skips if metadata already records groups_filtered=True.
     """
     try:
         meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
     except Exception:
         meta = {}
-    if meta.get("phages_filtered"):
-        logger.info("RefSeq phage filter already applied (metadata). Skipping.")
+    if meta.get("groups_filtered"):
+        logger.info("RefSeq group filter already applied (metadata). Skipping.")
         return
 
-    csv_path = _get_refseq_phage_annotation_csv()
+    csv_path = _get_refseq_group_annotation_csv()
     if csv_path is None:
         logger.warning(
-            "RefSeq phage annotation CSV not found; skipping phage filter. "
-            "Expected virasign/assets/refseq_references_phage_annotation.csv"
+            "RefSeq group annotation CSV not found; skipping group filter. "
+            "Expected virasign/assets/refseq_references_group_annotation.csv"
         )
         return
 
     try:
-        phage_accs = _load_refseq_phage_accessions(csv_path)
+        excluded_accs = _load_refseq_excluded_group_accessions(csv_path)
     except Exception as e:
-        logger.warning(f"Could not load RefSeq phage annotation CSV ({csv_path}): {e}")
+        logger.warning(f"Could not load RefSeq group annotation CSV ({csv_path}): {e}")
         return
 
-    if not phage_accs:
-        logger.warning(f"No Phage=Yes entries in {csv_path}; skipping phage filter.")
+    if not excluded_accs:
+        logger.warning(f"No excluded-group entries in {csv_path}; skipping group filter.")
         return
 
-    tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_phages")
+    tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_excluded_groups")
     kept = 0
     removed = 0
     with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
@@ -1994,7 +2142,7 @@ def _filter_refseq_phages(fasta_path: Path, metadata_file: Path) -> None:
                 header = line[1:].strip()
                 acc = header.split()[0].strip() if header else ""
                 acc_base = acc.split(".")[0] if acc else ""
-                if acc in phage_accs or acc_base in phage_accs:
+                if acc in excluded_accs or acc_base in excluded_accs:
                     write = False
                     removed += 1
                 else:
@@ -2016,8 +2164,8 @@ def _filter_refseq_phages(fasta_path: Path, metadata_file: Path) -> None:
                 except Exception:
                     pass
         logger.info(
-            f"RefSeq phage filter applied ({csv_path.name}): removed {removed:,} phage reference(s), "
-            f"kept {kept:,} total sequence(s)."
+            f"RefSeq group filter applied ({csv_path.name}): removed {removed:,} "
+            f"phage/plant/fungi/invertebrate reference(s), kept {kept:,} total sequence(s)."
         )
     else:
         try:
@@ -2025,20 +2173,22 @@ def _filter_refseq_phages(fasta_path: Path, metadata_file: Path) -> None:
         except FileNotFoundError:
             pass
         logger.info(
-            f"RefSeq phage filter ({csv_path.name}): no phage accessions found in FASTA "
+            f"RefSeq group filter ({csv_path.name}): no excluded-group accessions found in FASTA "
             f"(already filtered or CSV out of date)."
         )
 
+    meta["groups_filtered"] = True
+    meta["group_annotation_csv"] = csv_path.name
+    meta["group_references_removed"] = removed
+    # Backward-compatible aliases for older metadata readers.
     meta["phages_filtered"] = True
-    meta["phage_annotation_csv"] = csv_path.name
-    meta["phage_references_removed"] = removed
     meta["sequence_count"] = kept
     try:
         metadata_file.parent.mkdir(parents=True, exist_ok=True)
         with open(metadata_file, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
     except Exception as e:
-        logger.warning(f"Could not update RefSeq metadata after phage filter: {e}")
+        logger.warning(f"Could not update RefSeq metadata after group filter: {e}")
 
 
 def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path) -> None:
@@ -3711,6 +3861,11 @@ def _extract_subtype(organism: str) -> str:
     phylogenetic lineages (e.g. Measles genotype B3 vs D8) rather than
     biologically distinct co-infecting entities.
 
+    Herpesvirus names are excluded: numbers in "human gammaherpesvirus 4" /
+    "Human herpesvirus 4 type 2" are HHV species labels (and EBV type 1/2
+    naming variants), not dengue-style co-infecting serotypes. Without this,
+    the same Lymphocryptovirus humangamma4 species was split into two keys.
+
     Returns "" when no marker is found, so naming variants of the same virus
     (e.g. "Measles virus" vs "Measles morbillivirus") collapse together.
     """
@@ -3718,12 +3873,16 @@ def _extract_subtype(organism: str) -> str:
         return ""
     org = organism.strip().lower()
     import re
+    # HHV / EBV-style names: do not invent subtypes from embedded numbers or "type 2".
+    if re.search(r"herpesvirus", org):
+        return ""
     # "type 1", "subtype A", "serotype O" — but NOT "genotype"
     m = re.search(r"\b(?:type|subtype|serotype)\s+([A-Za-z0-9]+)", org)
     if m:
         return m.group(1)
-    # Trailing number after "virus" (e.g. "dengue virus 2", "parainfluenza virus 3")
-    m = re.search(r"virus\s+(\d+)\b", org)
+    # Trailing number after whole-word "virus" (e.g. "dengue virus 2").
+    # Require \b so we do not match inside "gammaherpesvirus 4".
+    m = re.search(r"\bvirus\s+(\d+)\b", org)
     if m:
         return m.group(1)
     # HIV-1, HTLV-2, HCV-3 style
@@ -3733,152 +3892,412 @@ def _extract_subtype(organism: str) -> str:
     return ""
 
 
-def deduplicate_by_organism(stats_list: list, segment_database_path: Path = None) -> list:
+# Pairwise reference similarity thresholds for human same-species co-hit resolution.
+# >= both thresholds → treat as the same virus and collapse; below → keep both (e.g. dengue types).
+_REF_SIMILARITY_IDENTITY_PCT = 90.0
+_REF_SIMILARITY_COVERAGE_PCT = 90.0
+
+
+def _prefer_reference_stat(current: dict, existing: dict) -> dict:
+    """Choose the better of two stats (reads > 0, then RefSeq, then more reads)."""
+    current_reads = int(current.get("mapped_reads", 0) or 0)
+    existing_reads = int(existing.get("mapped_reads", 0) or 0)
+    if existing_reads > 0 and current_reads == 0:
+        return existing
+    if existing_reads == 0 and current_reads > 0:
+        return current
+    current_is_refseq = is_refseq(current.get("description", "") or "")
+    existing_is_refseq = is_refseq(existing.get("description", "") or "")
+    if current_is_refseq and not existing_is_refseq:
+        return current
+    if current_is_refseq == existing_is_refseq and current_reads > existing_reads:
+        return current
+    return existing
+
+
+def _load_fasta_sequences_for_accessions(database_fasta: Path, accessions: set) -> dict:
+    """Load selected accession sequences from a FASTA (versioned + unversioned keys)."""
+    wanted = set()
+    for acc in accessions:
+        if not acc:
+            continue
+        a = str(acc).strip()
+        wanted.add(a)
+        wanted.add(a.split(".")[0])
+    if not wanted or not database_fasta or not Path(database_fasta).exists():
+        return {}
+
+    out = {}
+    path = Path(database_fasta)
+    fh = gzip.open(path, "rt") if str(path).endswith(".gz") else open(path, "r")
+    try:
+        cur_acc = None
+        chunks = []
+        for line in fh:
+            if line.startswith(">"):
+                if cur_acc and chunks:
+                    seq = "".join(chunks)
+                    out[cur_acc] = seq
+                    out[cur_acc.split(".")[0]] = seq
+                header = line[1:].strip()
+                acc = header.split()[0].strip() if header else ""
+                acc_base = acc.split(".")[0] if acc else ""
+                if acc in wanted or acc_base in wanted:
+                    cur_acc = acc
+                    chunks = []
+                else:
+                    cur_acc = None
+                    chunks = []
+            elif cur_acc is not None:
+                chunks.append(line.strip())
+        if cur_acc and chunks:
+            seq = "".join(chunks)
+            out[cur_acc] = seq
+            out[cur_acc.split(".")[0]] = seq
+    finally:
+        fh.close()
+    return out
+
+
+def _merge_intervals(intervals: list) -> int:
+    """Return number of bases covered by merged [start, end) intervals."""
+    if not intervals:
+        return 0
+    intervals = sorted(intervals)
+    merged = [list(intervals[0])]
+    for start, end in intervals[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return sum(end - start for start, end in merged)
+
+
+def _pairwise_ref_similarity(seq_a: str, seq_b: str, threads: int = 1) -> tuple:
     """
-    Deduplicate by viral species, preferring RefSeq over GenBank.
-    For segmented viruses, keeps the best reference for EACH segment.
-    Different subtypes/serotypes within the same species are preserved
-    (e.g., Dengue type 1 vs type 2) while naming variants are merged
-    (e.g., Measles virus vs Measles morbillivirus).
-    
-    Args:
-        stats_list: List of statistics dictionaries
-        segment_database_path: Path to segment database (optional, for accurate segment detection)
+    Align two references with minimap2 and return (identity_pct, coverage_pct).
+
+    Identity uses NM-tag BLAST-like identity when cigars are available (`-c`).
+    Coverage is the minimum of merged query/target aligned fractions (handles
+    multi-block alignments, e.g. EBV type 1 vs 2).
+
+    Returns (0.0, 0.0) if no alignment is found or minimap2 fails.
+    """
+    import tempfile
+
+    if not seq_a or not seq_b:
+        return 0.0, 0.0
+    if len(seq_a) == 0 or len(seq_b) == 0:
+        return 0.0, 0.0
+
+    with tempfile.TemporaryDirectory(prefix="virasign_refsim_") as tmp:
+        tmp_path = Path(tmp)
+        fa = tmp_path / "a.fa"
+        fb = tmp_path / "b.fa"
+        fa.write_text(f">A\n{seq_a}\n", encoding="utf-8")
+        fb.write_text(f">B\n{seq_b}\n", encoding="utf-8")
+        # asm20 finds mid-similarity hits; dengue-type pairs (~60-70%) still yield no hit.
+        # `-c` adds NM so identity is accurate (raw PAF nmatch/alen underestimates ~mpox ANI).
+        cmd = [
+            "minimap2", "-x", "asm20", "-c", "--secondary=no",
+            "-t", str(max(1, int(threads or 1))),
+            str(fa), str(fb),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, check=False
+            )
+        except FileNotFoundError:
+            logger.warning("minimap2 not found; cannot assess reference similarity.")
+            return 0.0, 0.0
+        if proc.returncode not in (0,) and proc.stderr:
+            logger.debug(f"minimap2 ref-similarity stderr: {proc.stderr.strip()[:300]}")
+
+        q_intervals = []
+        t_intervals = []
+        weighted_id_num = 0.0
+        weighted_id_den = 0
+        qlen = tlen = 0
+
+        for line in (proc.stdout or "").splitlines():
+            if not line or line.startswith("@"):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 12:
+                continue
+            try:
+                qlen = int(parts[1]); qstart = int(parts[2]); qend = int(parts[3])
+                tlen = int(parts[6]); tstart = int(parts[7]); tend = int(parts[8])
+                nmatch = int(parts[9]); aln_len = int(parts[10])
+            except ValueError:
+                continue
+            if aln_len <= 0 or qend <= qstart or tend <= tstart:
+                continue
+            nm = None
+            for tag in parts[12:]:
+                if tag.startswith("NM:i:"):
+                    try:
+                        nm = int(tag.split(":")[-1])
+                    except ValueError:
+                        nm = None
+                    break
+            if nm is not None:
+                identity = 100.0 * (1.0 - (nm / aln_len))
+            else:
+                identity = 100.0 * nmatch / aln_len
+            weighted_id_num += identity * aln_len
+            weighted_id_den += aln_len
+            q_intervals.append((qstart, qend))
+            t_intervals.append((tstart, tend))
+
+        if weighted_id_den <= 0 or qlen <= 0 or tlen <= 0:
+            return 0.0, 0.0
+
+        identity = weighted_id_num / weighted_id_den
+        cov_q = 100.0 * _merge_intervals(q_intervals) / qlen
+        cov_t = 100.0 * _merge_intervals(t_intervals) / tlen
+        coverage = min(cov_q, cov_t)
+        return identity, coverage
+
+
+def _refs_are_genetically_similar(
+    seq_a: str,
+    seq_b: str,
+    identity_threshold: float = _REF_SIMILARITY_IDENTITY_PCT,
+    coverage_threshold: float = _REF_SIMILARITY_COVERAGE_PCT,
+    threads: int = 1,
+) -> tuple:
+    """Return (similar: bool, identity_pct, coverage_pct)."""
+    identity, coverage = _pairwise_ref_similarity(seq_a, seq_b, threads=threads)
+    similar = identity >= identity_threshold and coverage >= coverage_threshold
+    return similar, identity, coverage
+
+
+def _cluster_stats_by_ref_similarity(
+    stats: list,
+    sequences: dict,
+    identity_threshold: float = _REF_SIMILARITY_IDENTITY_PCT,
+    coverage_threshold: float = _REF_SIMILARITY_COVERAGE_PCT,
+    threads: int = 1,
+) -> list:
+    """
+    Cluster stats by pairwise reference similarity; return best stat per cluster.
+    Missing sequences → singleton clusters (kept).
+    """
+    n = len(stats)
+    if n <= 1:
+        return list(stats)
+
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[rj] = ri
+
+    def seq_for(stat):
+        acc = str(stat.get("accession", "") or "").strip()
+        return sequences.get(acc) or sequences.get(acc.split(".")[0] if acc else "")
+
+    for i in range(n):
+        seq_i = seq_for(stats[i])
+        if not seq_i:
+            continue
+        for j in range(i + 1, n):
+            seq_j = seq_for(stats[j])
+            if not seq_j:
+                continue
+            similar, identity, coverage = _refs_are_genetically_similar(
+                seq_i, seq_j,
+                identity_threshold=identity_threshold,
+                coverage_threshold=coverage_threshold,
+                threads=threads,
+            )
+            acc_i = stats[i].get("accession", "?")
+            acc_j = stats[j].get("accession", "?")
+            if similar:
+                logger.info(
+                    f"  Ref similarity: {acc_i} vs {acc_j}: "
+                    f"identity={identity:.1f}% coverage={coverage:.1f}% (≥{identity_threshold:.0f}/≥{coverage_threshold:.0f}) → merge"
+                )
+                union(i, j)
+            else:
+                logger.info(
+                    f"  Ref similarity: {acc_i} vs {acc_j}: "
+                    f"identity={identity:.1f}% coverage={coverage:.1f}% (<{identity_threshold:.0f} or <{coverage_threshold:.0f}) → keep both"
+                )
+
+    clusters = {}
+    for i, stat in enumerate(stats):
+        clusters.setdefault(find(i), []).append(stat)
+
+    kept = []
+    for members in clusters.values():
+        best = members[0]
+        for other in members[1:]:
+            best = _prefer_reference_stat(other, best)
+        kept.append(best)
+    return kept
+
+
+def deduplicate_by_organism(
+    stats_list: list,
+    segment_database_path: Path = None,
+    database_fasta: Path = None,
+    threads: int = 1,
+) -> list:
+    """
+    Deduplicate by viral species (+ segment for segmented viruses).
+
+    Default: one best reference per species/segment.
+
+    Exception for multiple *human* hits of the same species/segment: pairwise-align
+    the reference genomes; if identity and coverage are both ≥90%, merge them;
+    if either is below 90% (e.g. dengue types ~60-70%), keep both.
+
+    After that, apply mixed-host family collapse (drop non-human hits in a family
+    that also has human hits).
     """
     if not stats_list:
         return []
-    
-    logger.info(f"Detecting segments for {len(stats_list)} references and deduplicating by viral species + subtype (checking database first, then NCBI if needed)...")
-    
-    # For segmented viruses, we need to group by viral_species + segment
-    # For non-segmented, we group by viral_species only
-    species_segment_dict = {}
-    segment_db_hits = 0
-    segment_api_calls = 0
-    segment_fallback = 0
-    
-    # Debug: Track viral_species values to see if there are duplicates
-    species_counts = {}
-    
+
+    logger.info(
+        f"Detecting segments for {len(stats_list)} references and deduplicating by "
+        f"viral species (+ genetic similarity for multi-hit human species)..."
+    )
+
+    annotations = _load_refseq_host_family_annotations()
+    groups = {}  # key -> list[stat]
+    segment_db_hits = segment_api_calls = segment_fallback = 0
+
     for i, stat in enumerate(stats_list):
-        # Use viral_species for deduplication (fallback to organism if not available)
+        _annotate_stat_host_family(stat, annotations)
+
         viral_species = stat.get("viral_species", "").strip()
         if not viral_species:
-            # Fallback: extract from organism if not already set
             organism = stat.get("organism", "").strip()
             accession = stat.get("accession", "")
             if organism:
-                # Note: We don't have taxonomy file paths here, so it will use API or parsing
                 viral_species = extract_viral_species(organism, accession=accession)
                 stat["viral_species"] = viral_species
             else:
-                # If no organism/species, still keep it (might be important)
-                # Use a unique key so it doesn't get deduplicated away
                 key = f"NO_SPECIES||{stat.get('accession', 'unknown')}"
-                if key not in species_segment_dict:
-                    species_segment_dict[key] = stat
+                groups.setdefault(key, []).append(stat)
                 continue
-        
-        # Normalize viral_species for consistent matching (case-insensitive, trimmed)
+
         viral_species = viral_species.strip()
         if not viral_species:
-            # If still empty after normalization, use accession as fallback
             key = f"NO_SPECIES||{stat.get('accession', 'unknown')}"
-            if key not in species_segment_dict:
-                species_segment_dict[key] = stat
+            groups.setdefault(key, []).append(stat)
             continue
-        
-        # Extract segment information using accession (more reliable) or description (fallback)
+
         description = stat.get("description", "")
         accession = stat.get("accession", "")
-        
-        # Check database first (fast)
+
         segment = get_segment_from_database(accession, segment_database_path)
         if segment:
             segment_db_hits += 1
         else:
-            # Try fetching from NCBI (slow, but accurate)
             segment = fetch_segment_from_ncbi(accession, segment_database_path)
             if segment:
                 segment_api_calls += 1
             else:
-                # Fall back to description parsing (fast, but less reliable)
                 segment = extract_segment_from_description(description)
                 if segment:
                     segment_fallback += 1
-                    # Save parsed segment to database for future use
                     if segment_database_path:
                         save_segment_to_database(accession, segment, segment_database_path)
-        
-        # Log progress every 20 references
+
         if (i + 1) % 20 == 0:
-            logger.info(f"  Processed {i + 1}/{len(stats_list)} references for segment detection... (DB: {segment_db_hits}, API: {segment_api_calls}, fallback: {segment_fallback})")
-        
-        # Create key: viral_species + subtype + segment
-        # Split by subtype/serotype when present so that genuinely different
-        # subtypes (Dengue 1 vs 2) stay separate while naming variants
-        # (Measles virus vs Measles morbillivirus) still merge.
+            logger.info(
+                f"  Processed {i + 1}/{len(stats_list)} references for segment detection... "
+                f"(DB: {segment_db_hits}, API: {segment_api_calls}, fallback: {segment_fallback})"
+            )
+
         viral_species_normalized = viral_species.strip().lower()
-        subtype = _extract_subtype(stat.get("organism", "") or "")
-        key_base = f"{viral_species_normalized}||subtype_{subtype}" if subtype else viral_species_normalized
         if segment:
-            segment_normalized = segment.strip().upper()  # Segments are usually uppercase (L, S, etc.)
-            key = f"{key_base}||SEGMENT||{segment_normalized}"
+            key = f"{viral_species_normalized}||SEGMENT||{segment.strip().upper()}"
+            stat["segment"] = segment.strip().upper()
         else:
-            key = f"{key_base}||NO_SEGMENT"
-        
-        # Debug: Track species counts
-        if viral_species_normalized not in species_counts:
-            species_counts[viral_species_normalized] = 0
-        species_counts[viral_species_normalized] += 1
-        
-        if key not in species_segment_dict:
-            species_segment_dict[key] = stat
+            key = f"{viral_species_normalized}||NO_SEGMENT"
+            stat.setdefault("segment", None)
+
+        groups.setdefault(key, []).append(stat)
+
+    # Sequences needed only when ≥2 human hits share a species/segment key.
+    human_multi_accs = set()
+    for members in groups.values():
+        humans = [s for s in members if (s.get("host_group") or "").strip().lower() == "human"]
+        if len(humans) >= 2:
+            for s in humans:
+                acc = str(s.get("accession", "") or "").strip()
+                if acc:
+                    human_multi_accs.add(acc)
+
+    sequences = {}
+    if human_multi_accs and database_fasta:
+        logger.info(
+            f"Loading {len(human_multi_accs)} reference sequence(s) for human same-species "
+            f"similarity checks (≥{_REF_SIMILARITY_IDENTITY_PCT:.0f}% identity and "
+            f"≥{_REF_SIMILARITY_COVERAGE_PCT:.0f}% coverage → merge)..."
+        )
+        sequences = _load_fasta_sequences_for_accessions(Path(database_fasta), human_multi_accs)
+        logger.info(f"  Loaded {len({a for a in sequences if '.' in a})} sequence(s) from database FASTA.")
+    elif human_multi_accs and not database_fasta:
+        logger.warning(
+            "Multiple human hits for the same species found, but no database FASTA was provided; "
+            "falling back to keeping the single best reference per species/segment."
+        )
+
+    kept = []
+    for key, members in groups.items():
+        humans = [s for s in members if (s.get("host_group") or "").strip().lower() == "human"]
+        nonhumans = [s for s in members if (s.get("host_group") or "").strip().lower() != "human"]
+
+        if len(humans) >= 2 and sequences:
+            # Genetically resolve human co-hits; drop non-humans of the same species/segment.
+            clustered = _cluster_stats_by_ref_similarity(
+                humans,
+                sequences,
+                identity_threshold=_REF_SIMILARITY_IDENTITY_PCT,
+                coverage_threshold=_REF_SIMILARITY_COVERAGE_PCT,
+                threads=threads,
+            )
+            kept.extend(clustered)
+            if nonhumans:
+                logger.info(
+                    f"  Dropping {len(nonhumans)} non-human hit(s) in {key} "
+                    f"(human hit(s) present for this species/segment)."
+                )
+        elif len(humans) == 1:
+            kept.append(humans[0])
+            # Prefer human over same-species non-human cross-maps.
+        elif len(humans) >= 2 and not sequences:
+            # No sequences: species-level collapse among humans.
+            best = humans[0]
+            for other in humans[1:]:
+                best = _prefer_reference_stat(other, best)
+            kept.append(best)
         else:
-            # Prefer RefSeq over GenBank
-            current_is_refseq = is_refseq(stat["description"])
-            existing_is_refseq = is_refseq(species_segment_dict[key]["description"])
-            
-            current_reads = stat.get("mapped_reads", 0)
-            existing_reads = species_segment_dict[key].get("mapped_reads", 0)
-            
-            # Debug: Log when Lassa virus references are being compared
-            organism = stat.get("organism", "")
-            if "lassa" in viral_species.lower() or "lassa" in organism.lower() or "lassa" in stat.get("description", "").lower():
-                logger.debug(f"DEBUG: Comparing Lassa references for key {key}:")
-                logger.debug(f"  Current: {stat.get('accession')} ({current_reads} reads, RefSeq: {current_is_refseq}, species: {viral_species})")
-                logger.debug(f"  Existing: {species_segment_dict[key].get('accession')} ({existing_reads} reads, RefSeq: {existing_is_refseq}, species: {species_segment_dict[key].get('viral_species', 'N/A')})")
-            
-            # Never replace a reference with reads with one that has 0 reads
-            if existing_reads > 0 and current_reads == 0:
-                # Keep existing (has reads)
-                if "lassa" in viral_species.lower() or "lassa" in organism.lower():
-                    logger.warning(f"DEBUG: Keeping existing Lassa reference {species_segment_dict[key].get('accession')} ({existing_reads} reads) over {stat.get('accession')} (0 reads)")
-                continue
-            elif existing_reads == 0 and current_reads > 0:
-                # Replace with current (has reads)
-                if "lassa" in viral_species.lower() or "lassa" in organism.lower():
-                    logger.warning(f"DEBUG: Replacing Lassa reference {species_segment_dict[key].get('accession')} (0 reads) with {stat.get('accession')} ({current_reads} reads)")
-                species_segment_dict[key] = stat
-            elif current_is_refseq and not existing_is_refseq:
-                species_segment_dict[key] = stat
-            elif current_is_refseq == existing_is_refseq:
-                # If both same type, prefer one with more mapped reads
-                if current_reads > existing_reads:
-                    species_segment_dict[key] = stat
-                # If equal reads (including both 0), keep existing
-    
-    logger.info(f"Segment detection and species-based deduplication complete (DB: {segment_db_hits}, API: {segment_api_calls}, fallback: {segment_fallback})")
-    
-    # Debug: Log species that had multiple entries
-    duplicates_found = {species: count for species, count in species_counts.items() if count > 1}
-    if duplicates_found:
-        logger.info(f"DEBUG: Found {len(duplicates_found)} viral species with multiple references before deduplication:")
-        for species, count in sorted(duplicates_found.items(), key=lambda x: x[1], reverse=True):
-            logger.info(f"  - {species}: {count} reference(s)")
-    
-    logger.info(f"Deduplication result: {len(stats_list)} references -> {len(species_segment_dict)} unique species/segments")
-    return list(species_segment_dict.values())
+            # Non-human-only (or unlabeled): classic one-best-per species/segment.
+            best = members[0]
+            for other in members[1:]:
+                best = _prefer_reference_stat(other, best)
+            kept.append(best)
+
+    logger.info(
+        f"Segment detection and species-based deduplication complete "
+        f"(DB: {segment_db_hits}, API: {segment_api_calls}, fallback: {segment_fallback})"
+    )
+    logger.info(f"Deduplication result: {len(stats_list)} references -> {len(kept)} after species/genetic dedup")
+    # Family-level collapse only for mixed human + non-human hits within a family.
+    return collapse_nonhuman_in_mixed_host_families(kept)
 
 def safe_stem(value: str, max_len: int = 80) -> str:
     """
@@ -7471,7 +7890,12 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
     
     # Deduplicate curated_stats by organism (preferring RefSeq)
     # For segmented viruses, keeps best reference for EACH segment
-    curated_stats_dedup = deduplicate_by_organism(curated_stats_with_organism, segment_database_path=segment_database_path)
+    curated_stats_dedup = deduplicate_by_organism(
+        curated_stats_with_organism,
+        segment_database_path=segment_database_path,
+        database_fasta=database_fasta_path,
+        threads=threads,
+    )
     
     # Debug: Log Lassa virus stats after deduplication
     lassa_after = [s for s in curated_stats_dedup if "lassa" in s.get("organism", "").lower() or "lassa" in s.get("description", "").lower()]
@@ -7493,14 +7917,19 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 segments_found[organism] = []
             segments_found[organism].append(segment)
     
-    logger.info(f"Deduplicating curated_reference_stats by VIRAL SPECIES (preferring REFSEQ over GenBank)...")
+    logger.info(f"Deduplicating curated_reference_stats by VIRAL SPECIES (+ genetic similarity for human co-hits)...")
     logger.info(f"  - For segmented viruses (e.g., Lassa, Influenza), keeping best reference for EACH segment")
+    logger.info(
+        f"  - Human same-species co-hits: merge if reference identity and coverage are both "
+        f">={_REF_SIMILARITY_IDENTITY_PCT:.0f}%; keep both if either is below "
+        f"(e.g. dengue types)."
+    )
     if segments_found:
         for organism, segments in segments_found.items():
             logger.info(f"  - {organism}: keeping segments {', '.join(sorted(set(segments)))}")
     logger.info(
         f"  - Curated stats: {len(curated_stats_with_organism)} -> {len(curated_stats_dedup)} "
-        f"(deduplicated by VIRAL_SPECIES+SEGMENT; identity >= {min_identity}%, depth >= {coverage_depth_threshold} "
+        f"(deduplicated by VIRAL_SPECIES+SEGMENT[+ref-similarity]; identity >= {min_identity}%, depth >= {coverage_depth_threshold} "
         f"before re-map; breadth >= {coverage_breadth_threshold} applied after re-map for final outputs)"
     )
     
