@@ -310,7 +310,7 @@ NC_043084.1,"Sint-Jan's onion latent virus isolate IPO-DLO nonfunctional RNA-dep
 NC_043085.1,"Verbena latent virus isolate NZ 25 KDa protein (TGB1) and 12 KDa protein (TGB2) genes, partial cds",unknown,Keep,
 NC_043086.1,"Banana virus X RNA-dependent RNA polymerase gene, partial cds; and triple gene block protein 1, triple gene block protein 2, triple gene block protein 3, and capsid protein genes, complete cds",plant,exclude,
 NC_043087.1,"Actinidia virus A isolate TP7-93A putative replicase (ORF1) gene, partial cds; and hypothetical protein (ORF2), movement protein (ORF3), coat protein (ORF4), and RNA-binding protein (ORF5) genes, complete cds",plant,exclude,Betaflexiviridae
-NC_043088.1,"Mint virus 2 replicase gene, partial cds; and p24, movement protein, coat protein, and RNA binding protein genes, complete cds",unknown,Keep,
+NC_043088.1,"Mint virus 2 replicase gene, partial cds; and p24, movement protein, coat protein, and RNA binding protein genes, complete cds",plant,exclude,
 NC_043089.1,"Passion fruit yellow mosaic virus polymerase protein gene, partial cds; and coat protein gene, complete cds",plant,exclude,Tymoviridae
 NC_043090.1,"Petunia vein banding virus replicase gene, partial cds; and coat protein gene, complete cds",plant,exclude,
 NC_043091.1,"Wild cucumber mosaic virus replicase protein gene, partial cds; and virion protein gene, complete cds",plant,exclude,
@@ -349,7 +349,7 @@ NC_043127.1,"Longquan virus strain Longquan-Rs-32 glycoprotein gene, complete cd
 NC_043131.1,"Cotesia kariyai bracovirus clone 5 cystatin gene, partial cds",invertebrate,exclude,
 NC_043132.1,"Alpinia mosaic virus polyprotein gene, partial cds",plant,exclude,
 NC_043133.1,"Maclura mosaic virus polyprotein mRNA, partial NIb and complete coat protein region, partial cds",plant,exclude,
-NC_043134.1,"Narcissus latent virus polyprotein gene, partial cds",unknown,Keep,
+NC_043134.1,"Narcissus latent virus polyprotein gene, partial cds",plant,exclude,
 NC_043135.1,"Alstroemeria mosaic virus NIb/CP gene for nuclear inclusion protein b/coat protein, partial cds",plant,exclude,Potyviridae
 NC_043136.1,"Alternanthera mild mosaic virus polyprotein gene, partial cds",plant,exclude,
 NC_043137.1,"Amazon lily mosaic virus NIb/CP gene for nuclear inclusion protein b/coat protein, partial cds",plant,exclude,
@@ -12079,12 +12079,12 @@ NC_116599.1,"Tupavirus incomtus strain SB8301, complete genome",vertebrate,Keep,
 NC_139359.1,MAG: Bat tupavirus BS1 isolate BtTV/RsBS01 cRNA sequence,unknown,Keep,Rhabdoviridae
 NC_139360.1,MAG: Bat tupavirus BS2 isolate BtTV/AsBS02 genomic sequence,unknown,Keep,Rhabdoviridae
 NC_139361.1,"Killamcar virus 1 isolate PP32, complete genome",unknown,Keep,Rhabdoviridae
-NC_139362.1,TPA: Abies virus 1 genomic sequence,unknown,Keep,Rhabdoviridae
-NC_139363.1,TPA: Amentotaxus virus 1 genomic sequence,unknown,Keep,Rhabdoviridae
+NC_139362.1,TPA: Abies virus 1 genomic sequence,plant,exclude,Rhabdoviridae
+NC_139363.1,TPA: Amentotaxus virus 1 genomic sequence,plant,exclude,Rhabdoviridae
 NC_139364.1,TPA: Cupressus virus 1 genomic sequence,plant,exclude,Rhabdoviridae
-NC_139365.1,TPA: Picea virus 1 genomic sequence,unknown,Keep,Rhabdoviridae
+NC_139365.1,TPA: Picea virus 1 genomic sequence,plant,exclude,Rhabdoviridae
 NC_139366.1,TPA: Pinus banksiana virus 1 genomic sequence,plant,exclude,Rhabdoviridae
-NC_139367.1,TPA: Taxus virus 1 genomic sequence,unknown,Keep,Rhabdoviridae
+NC_139367.1,TPA: Taxus virus 1 genomic sequence,plant,exclude,Rhabdoviridae
 NC_139368.1,"MAG: Tomato alphanucleorhabdovirus 1 isolate BER20ST1, complete genome",plant,exclude,Rhabdoviridae
 NC_025412.1,"Melbournevirus isolate 1, complete genome",unknown,Keep,Marseilleviridae
 NC_139370.1,TPA: Torreya virus 1 genomic sequence,plant,exclude,Rhabdoviridae
