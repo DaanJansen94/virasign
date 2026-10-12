@@ -1,5 +1,5 @@
 {% set name = "virasign" %}
-{% set version = "0.0.8" %}
+{% set version = "0.0.9" %}
 
 package:
   name: {{ name }}
@@ -7,7 +7,7 @@ package:
 
 source:
   url: https://github.com/DaanJansen94/virasign/archive/v{{ version }}.tar.gz
-  sha256: 39120d9f313c05c68744e587deaec3d390dc00d899fb7c818b4be7e722a4c472
+  sha256: 203ede08fc8ddfb6922161ab9305248c6600d775251c1bd45571f7d401a0925a
 
 build:
   number: 0
