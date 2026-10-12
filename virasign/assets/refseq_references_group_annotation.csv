@@ -1602,7 +1602,7 @@ NC_028238.1,"Turkeypox virus strain TKPV-HU1124/2011, complete genome",vertebrat
 NC_043130.1,"Chrysochromulina brevifilum virus PW1 DNA polymerase gene, partial cds",plant,exclude,
 NC_043092.1,"Falconid adenovirus 1 hexon-associated protein gene, partial cds",vertebrate,Keep,Adenoviridae
 NC_043094.1,"Ovine adenovirus 1 strain S1 hexon gene, partial cds",vertebrate,Keep,Adenoviridae
-NC_043178.1,"Quailpox virus 4b core protein gene, partial cds",vertebrate,Keep,
+NC_043178.1,"Quailpox virus 4b core protein gene, partial cds",vertebrate,Keep,Poxviridae
 NC_028113.1,"Simian adenovirus 8 strain P-5, complete genome",vertebrate,Keep,Adenoviridae
 NC_034382.1,"Cynomolgus adenovirus 1 isolate UK/UK-1/2004, complete genome",vertebrate,Keep,Adenoviridae
 NC_043179.1,"Squirrel fibroma virus isolate SQ3944 DNA polymerase gene, partial cds",vertebrate,Keep,
@@ -19609,3 +19609,9 @@ NC_038955.1,"Banana bunchy top alphasatellite 3 isolate Haikou 2, complete seque
 NC_038974.1,"Whitefly associated Guetamala alphasatellite 1 isolate GtTo2-2, complete sequence",invertebrate,exclude,Alphasatellitidae
 NC_039241.1,"Eggplant latent viroid complete genome, isolate 2",plant,exclude,Avsunviroidae
 NC_076468.1,Atrato Chu-like virus 5 strain Psal 1739-1 segment L genomic sequence,invertebrate,exclude,Aliusviridae
+NC_003391.1,"Camelpox virus, complete genome",vertebrate,Keep,Poxviridae
+NC_003663.2,"Cowpox virus, complete genome",vertebrate,Keep,Poxviridae
+NC_004105.1,"Ectromelia virus, complete genome",vertebrate,Keep,Poxviridae
+NC_006998.1,"Vaccinia virus, complete genome",vertebrate,Keep,Poxviridae
+NC_013804.1,"Pseudocowpox virus, complete genome",vertebrate,Keep,Poxviridae
+NC_055231.1,"Orthopoxvirus Abatino, complete genome",vertebrate,Keep,Poxviridae

@@ -2014,14 +2014,28 @@ def _annotate_stat_host_family(stat: dict, annotations: dict) -> None:
     stat["viral_family"] = meta.get("family", "") or stat.get("viral_family", "")
 
 
+def _most_abundant_stat(stats: list) -> dict:
+    """Pick the hit with the most mapped reads; tie-break via _prefer_reference_stat."""
+    best = stats[0]
+    for other in stats[1:]:
+        other_reads = int(other.get("mapped_reads", 0) or 0)
+        best_reads = int(best.get("mapped_reads", 0) or 0)
+        if other_reads > best_reads:
+            best = other
+        elif other_reads == best_reads:
+            best = _prefer_reference_stat(other, best)
+    return best
+
+
 def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
     """
     Family-level false-positive reduction for mixed host signals.
 
     Default species-level dedup is unchanged. Extra rule only when a viral family
     contains ≥1 human hit AND ≥1 non-human hit (vertebrate/unknown/other):
-    drop the non-human hits in that family only; keep human hits (still at
-    species/subtype/segment resolution among themselves).
+    keep the single most abundant hit in that family (by mapped_reads) and drop
+    the rest — regardless of host. This lets a true cowpox (non-human) signal
+    outcompete a cross-mapping mpox (human) false positive, and vice versa.
 
     Families with only-human or only-non-human hits are left untouched (e.g. dengue
     serotypes all human → no family collapse).
@@ -2054,7 +2068,6 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
     for family, members in by_family.items():
         humans = []
         nonhumans = []
-        unclassified = []
         for stat in members:
             group = (stat.get("host_group") or "").strip().lower()
             if group == "human":
@@ -2062,19 +2075,17 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
             elif group:
                 # vertebrate / unknown / plant / fungi / invertebrate / Phage / ...
                 nonhumans.append(stat)
-            else:
-                unclassified.append(stat)
 
         if humans and nonhumans:
-            kept.extend(humans)
-            kept.extend(unclassified)  # no host label → do not drop
-            dropped += len(nonhumans)
+            winner = _most_abundant_stat(members)
+            kept.append(winner)
+            dropped_members = [s for s in members if s is not winner]
+            dropped += len(dropped_members)
             collapsed_families.append(
                 (
                     family,
-                    len(humans),
-                    len(nonhumans),
-                    [s.get("accession", "?") for s in nonhumans[:8]],
+                    winner,
+                    dropped_members,
                 )
             )
         else:
@@ -2082,15 +2093,22 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
 
     if collapsed_families:
         logger.info(
-            f"Mixed-host family collapse: removed {dropped} non-human hit(s) across "
-            f"{len(collapsed_families)} family(ies) that also had human hits "
-            f"(species-level dedup unchanged for human-only / non-human-only families)."
+            f"Mixed-host family collapse: removed {dropped} hit(s) across "
+            f"{len(collapsed_families)} family(ies) with mixed human/non-human signals "
+            f"(kept most abundant per family; human-only / non-human-only families unchanged)."
         )
-        for family, n_h, n_nh, accs in collapsed_families:
-            extra = "" if len(accs) <= 8 else "..."
+        for family, winner, dropped_members in collapsed_families:
+            w_acc = winner.get("accession", "?")
+            w_reads = int(winner.get("mapped_reads", 0) or 0)
+            w_host = (winner.get("host_group") or "?").strip() or "?"
+            w_sp = (winner.get("viral_species") or winner.get("organism") or "").strip()
+            dropped_accs = [s.get("accession", "?") for s in dropped_members[:8]]
+            extra = "" if len(dropped_members) <= 8 else "..."
             logger.info(
-                f"  - {family}: kept {n_h} human, dropped {n_nh} non-human "
-                f"[{', '.join(accs)}{extra}]"
+                f"  - {family}: kept {w_acc} ({w_host}, {w_reads} reads"
+                + (f", {w_sp}" if w_sp else "")
+                + f"); dropped {len(dropped_members)} "
+                f"[{', '.join(dropped_accs)}{extra}]"
             )
     else:
         logger.info("Mixed-host family collapse: no mixed human/non-human families to collapse.")
@@ -4161,8 +4179,8 @@ def deduplicate_by_organism(
     the reference genomes; if identity and coverage are both ≥90%, merge them;
     if either is below 90% (e.g. dengue types ~60-70%), keep both.
 
-    After that, apply mixed-host family collapse (drop non-human hits in a family
-    that also has human hits).
+    After that, apply mixed-host family collapse: in families with both human and
+    non-human hits, keep only the most abundant hit (by mapped_reads).
     """
     if not stats_list:
         return []
@@ -11926,15 +11944,15 @@ Examples
         "--orthopox-human-only",
         dest="orthopox_human_only",
         action="store_true",
-        default=True,
-        help="When downloading/preparing databases, remove pox/orthopox references except Mpox/Akhmeta (keeps all non-pox viruses unchanged). Variola is always removed (eradicated). Enabled by default.",
+        default=False,
+        help="When downloading/preparing databases, remove pox/orthopox references except Mpox/Akhmeta (keeps all non-pox viruses unchanged). Variola is always removed (eradicated). Off by default; use this flag to enable.",
     )
 
     db_prep.add_argument(
         "--keep-all-pox",
         dest="orthopox_human_only",
         action="store_false",
-        help="Disable orthopox human-only filtering (keep all pox/orthopox references in downloaded/prepared databases).",
+        help="Keep all pox/orthopox references (default). Explicit opposite of --orthopox-human-only.",
     )
 
     db_prep.add_argument(
