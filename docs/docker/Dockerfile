@@ -2,7 +2,7 @@ FROM condaforge/miniforge3:latest
 
 LABEL maintainer="DaanJansen94" \
       description="Virasign: Viral taxonomic classification for nanopore sequencing data" \
-      version="0.0.8" \
+      version="0.0.9" \
       url="https://github.com/DaanJansen94/virasign"
 
 COPY . /opt/virasign
