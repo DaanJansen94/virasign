@@ -761,6 +761,81 @@ def get_ncbi_files_dir(database_dir: Path) -> Path:
     """Get directory for downloaded NCBI taxonomy dump files."""
     return get_taxonomy_dir(database_dir, create=True) / "ncbi_files"
 
+
+def _gzip_file_is_complete(path: Path) -> bool:
+    """Return True if path exists and is a readable complete gzip stream."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    try:
+        with gzip.open(path, "rb") as fh:
+            while fh.read(1024 * 1024):
+                pass
+        return True
+    except (OSError, EOFError, gzip.BadGzipFile) as e:
+        logger.debug(f"Incomplete/corrupt gzip {path.name}: {e}")
+        return False
+
+
+def _taxonomy_database_is_ready(database_path: Path) -> bool:
+    """
+    True only when the comprehensive taxonomy SQLite DB exists and is usable
+    (non-empty with at least some species annotations). Partial/corrupt DBs return False.
+    """
+    database_path = Path(database_path)
+    if not database_path.exists() or database_path.stat().st_size == 0:
+        return False
+    if database_path.suffix != ".db":
+        # Legacy JSON is not treated as a finished species-capable DB.
+        return False
+    try:
+        conn = sqlite3.connect(str(database_path))
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM accession_to_organism")
+            n = int(cursor.fetchone()[0] or 0)
+            if n <= 0:
+                return False
+            cursor.execute(
+                "SELECT COUNT(*) FROM accession_to_organism "
+                "WHERE species IS NOT NULL AND TRIM(species) != ''"
+            )
+            n_sp = int(cursor.fetchone()[0] or 0)
+            return n_sp > 0
+        finally:
+            conn.close()
+    except (sqlite3.Error, OSError, Exception) as e:
+        logger.debug(f"Taxonomy DB not ready ({database_path}): {e}")
+        return False
+
+
+def _download_url_atomic(url: str, dest: Path, progress_every: int = 1000) -> None:
+    """Download url to dest via a .partial file, then atomic replace on success."""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    partial = dest.with_name(dest.name + ".partial")
+    if partial.exists():
+        partial.unlink()
+
+    def show_progress(block_num, block_size, total_size):
+        if total_size > 0 and block_num % progress_every == 0:
+            percent = min(100, (block_num * block_size * 100) // total_size)
+            logger.info(f"  Download progress: {percent}%")
+
+    try:
+        urllib.request.urlretrieve(url, partial, show_progress)
+        if dest.suffix == ".gz" or dest.name.endswith(".gz"):
+            if not _gzip_file_is_complete(partial):
+                raise OSError(f"Downloaded gzip incomplete/corrupt: {partial.name}")
+        partial.replace(dest)
+    except Exception:
+        if partial.exists():
+            try:
+                partial.unlink()
+            except OSError:
+                pass
+        raise
+
 def get_virasign_databases_dir() -> Path:
     """Get path to virasign Databases directory (where downloaded databases are stored)."""
     # Create Databases directory in current working directory (where virasign is run from)
@@ -839,7 +914,7 @@ def download_rvdb_database(
     Args:
         databases_dir: Directory where databases are stored
         force_download: Force re-download even if database exists
-        rvdb_version: RVDB version filename (e.g., "C-RVDBv30.0.fasta.gz" or "C-RVDBvCurrent.fasta.gz")
+        rvdb_version: RVDB version filename (e.g., "C-RVDBv31.0.fasta.gz"). Default is pinned to v31.0 (not auto-latest).
         enable_clustering: Whether to cluster sequences (default: True)
         cluster_identity: Identity threshold for clustering, e.g., 0.98 for 98% (default: 0.98)
         allow_download: If False, missing DB raises FileNotFoundError (sample runs); use True with --prepare-db.
@@ -1395,6 +1470,8 @@ def download_rvdb_database(
         # Optional: remove endogenous/EVE/ERV entries.
         _filter_endogenous_inplace(output_fasta, metadata_file)
         _filter_non_viral_contaminants_inplace(output_fasta, metadata_file)
+        # Curated out-of-scope groups (phage/plant/fungi/invertebrate/protozoa).
+        _filter_rvdb_excluded_groups(output_fasta, metadata_file)
         return output_fasta
 
     if not allow_download:
@@ -1616,7 +1693,9 @@ def download_rvdb_database(
         # Apply endogenous/EVE filtering last.
         _filter_endogenous_inplace(output_fasta, metadata_file)
         _filter_non_viral_contaminants_inplace(output_fasta, metadata_file)
-        
+        # Curated out-of-scope groups (phage/plant/fungi/invertebrate/protozoa).
+        _filter_rvdb_excluded_groups(output_fasta, metadata_file)
+
     except Exception as e:
         logger.error(f"Failed to filter RVDB for complete genomes: {e}")
         raise
@@ -1922,15 +2001,35 @@ def download_refseq_database(
     
     return output_fasta
 
+def _assets_dir() -> Path:
+    return Path(__file__).resolve().parent / "assets"
+
+
 def _get_refseq_group_annotation_csv() -> Optional[Path]:
     """Locate the curated RefSeq group annotation CSV shipped under virasign/assets/."""
-    path = Path(__file__).resolve().parent / "assets" / "refseq_references_group_annotation.csv"
+    path = _assets_dir() / "refseq_references_group_annotation.csv"
     return path if path.exists() else None
 
 
-def _load_refseq_excluded_group_accessions(csv_path: Path) -> set:
+def _get_rvdb_group_annotation_csv() -> Optional[Path]:
+    """Locate the curated RVDB group annotation CSV shipped under virasign/assets/."""
+    path = _assets_dir() / "rvdb_references_group_annotation.csv"
+    return path if path.exists() else None
+
+
+def _iter_group_annotation_csvs() -> list:
+    """Return available host/group annotation CSVs (RefSeq then RVDB)."""
+    out = []
+    for getter in (_get_refseq_group_annotation_csv, _get_rvdb_group_annotation_csv):
+        p = getter()
+        if p is not None:
+            out.append(p)
+    return out
+
+
+def _load_excluded_group_accessions(csv_path: Path) -> set:
     """
-    Return accession IDs (versioned + unversioned) marked status=exclude in the
+    Return accession IDs (versioned + unversioned) marked status=exclude in a
     curated annotation CSV (phage / plant / fungi / invertebrate groups).
     """
     import csv as _csv
@@ -1954,47 +2053,64 @@ def _load_refseq_excluded_group_accessions(csv_path: Path) -> set:
     return excluded
 
 
-# Cached accession -> {group, family} from the curated RefSeq annotation CSV.
+# Backward-compatible alias.
+_load_refseq_excluded_group_accessions = _load_excluded_group_accessions
+
+
+# Cached accession -> {group, family} from curated RefSeq + RVDB annotation CSVs.
 _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE: Optional[dict] = None
+
+
+def _load_host_family_annotations_from_csv(csv_path: Path, out: dict) -> int:
+    """Merge accession -> {group, family} from one CSV into out. Returns rows loaded."""
+    import csv as _csv
+
+    n = 0
+    with csv_path.open("r", encoding="utf-8", newline="") as fh:
+        reader = _csv.DictReader(fh)
+        fields = reader.fieldnames or []
+        if "accession" not in fields:
+            logger.warning(f"Group annotation CSV missing 'accession' column: {csv_path}")
+            return 0
+        for row in reader:
+            acc = str(row.get("accession", "")).strip()
+            if not acc:
+                continue
+            meta = {
+                "group": str(row.get("group", "")).strip(),
+                "family": str(row.get("family", "")).strip(),
+            }
+            # Later CSVs (RVDB) fill gaps; do not overwrite an existing RefSeq annotation.
+            if acc not in out:
+                out[acc] = meta
+            base = acc.split(".")[0]
+            if base not in out:
+                out[base] = meta
+            n += 1
+    return n
 
 
 def _load_refseq_host_family_annotations() -> dict:
     """
-    Load accession -> {'group': ..., 'family': ...} from the curated annotation CSV.
-    Keys include both versioned and unversioned accessions.
+    Load accession -> {'group': ..., 'family': ...} from curated annotation CSVs
+    (RefSeq + RVDB). Keys include both versioned and unversioned accessions.
     """
     global _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE
     if _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE is not None:
         return _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE
 
-    import csv as _csv
-
     out: dict = {}
-    csv_path = _get_refseq_group_annotation_csv()
-    if csv_path is None:
+    csvs = _iter_group_annotation_csvs()
+    if not csvs:
         _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE = out
         return out
 
     try:
-        with csv_path.open("r", encoding="utf-8", newline="") as fh:
-            reader = _csv.DictReader(fh)
-            fields = reader.fieldnames or []
-            if "accession" not in fields:
-                logger.warning(f"Group annotation CSV missing 'accession' column: {csv_path}")
-                _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE = out
-                return out
-            for row in reader:
-                acc = str(row.get("accession", "")).strip()
-                if not acc:
-                    continue
-                meta = {
-                    "group": str(row.get("group", "")).strip(),
-                    "family": str(row.get("family", "")).strip(),
-                }
-                out[acc] = meta
-                out[acc.split(".")[0]] = meta
+        for csv_path in csvs:
+            n = _load_host_family_annotations_from_csv(csv_path, out)
+            logger.info(f"Loaded {n:,} host/family annotation row(s) from {csv_path.name}")
     except Exception as e:
-        logger.warning(f"Could not load RefSeq host/family annotations ({csv_path}): {e}")
+        logger.warning(f"Could not load host/family annotations: {e}")
         out = {}
 
     _REFSEQ_HOST_FAMILY_ANNOTATION_CACHE = out
@@ -2116,32 +2232,32 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
     return kept
 
 
-def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
+def _filter_excluded_groups_from_fasta(
+    fasta_path: Path,
+    metadata_file: Path,
+    csv_path: Optional[Path],
+    label: str = "group",
+) -> None:
     """
-    Remove phage / plant / fungi / invertebrate references from a RefSeq FASTA using the
-    curated group annotation CSV shipped under virasign/assets/.
-    Skips if metadata already records groups_filtered=True.
+    Remove phage / plant / fungi / invertebrate / protozoa references using a curated
+    group annotation CSV (status=exclude). Skips if metadata already has groups_filtered=True.
     """
     try:
         meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
     except Exception:
         meta = {}
     if meta.get("groups_filtered"):
-        logger.info("RefSeq group filter already applied (metadata). Skipping.")
+        logger.info(f"{label} group filter already applied (metadata). Skipping.")
         return
 
-    csv_path = _get_refseq_group_annotation_csv()
     if csv_path is None:
-        logger.warning(
-            "RefSeq group annotation CSV not found; skipping group filter. "
-            "Expected virasign/assets/refseq_references_group_annotation.csv"
-        )
+        logger.warning(f"{label} group annotation CSV not found; skipping group filter.")
         return
 
     try:
-        excluded_accs = _load_refseq_excluded_group_accessions(csv_path)
+        excluded_accs = _load_excluded_group_accessions(csv_path)
     except Exception as e:
-        logger.warning(f"Could not load RefSeq group annotation CSV ({csv_path}): {e}")
+        logger.warning(f"Could not load {label} group annotation CSV ({csv_path}): {e}")
         return
 
     if not excluded_accs:
@@ -2158,7 +2274,10 @@ def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> Non
         for line in f_in:
             if line.startswith(">"):
                 header = line[1:].strip()
-                acc = header.split()[0].strip() if header else ""
+                # Prefer RVDB/RefSeq pipe accessions; fall back to first token.
+                acc = extract_accession_from_header(header) if header else ""
+                if not acc:
+                    acc = header.split()[0].strip() if header else ""
                 acc_base = acc.split(".")[0] if acc else ""
                 if acc in excluded_accs or acc_base in excluded_accs:
                     write = False
@@ -2171,7 +2290,6 @@ def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> Non
 
     if removed > 0:
         tmp_out.replace(fasta_path)
-        # Drop stale minimap index so it is rebuilt from the filtered FASTA.
         for idx in (
             Path(str(fasta_path) + ".mmi"),
             fasta_path.with_suffix(fasta_path.suffix + ".mmi"),
@@ -2182,8 +2300,8 @@ def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> Non
                 except Exception:
                     pass
         logger.info(
-            f"RefSeq group filter applied ({csv_path.name}): removed {removed:,} "
-            f"phage/plant/fungi/invertebrate reference(s), kept {kept:,} total sequence(s)."
+            f"{label} group filter applied ({csv_path.name}): removed {removed:,} "
+            f"phage/plant/fungi/invertebrate/protozoa reference(s), kept {kept:,} total sequence(s)."
         )
     else:
         try:
@@ -2191,14 +2309,13 @@ def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> Non
         except FileNotFoundError:
             pass
         logger.info(
-            f"RefSeq group filter ({csv_path.name}): no excluded-group accessions found in FASTA "
+            f"{label} group filter ({csv_path.name}): no excluded-group accessions found in FASTA "
             f"(already filtered or CSV out of date)."
         )
 
     meta["groups_filtered"] = True
     meta["group_annotation_csv"] = csv_path.name
     meta["group_references_removed"] = removed
-    # Backward-compatible aliases for older metadata readers.
     meta["phages_filtered"] = True
     meta["sequence_count"] = kept
     try:
@@ -2206,7 +2323,27 @@ def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> Non
         with open(metadata_file, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
     except Exception as e:
-        logger.warning(f"Could not update RefSeq metadata after group filter: {e}")
+        logger.warning(f"Could not update {label} metadata after group filter: {e}")
+
+
+def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
+    """Remove curated out-of-scope groups from a RefSeq FASTA."""
+    _filter_excluded_groups_from_fasta(
+        fasta_path,
+        metadata_file,
+        _get_refseq_group_annotation_csv(),
+        label="RefSeq",
+    )
+
+
+def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
+    """Remove curated out-of-scope groups from an RVDB FASTA."""
+    _filter_excluded_groups_from_fasta(
+        fasta_path,
+        metadata_file,
+        _get_rvdb_group_annotation_csv(),
+        label="RVDB",
+    )
 
 
 def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path) -> None:
@@ -2791,77 +2928,61 @@ def download_ncbi_taxonomy_files(database_dir: Path, force_download: bool = Fals
     taxdmp_file = ncbi_dir / "taxdmp.zip"
     names_file = ncbi_dir / "names.dmp"
     
-    # Download accession2taxid if needed
-    if not accession2taxid_file.exists() or force_download:
-        # Try primary URL (GenBank nucleotide, includes RefSeq)
+    # Download accession2taxid if missing, forced, or left incomplete by a crashed parallel build.
+    if force_download or not _gzip_file_is_complete(accession2taxid_file):
+        if accession2taxid_file.exists() and not force_download:
+            logger.warning(
+                f"Removing incomplete/corrupt {accession2taxid_file.name} before re-download"
+            )
+            accession2taxid_file.unlink()
         urls = [
             "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/accession2taxid/nucl_gb.accession2taxid.gz",
         ]
-        
         downloaded = False
         for url in urls:
             logger.info(f"Downloading {url} (this may take a while, ~few GB)...")
             logger.info(f"Saving to: {accession2taxid_file}")
             try:
-                # Use urlretrieve with a callback to show progress
-                def show_progress(block_num, block_size, total_size):
-                    if total_size > 0:
-                        percent = min(100, (block_num * block_size * 100) // total_size)
-                        if block_num % 1000 == 0:  # Log every 1000 blocks to avoid spam
-                            logger.info(f"  Download progress: {percent}%")
-                
-                urllib.request.urlretrieve(url, accession2taxid_file, show_progress)
+                _download_url_atomic(url, accession2taxid_file, progress_every=1000)
                 logger.info(f"Successfully downloaded {accession2taxid_file.name}")
                 downloaded = True
                 break
             except urllib.error.HTTPError as e:
                 logger.warning(f"Failed to download from {url}: HTTP {e.code} - {e.reason}")
-                if os.path.exists(accession2taxid_file):
-                    os.remove(accession2taxid_file)  # Remove partial download
             except Exception as e:
                 logger.warning(f"Failed to download from {url}: {e}")
-                if os.path.exists(accession2taxid_file):
-                    os.remove(accession2taxid_file)  # Remove partial download
-        
         if not downloaded:
-            logger.error(f"Failed to download accession2taxid from all attempted URLs")
+            logger.error("Failed to download accession2taxid from all attempted URLs")
             raise Exception("Could not download accession2taxid file from NCBI")
-    
+
     # Download taxdmp.zip if needed
-    if not taxdmp_file.exists() or force_download:
+    if force_download or not taxdmp_file.exists() or taxdmp_file.stat().st_size == 0:
+        if taxdmp_file.exists() and (force_download or taxdmp_file.stat().st_size == 0):
+            taxdmp_file.unlink()
         url = "https://ftp.ncbi.nlm.nih.gov/pub/taxonomy/taxdmp.zip"
         logger.info(f"Downloading {url} (this may take a while, ~few hundred MB)...")
         logger.info(f"Saving to: {taxdmp_file}")
         try:
-            # Use urlretrieve with a callback to show progress
-            def show_progress(block_num, block_size, total_size):
-                if total_size > 0:
-                    percent = min(100, (block_num * block_size * 100) // total_size)
-                    if block_num % 100 == 0:  # Log every 100 blocks
-                        logger.info(f"  Download progress: {percent}%")
-            
-            urllib.request.urlretrieve(url, taxdmp_file, show_progress)
+            _download_url_atomic(url, taxdmp_file, progress_every=100)
             logger.info(f"Successfully downloaded {taxdmp_file.name}")
         except Exception as e:
             logger.error(f"Failed to download taxdmp: {e}")
-            if os.path.exists(taxdmp_file):
-                os.remove(taxdmp_file)  # Remove partial download
             raise
-    
+
     # Extract names.dmp and nodes.dmp from taxdmp.zip if needed
     names_file = ncbi_dir / "names.dmp"
     nodes_file = ncbi_dir / "nodes.dmp"
-    
+
     if not names_file.exists() or not nodes_file.exists() or force_download:
         logger.info(f"Extracting names.dmp and nodes.dmp from {taxdmp_file.name}...")
         try:
-            with zipfile.ZipFile(taxdmp_file, 'r') as zip_ref:
+            with zipfile.ZipFile(taxdmp_file, "r") as zip_ref:
                 if not names_file.exists() or force_download:
                     zip_ref.extract("names.dmp", ncbi_dir)
-                    logger.info(f"Extracted names.dmp")
+                    logger.info("Extracted names.dmp")
                 if not nodes_file.exists() or force_download:
                     zip_ref.extract("nodes.dmp", ncbi_dir)
-                    logger.info(f"Extracted nodes.dmp")
+                    logger.info("Extracted nodes.dmp")
         except Exception as e:
             logger.error(f"Failed to extract files from taxdmp.zip: {e}")
             raise
@@ -3122,73 +3243,92 @@ def build_taxonomy_database_from_ncbi_download(database_dir: Path, database_fast
     
     logger.info(f"Saving comprehensive taxonomy database to {database_path.name} (SQLite format)...")
     logger.info(f"Full path: {database_path}")
-    
-    # Remove old database if it exists (both .db and .json)
-    if database_path.exists():
-        database_path.unlink()
-    json_path = database_path.with_suffix('.json')
+
+    json_path = database_path.with_suffix(".json")
     if json_path.exists():
         logger.info(f"Removing old JSON database: {json_path.name}")
         json_path.unlink()
-    
-    # Create SQLite database with indexed table
+
+    # Write to a temp DB then atomically replace so parallel workers never read a partial file.
+    tmp_db = database_path.with_name(database_path.stem + ".building" + database_path.suffix)
+    if tmp_db.exists():
+        tmp_db.unlink()
+
     try:
-        conn = sqlite3.connect(str(database_path))
+        conn = sqlite3.connect(str(tmp_db))
         cursor = conn.cursor()
-        
-        # Create table with accession as primary key (automatically indexed)
-        # Include both organism and species columns
-        cursor.execute('''
+
+        cursor.execute(
+            """
             CREATE TABLE accession_to_organism (
                 accession TEXT PRIMARY KEY,
                 organism TEXT NOT NULL,
                 species TEXT
             )
-        ''')
-        
-        # Create index on accession for faster lookups (though PRIMARY KEY is already indexed)
-        # Also create index for versioned accessions (without version number)
-        cursor.execute('''
-            CREATE INDEX idx_accession_base ON accession_to_organism(substr(accession, 1, instr(accession || '.', '.') - 1))
-        ''')
-        
-        # Insert all mappings in batches for speed (include species if available)
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX idx_accession_base ON accession_to_organism(
+                substr(accession, 1, instr(accession || '.', '.') - 1)
+            )
+            """
+        )
+
         batch_size = 100000
         items = []
         for accession, organism in accession_to_organism.items():
             species = accession_to_species.get(accession, None)
             items.append((accession, organism, species))
-        
+
         total_batches = (len(items) + batch_size - 1) // batch_size
-        
         for batch_num in range(total_batches):
-            batch = items[batch_num * batch_size:(batch_num + 1) * batch_size]
-            cursor.executemany('INSERT OR REPLACE INTO accession_to_organism (accession, organism, species) VALUES (?, ?, ?)', batch)
+            batch = items[batch_num * batch_size : (batch_num + 1) * batch_size]
+            cursor.executemany(
+                "INSERT OR REPLACE INTO accession_to_organism (accession, organism, species) VALUES (?, ?, ?)",
+                batch,
+            )
             if (batch_num + 1) % 10 == 0:
-                logger.info(f"  Inserted batch {batch_num + 1}/{total_batches} ({len(batch)} entries)...")
-        
+                logger.info(
+                    f"  Inserted batch {batch_num + 1}/{total_batches} ({len(batch)} entries)..."
+                )
+
         conn.commit()
         conn.close()
-        
-        # Get file size
+
+        if not _taxonomy_database_is_ready(tmp_db):
+            raise RuntimeError(
+                f"Built taxonomy DB is not ready (empty or missing species): {tmp_db}"
+            )
+
+        tmp_db.replace(database_path)
         file_size_mb = database_path.stat().st_size / (1024 * 1024)
-        logger.info(f"Saved {len(accession_to_organism):,} accession -> organism mappings and {len(accession_to_species):,} accession -> species mappings to SQLite database ({file_size_mb:.1f} MB)")
+        logger.info(
+            f"Saved {len(accession_to_organism):,} accession -> organism mappings and "
+            f"{len(accession_to_species):,} accession -> species mappings to SQLite database "
+            f"({file_size_mb:.1f} MB)"
+        )
     except Exception as e:
         logger.error(f"Failed to save to SQLite database: {e}")
-        logger.error(f"Falling back to JSON format (slower)...")
-        # Fallback to JSON if SQLite fails
-        json_path = database_path.with_suffix('.json')
-        # Store both organism and species in JSON format
+        if tmp_db.exists():
+            try:
+                tmp_db.unlink()
+            except OSError:
+                pass
+        logger.error("Falling back to JSON format (slower)...")
+        json_path = database_path.with_suffix(".json")
         json_data = {}
         for accession, organism in accession_to_organism.items():
             species = accession_to_species.get(accession)
-            json_data[accession] = {'organism': organism, 'species': species}
-        with open(json_path, 'w') as f:
+            json_data[accession] = {"organism": organism, "species": species}
+        with open(json_path, "w") as f:
             json.dump(json_data, f)
         file_size_mb = json_path.stat().st_size / (1024 * 1024)
-        logger.info(f"Saved {len(accession_to_organism):,} mappings to JSON database ({file_size_mb:.1f} MB)")
-        raise  # Re-raise to indicate there was an issue
-    
+        logger.info(
+            f"Saved {len(accession_to_organism):,} mappings to JSON database ({file_size_mb:.1f} MB)"
+        )
+        raise
+
     return accession_to_organism, accession_to_species
 
 
@@ -3196,60 +3336,83 @@ def ensure_taxonomy_resources(database_fasta_path: Path, force_rebuild: bool = F
     """
     Ensure taxonomy/ under the database FASTA parent has NCBI dumps + SQLite accession lookup
     (legacy folder taxonomy_cache/ is still supported).
-    Same logic as the first step of save_results(); use with --prepare-db so offline taxonomy is ready before any sample run.
+
+    Safe for parallel sample workers: an exclusive lock serializes download/build, and only a
+    finished non-empty SQLite DB (with species annotations) is returned/used. Call from the
+    parent process before ProcessPoolExecutor so taxonomy is ready before workers start.
     """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover - non-Unix
+        fcntl = None
+
     database_fasta_path = Path(database_fasta_path)
     database_dir = database_fasta_path.parent
+    tax_dir = get_taxonomy_dir(database_dir, create=True)
     database_path = get_taxonomy_database_path(database_dir)
+    lock_path = tax_dir / ".taxonomy_build.lock"
 
-    if force_rebuild:
-        # Remove both new + legacy taxonomy folders to guarantee a clean rebuild into taxonomy/
-        for d in (database_dir / "taxonomy", database_dir / "taxonomy_cache"):
-            if d.exists() and d.is_dir():
-                shutil.rmtree(d)
-        database_path = get_taxonomy_database_path(database_dir)
-
-    database_exists = database_path.exists()
-    database_empty = False
-    if database_exists:
-        try:
-            if database_path.suffix == ".db":
-                conn = sqlite3.connect(str(database_path))
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM accession_to_organism")
-                count = cursor.fetchone()[0]
-                conn.close()
-                database_empty = count == 0
-            else:
-                with open(database_path, "r") as f:
-                    data = json.load(f)
-                    database_empty = len(data) == 0
-        except (sqlite3.Error, json.JSONDecodeError, Exception) as e:
-            logger.debug(f"Error checking taxonomy database: {e}")
-            database_empty = True
-
-    if not database_exists or database_empty:
-        if database_empty:
-            logger.info("=" * 60)
-            logger.info("Comprehensive taxonomy database exists but is empty. Rebuilding...")
-        else:
-            logger.info("=" * 60)
-            logger.info("Comprehensive taxonomy database not found.")
-            logger.info("Downloading NCBI pre-made taxonomy files (one-time download, ~few GB)...")
-            logger.info(f"Files will be stored in: {get_taxonomy_dir(database_dir, create=False)}")
-            logger.info("This will work offline forever after this download completes.")
-            logger.info("=" * 60)
-        try:
-            build_taxonomy_database_from_ncbi_download(database_dir, database_fasta=database_fasta_path)
-            logger.info("Taxonomy database built successfully from NCBI files!")
+    def _do_ensure() -> Path:
+        nonlocal database_path
+        if force_rebuild:
+            for d in (database_dir / "taxonomy", database_dir / "taxonomy_cache"):
+                if d.exists() and d.is_dir():
+                    shutil.rmtree(d)
             database_path = get_taxonomy_database_path(database_dir)
+
+        if _taxonomy_database_is_ready(database_path):
+            logger.info(f"Using existing comprehensive taxonomy database: {database_path}")
+            return database_path
+
+        # Stale/partial DB from a crashed build — remove before rebuilding.
+        if database_path.exists() and not _taxonomy_database_is_ready(database_path):
+            logger.warning(
+                f"Removing incomplete taxonomy database before rebuild: {database_path.name}"
+            )
+            try:
+                database_path.unlink()
+            except OSError:
+                pass
+
+        logger.info("=" * 60)
+        logger.info("Comprehensive taxonomy database not ready.")
+        logger.info("Downloading/building NCBI taxonomy (one-time; ~few GB)...")
+        logger.info(f"Files will be stored in: {get_taxonomy_dir(database_dir, create=False)}")
+        logger.info("Other parallel workers will wait until this build finishes.")
+        logger.info("=" * 60)
+        try:
+            build_taxonomy_database_from_ncbi_download(
+                database_dir, database_fasta=database_fasta_path
+            )
+            database_path = get_taxonomy_database_path(database_dir)
+            if not _taxonomy_database_is_ready(database_path):
+                raise RuntimeError(
+                    f"Taxonomy build finished but DB is still not ready: {database_path}"
+                )
+            logger.info("Taxonomy database built successfully from NCBI files!")
         except Exception as e:
             logger.error(f"Failed to build taxonomy database: {e}")
-            logger.warning("Continuing without comprehensive taxonomy database (will use API calls)")
-    else:
-        logger.info(f"Using existing comprehensive taxonomy database: {database_path}")
+            logger.warning(
+                "Continuing without comprehensive taxonomy database (will use API / name parsing fallbacks)"
+            )
+        return database_path
 
-    return database_path
+    if fcntl is None:
+        return _do_ensure()
+
+    with open(lock_path, "a+", encoding="utf-8") as lockf:
+        logger.info("Acquiring taxonomy build lock (wait if another process is building)...")
+        fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
+        try:
+            # Re-check under the lock: a peer may have finished while we waited.
+            if not force_rebuild and _taxonomy_database_is_ready(database_path):
+                logger.info(
+                    f"Using existing comprehensive taxonomy database (ready after wait): {database_path}"
+                )
+                return database_path
+            return _do_ensure()
+        finally:
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_UN)
 
 
 def fetch_organism_from_ncbi(accession: str, cache_path: Path = None, database_path: Path = None, max_retries: int = 3) -> str:
@@ -7298,10 +7461,12 @@ def find_best_reference_with_index(
     else:
         logger.info(f"After strict curation (identity >= {min_identity}%, coverage_depth >= {coverage_depth_threshold}, coverage_breadth >= {effective_breadth_threshold}): {len(curated_stats)} references remain")
 
-    # RefSeq low-input rescue: if every hit is below the curated read gate (100),
+    # Low-input rescue (RefSeq + RVDB): if every hit is below the curated read gate (100),
     # still keep the single highest-read hit that passes identity/depth/breadth
     # (and min_mapped_reads when that was lowered, e.g. -u -> 10).
-    if not curated_stats and all_stats and "refseq" in str(database_fasta).lower():
+    _db_path_l = str(database_fasta).lower()
+    _low_input_rescue_db = ("refseq" in _db_path_l) or ("rvdb" in _db_path_l)
+    if not curated_stats and all_stats and _low_input_rescue_db:
         all_below_curated_reads = all(
             int(s.get("mapped_reads", 0) or 0) < curated_min_mapped_reads for s in all_stats
         )
@@ -7319,7 +7484,7 @@ def find_best_reference_with_index(
                 rescued = max(rescue_candidates, key=lambda s: int(s.get("mapped_reads", 0) or 0))
                 curated_stats = [rescued]
                 logger.info(
-                    f"RefSeq low-input rescue: all hits had < {curated_min_mapped_reads} mapped reads; "
+                    f"Low-input rescue: all hits had < {curated_min_mapped_reads} mapped reads; "
                     f"keeping highest-read hit that still passes identity>={min_identity}%, "
                     f"depth>={coverage_depth_threshold}, breadth>={effective_breadth_threshold}"
                     + (f", reads>={rescue_min_reads}" if rescue_min_reads > 1 else "")
@@ -7330,7 +7495,7 @@ def find_best_reference_with_index(
                 )
             else:
                 logger.info(
-                    f"RefSeq low-input rescue: all hits had < {curated_min_mapped_reads} mapped reads, "
+                    f"Low-input rescue: all hits had < {curated_min_mapped_reads} mapped reads, "
                     f"but none passed identity/depth/breadth"
                     + (f"/reads>={rescue_min_reads}" if rescue_min_reads > 1 else "")
                     + "; no curated reference."
@@ -11988,7 +12153,7 @@ Examples
         default=None,
         dest="rvdb_version",
         metavar="",
-        help="Which RVDB release to download (default: 31.0).",
+        help="Which RVDB release to download (default: 31.0, pinned; not auto-latest). Example: 30.0 or 32.1.",
     )
     choose_db.add_argument(
         "-a",
@@ -12473,6 +12638,26 @@ Examples
     logger.info("Precomputing shared database context...")
     for database_fasta_path in database_fasta_paths:
         prepare_database_context(Path(database_fasta_path))
+
+    # Build/load taxonomy once in the parent BEFORE parallel workers start.
+    # Workers still call ensure_taxonomy_resources (locked); if parent finished, they reuse it.
+    if not getattr(args, "prepare_db", False):
+        logger.info("Ensuring taxonomy database is finished before sample processing...")
+        for database_fasta_path in database_fasta_paths:
+            try:
+                tax_db = ensure_taxonomy_resources(
+                    Path(database_fasta_path),
+                    force_rebuild=getattr(args, "rebuild", False),
+                )
+                if _taxonomy_database_is_ready(Path(tax_db)):
+                    logger.info(f"Taxonomy ready: {tax_db}")
+                else:
+                    logger.warning(
+                        f"Taxonomy not ready after ensure ({tax_db}); "
+                        f"species labels may fall back to organism-name parsing."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not pre-build taxonomy for {database_fasta_path}: {e}")
 
     # Prepare DB only mode: download/unpack/index completed, no sample processing.
     if getattr(args, "prepare_db", False):
