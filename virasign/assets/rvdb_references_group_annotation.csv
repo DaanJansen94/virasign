@@ -157,7 +157,7 @@ JQ316127.2,"HIV-1 isolate 03LSH1, complete genome",human,Keep,Retroviridae
 JQ316128.1,"HIV-1 isolate HP-9:03KDE11, complete genome",human,Keep,Retroviridae
 JQ316129.1,"HIV-1 isolate 99HYH2, complete genome",human,Keep,Retroviridae
 JQ316130.1,"HIV-1 isolate 04KJS8, complete genome",human,Keep,Retroviridae
-PV882653.1,"MAG: Tick-borne encephalitis virus isolate 24_2_K39_14 polyprotein-like gene, complete sequence",human,Keep,Flaviviridae
+PV882653.1,"MAG: Tick-borne encephalitis virus isolate 24_2_K39_14 polyprotein-like gene, complete sequence",human,exclude,Flaviviridae
 KJ026560.1,"Goatpox virus strain Zl/Gs envelope protein-like (p32) gene, complete sequence",vertebrate,Keep,Poxviridae
 KJ028209.1,"Wheat dwarf India virus clone W5SK5, complete genome",plant,exclude,Geminiviridae
 MW265927.1,"Beauveria bassiana bipartite mycovirus 1 isolate Formicidae segment RNA1, complete sequence",fungi,exclude,
@@ -7002,9 +7002,9 @@ OL875090.1,"MAG: Gulupa bacilliform virus A isolate BPE19 nonfunctional polyprot
 OL875091.1,"MAG: Gulupa bacilliform virus A isolate BPE22 nonfunctional polyprotein gene, complete sequence",plant,exclude,Caulimoviridae
 OL875092.1,"MAG: Gulupa bacilliform virus A isolate BPE23 nonfunctional polyprotein gene, complete sequence",plant,exclude,Caulimoviridae
 OL875093.1,"MAG: Gulupa bacilliform virus A isolate BPE24 nonfunctional polyprotein gene, complete sequence",plant,exclude,Caulimoviridae
-OL875326.1,"MAG: Human picobirnavirus isolate ABT3406 segment 2 RNA-dependent RNA polymerase-like gene, complete sequence",human,Keep,Picobirnaviridae
-OL875327.1,"MAG: Human picobirnavirus isolate NYB4466 segment 2 RNA-dependent RNA polymerase-like gene, complete sequence",human,Keep,Picobirnaviridae
-OL875332.1,"MAG: Human picobirnavirus isolate MRN015AB segment 2 RNA-dependent RNA polymerase-like gene, complete sequence",human,Keep,Picobirnaviridae
+OL875326.1,"MAG: Human picobirnavirus isolate ABT3406 segment 2 RNA-dependent RNA polymerase-like gene, complete sequence",human,exclude,Picobirnaviridae
+OL875327.1,"MAG: Human picobirnavirus isolate NYB4466 segment 2 RNA-dependent RNA polymerase-like gene, complete sequence",human,exclude,Picobirnaviridae
+OL875332.1,"MAG: Human picobirnavirus isolate MRN015AB segment 2 RNA-dependent RNA polymerase-like gene, complete sequence",human,exclude,Picobirnaviridae
 KF562374.1,"Avian leukosis virus isolate SD110503, complete genome",vertebrate,Keep,Retroviridae
 KF563933.1,"Bluetongue virus 1 isolate KDP15/07/Ind segment 2, complete sequence",vertebrate,Keep,Sedoreoviridae
 KF667358.1,"Coxsackievirus A24 strain INDNIV1034661LV463, complete genome",human,Keep,Picornaviridae
@@ -13009,7 +13009,7 @@ MT162451.1,"Viral hemorrhagic septicemia virus isolate DK-Hededam, complete geno
 KP343640.1,"Classical swine fever virus strain GD53/2011, complete genome",vertebrate,Keep,Pestiviridae
 KP345888.1,"Dromedary camel enterovirus strain 20CC, complete genome",vertebrate,Keep,Picornaviridae
 PP255794.1,"MAG: Alphatorquevirus sp. isolate 87329-3 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255796.1,"MAG: Alphatorquevirus sp. isolate 91288-2 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255796.1,"MAG: Alphatorquevirus sp. isolate 91288-2 ORF1 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255808.1,"MAG: Saffron betaflexivirus 1 isolate CR1, complete genome",plant,exclude,Betaflexiviridae
 PV948003.1,"Porcine reproductive and respiratory syndrome virus 1 isolate PRRS-FR-2019-22-10-6, complete genome",vertebrate,Keep,Arteriviridae
 PV948004.1,"Porcine reproductive and respiratory syndrome virus 1 isolate PRRS-FR-2014-22-22-1, complete genome",vertebrate,Keep,Arteriviridae
@@ -18762,7 +18762,7 @@ MZ357183.1,"MAG: Physalis torrado virus isolate BPP2 segment RNA1, complete sequ
 MZ357184.1,"MAG: Physalis torrado virus isolate BPP2 segment RNA2, complete sequence",plant,exclude,Secoviridae
 MZ357185.1,"MAG: Physalis virus X isolate BPP1, complete genome",plant,exclude,Alphaflexiviridae
 MZ357187.1,"MAG: Tobacco mosaic virus isolate BPP12, complete genome",plant,exclude,Virgaviridae
-MZ375113.1,"MAG: Circoviridae sp. isolate 2PE-REP-1 replication-associated protein-like gene, complete sequence",vertebrate,Keep,Nenyaviridae
+MZ375113.1,"MAG: Circoviridae sp. isolate 2PE-REP-1 replication-associated protein-like gene, complete sequence",vertebrate,exclude,Nenyaviridae
 MZ375116.1,"MAG: Parvoviridae sp. isolate 1PE-NS1-1, complete genome",vertebrate,Keep,Parvoviridae
 MZ375121.1,"MAG: Parvoviridae sp. isolate 2PE-NS1-2, complete genome",vertebrate,Keep,Parvoviridae
 MZ375131.1,"MAG: Astroviridae sp. isolate 1PE-RDRP-1 ORF1ab-like gene, complete sequence; and capsid protein gene, complete cds",vertebrate,Keep,Astroviridae
@@ -22920,7 +22920,7 @@ PX139025.1,"Ringavirales isolate VA19_k141_22431, complete genome",protozoa,excl
 PX161364.1,"HIV-1 isolate V704_3008_051_GP_119_1 from Peru gag protein-like (gag) gene, complete sequence; and pol protein-like (pol) gene, partial sequence",human,Keep,Retroviridae
 PX161381.1,"HIV-1 isolate V704_3008_051_GP_136_1 from Peru gag protein-like (gag) gene, complete sequence; and pol protein-like (pol) gene, partial sequence",human,Keep,Retroviridae
 PX161384.1,"HIV-1 isolate V704_3008_051_GP_139_1 from Peru gag protein-like (gag) gene, complete sequence; and pol protein-like (pol) gene, partial sequence",human,Keep,Retroviridae
-MN765624.1,"MAG: Torque teno virus isolate SAfiA-572-71 ORF1-like gene, complete sequence",human,Keep,Anelloviridae
+MN765624.1,"MAG: Torque teno virus isolate SAfiA-572-71 ORF1-like gene, complete sequence",human,exclude,Anelloviridae
 AF049337.1,"HIV-1 CRF04_cpx clone 94CY032-3 from Cyprus, complete genome",human,Keep,Retroviridae
 AF049495.1,"HIV-1 chimpanzee C455, isolate HIV-1NC, clone HIV-1NC7, from the USA, complete genome",human,Keep,Retroviridae
 DQ863638.1,"Dengue virus 3 strain CH53489, complete genome",human,Keep,Flaviviridae
@@ -23578,7 +23578,7 @@ OR951312.1,"MAG: Taphozous bat picornavirus 2 isolate GX2016_241_45300 polyprote
 OR951314.1,"MAG: Taphozous bat picornavirus 1 isolate GX2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951316.1,"MAG: Taphozous bat picornavirus 1 isolate GX2017_242_1655 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951317.1,"MAG: Taphozous bat hepatovirus isolate GX2017_242_3607 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951319.1,"MAG: Taphozous bat picornavirus 2 isolate GX2017_243_61738 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
+OR951319.1,"MAG: Taphozous bat picornavirus 2 isolate GX2017_243_61738 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornavirales
 OR951322.1,"MAG: Taphozous bat picornavirus 2 isolate GX2017_244_24231 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951328.1,"MAG: Myotis bat picornavirus 1 isolate GX2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951329.1,"MAG: Myotis bat picornavirus 2 isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
@@ -23599,12 +23599,12 @@ OR951359.1,"MAG: Hipposideros bat shanbavirus isolate Pool-311 polyprotein-like 
 OR951360.1,"MAG: Bat mischivirus 5 isolate Pool-313 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951361.1,"MAG: Ia io picornavirus 1 isolate YN2020 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951362.1,"MAG: Bat mischivirus 4 isolate YN2020 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951366.1,"MAG: Bat kobuvirus isolate FJ2021 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951366.1,"MAG: Bat kobuvirus isolate FJ2021 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951367.1,"MAG: Bat picornavirus 3 isolate JX2021 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951368.1,"MAG: Rhinolophus bat shanbavirus isolate JX2021 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951371.1,"MAG: Eonycteris bat betaretrovirus isolate YN2017 gag-pro-pol fusion-like gene, complete sequence",vertebrate,Keep,Retroviridae
+OR951371.1,"MAG: Eonycteris bat betaretrovirus isolate YN2017 gag-pro-pol fusion-like gene, complete sequence",vertebrate,exclude,Retroviridae
 OR951375.1,"MAG: Bat spumavirus 3 isolate YN2020 pol-like gene, complete sequence",vertebrate,Keep,Retroviridae
-OR951376.1,"MAG: Bat spumavirus 5 isolate YN2020 pol protein-like gene, complete sequence",vertebrate,Keep,Retroviridae
+OR951376.1,"MAG: Bat spumavirus 5 isolate YN2020 pol protein-like gene, complete sequence",vertebrate,exclude,Retroviridae
 OR951377.1,"MAG: Bat spumavirus 1 isolate YN2020 pol protein-like gene, complete sequence",vertebrate,Keep,Retroviridae
 OR951390.1,"MAG: Bat associated rhabdovirus 4 isolate LN2020 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Rhabdoviridae
 OR951392.1,"MAG: Bat associated rhabdovirus 5 isolate GD2016 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Rhabdoviridae
@@ -26274,11 +26274,11 @@ KU666319.1,"Porcine reproductive and respiratory syndrome virus strain K14-4-E30
 PP255606.1,"MAG: Betatorquevirus sp. isolate 67417 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255614.1,"MAG: Alphatorquevirus sp. isolate 67427 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255618.1,"MAG: Alphatorquevirus sp. isolate 67448 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255631.1,"MAG: Alphatorquevirus sp. isolate 67570 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255631.1,"MAG: Alphatorquevirus sp. isolate 67570 ORF1 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255633.1,"MAG: Alphatorquevirus sp. isolate 67577 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255636.1,"MAG: Alphatorquevirus sp. isolate 67587 ORF10 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255643.1,"MAG: Alphatorquevirus sp. isolate 67601 ORF5 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255654.1,"MAG: Alphatorquevirus sp. isolate 67602 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255654.1,"MAG: Alphatorquevirus sp. isolate 67602 ORF2 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255656.1,"MAG: Alphatorquevirus sp. isolate 67616-1 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255660.1,"MAG: Alphatorquevirus sp. isolate 67617-2 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255671.1,"MAG: Alphatorquevirus sp. isolate 67621-4 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
@@ -27202,35 +27202,35 @@ DQ995805.1,"Hepatitis B virus isolate H60-2.5KB, complete genome",human,Keep,Hep
 KJ476507.1,"Sweet potato leaf curl Henan virus isolate China:Henan10(2):2012, complete genome",plant,exclude,Geminiviridae
 KJ476509.2,"Sweet potato leaf curl Henan4 virus isolate China:Henan4:2012, complete genome",plant,exclude,Geminiviridae
 MF062252.1,"Squash leaf curl China virus isolate Hn segment DNA-B, complete sequence",plant,exclude,Geminiviridae
-OR951235.1,"MAG: Kobuvirus femyomini isolate GD2017_085_7919 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951235.1,"MAG: Kobuvirus femyomini isolate GD2017_085_7919 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951236.1,"MAG: Rhinolophus bat picornavirus 4 isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951238.1,"MAG: Bat picornavirus 3 isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951239.1,"MAG: Rhinolophus bat picornavirus 1 isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-OR951240.1,"MAG: Rhinolophus bat shanbavirus isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951240.1,"MAG: Rhinolophus bat shanbavirus isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951241.1,"MAG: Bat picornavirus 3 isolate GD2019_100_36527 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951242.1,"MAG: Bat picornavirus 3 isolate GD2019_100_57746 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951243.1,"MAG: Rhinolophus bat picornavirus 3 isolate GD2019 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951244.1,"MAG: Rhinolophus bat shanbavirus isolate HI2019 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951246.1,"MAG: Bat picornavirus 3 isolate HI2019 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951247.1,"MAG: Rhinolophus bat picornavirus 7 isolate HI2019 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
+OR951247.1,"MAG: Rhinolophus bat picornavirus 7 isolate HI2019 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornavirales
 OR951248.1,"MAG: Tylonycteris bat picornavirus 2 isolate GX2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951249.1,"MAG: Tylonycteris bat picornavirus 2 isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-OR951265.1,"MAG: Scotophilus bat parechovirus isolate GX2017_185_12896 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951265.1,"MAG: Scotophilus bat parechovirus isolate GX2017_185_12896 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951267.1,"MAG: Bat kobuvirus isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951268.1,"MAG: Scotophilus bat parechovirus isolate GX2017_186_37919 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951269.1,"MAG: Scotophilus bat parechovirus isolate GX2017_186_43554 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951269.1,"MAG: Scotophilus bat parechovirus isolate GX2017_186_43554 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951270.1,"MAG: Scotophilus bat picornavirus 2 isolate GX2017_186_59606 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-OR951273.1,"MAG: Hipposideros bat hepatovirus isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951273.1,"MAG: Hipposideros bat hepatovirus isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951276.1,"MAG: Myotis bat picornavirus 1 isolate GD2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-OR951277.1,"MAG: Kobuvirus femyomini isolate GD2017_207_36806 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951277.1,"MAG: Kobuvirus femyomini isolate GD2017_207_36806 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951278.1,"MAG: Myotis bat parechovirus 1 isolate GD2017_208_30113 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951279.1,"MAG: Myotis bat picornavirus 2 isolate GD2017_208_84527 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951280.1,"MAG: Kobuvirus femyomini isolate GD2017_210_473 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951281.1,"MAG: Myotis bat picornavirus 2 isolate GD2017_210_3205 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951282.1,"MAG: Kobuvirus femyomini isolate GD2017_210_5247 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951284.1,"MAG: Myotis bat picornavirus 1 isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
+OR951284.1,"MAG: Myotis bat picornavirus 1 isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornavirales
 OR951285.1,"MAG: Myotis bat picornavirus 2 isolate GD2017_211_72496 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-OR951286.1,"MAG: Myotis bat parechovirus 1 isolate GD2017_211_121529 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951286.1,"MAG: Myotis bat parechovirus 1 isolate GD2017_211_121529 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951287.1,"MAG: Myotis bat parechovirus 2 isolate GD2019 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951289.1,"MAG: Myotis bat picornavirus 2 isolate GD2019_212_4638 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951291.1,"MAG: Myotis bat parechovirus 2 isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
@@ -27243,7 +27243,7 @@ OR951299.1,"MAG: Mischivirus A isolate GD2016 polyprotein-like gene, complete se
 OR951300.1,"MAG: Miniopterus bat hepatovirus isolate GD2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951301.1,"MAG: Bat mischivirus 5 isolate GD2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951303.1,"MAG: Miniopterus bat shanbavirus 1 isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951304.1,"MAG: Shanbavirus A isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951304.1,"MAG: Shanbavirus A isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR069475.1,"Fabavirus sp. isolate GL segment RNA1, complete sequence",plant,exclude,Secoviridae
 OR069476.1,"Fabavirus sp. isolate GL segment RNA2, complete sequence",plant,exclude,Secoviridae
 MH845394.1,"Epizootic hemorrhagic disease virus 6 isolate USA2012/IL 12-38993-2 segment 6, complete sequence",vertebrate,Keep,Sedoreoviridae
@@ -29098,7 +29098,7 @@ OR350236.1,"MAG: Streptocarpus flower break virus isolate 23-01801, complete gen
 OR350237.1,"MAG: Freesia mosaic virus isolate FReMV-Aus, complete genome",plant,exclude,Potyviridae
 OR951206.1,"MAG: Rhinolophus bat picornavirus 4 isolate SC2018 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951207.1,"MAG: Rhinolophus bat picornavirus 3 isolate SC2018 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-OR951208.1,"MAG: Kobuvirus femyomini isolate SC2018 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951208.1,"MAG: Kobuvirus femyomini isolate SC2018 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951209.1,"MAG: Scotophilus bat parechovirus isolate GX2018 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951212.1,"MAG: Scotophilus bat picornavirus 2 isolate GX2018 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951214.1,"MAG: Scotophilus bat picornavirus 1 isolate HI2018_030_792 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
@@ -29107,7 +29107,7 @@ OR951220.1,"MAG: Scotophilus bat picornavirus 1 isolate HI2018_035_1656 polyprot
 OR951221.1,"MAG: Bat picornavirus isolate HI2018 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951222.1,"MAG: Bat kobuvirus isolate YN2020 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951224.1,"MAG: Bat picornavirus isolate YN2020 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
-OR951225.1,"MAG: Kobuvirus femyomini isolate YN2020 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951225.1,"MAG: Kobuvirus femyomini isolate YN2020 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OR951227.1,"MAG: Bat picornavirus isolate GX2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951228.1,"MAG: Rhinolophus bat picornavirus 1 isolate GX2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951229.1,"MAG: Rhinolophus bat shanbavirus isolate GX2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
@@ -29115,7 +29115,7 @@ OR951230.1,"MAG: Rhinolophus bat picornavirus 2 isolate GX2017 polyprotein-like 
 OR951231.1,"MAG: Rhinolophus bat picornavirus 5 isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OR951232.1,"MAG: Rhinolophus bat shanbavirus isolate GX2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 OR951233.1,"MAG: Rhinolophus bat picornavirus 3 isolate GD2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-OR951234.1,"MAG: Rhinolophus bat shanbavirus isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
+OR951234.1,"MAG: Rhinolophus bat shanbavirus isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,exclude,Picornaviridae
 OQ833553.1,"Colorado tick fever virus isolate 64V37 segment 7, complete sequence",invertebrate,exclude,Spinareoviridae
 OQ833554.1,"Colorado tick fever virus isolate 64V37 segment 9, complete sequence",invertebrate,exclude,Spinareoviridae
 OQ833555.1,"Colorado tick fever virus isolate 64V37 segment 11, complete sequence",invertebrate,exclude,Spinareoviridae
@@ -33564,10 +33564,10 @@ PV793802.1,"MAG: Sapelovirus sp. isolate PicornaviridaeGoosefe95V2 polyprotein-l
 PV793803.1,"MAG: Sapelovirus sp. isolate PicornaviridaeGoosefe94V3 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 PV793808.1,"MAG: Aalivirus sp. isolate PicornaviridaeGoosefe95V4 polyprotein-like gene, complete sequence",invertebrate,exclude,Picornaviridae
 PV793812.1,"MAG: Grusopivirus sp. isolate PicornaviridaeCranefe74V2 polyprotein-like genes, complete sequence",invertebrate,exclude,Picornaviridae
-PV793817.1,"MAG: Gyrovirus sp. isolate AnelloviridaeCranefe86 VP3 protein and VP2 protein genes, complete cds; and VP1 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PV793818.1,"MAG: Gyrovirus sp. isolate AnelloviridaeCranefe94V2 VP2 protein-like and VP1 protein-like genes, complete sequence",human,Keep,Anelloviridae
-PV793819.1,"MAG: Gyrovirus sp. isolate AnelloviridaeCranefe90 VP2 protein gene, complete cds; VP3 protein-like gene, complete sequence; and VP1 protein gene, complete cds",human,Keep,Anelloviridae
-PV793822.1,"MAG: Anelloviridae sp. isolate AnelloviridaeCranefe88V2 VP2 protein-like and VP1 protein-like genes, complete sequence",human,Keep,Anelloviridae
+PV793817.1,"MAG: Gyrovirus sp. isolate AnelloviridaeCranefe86 VP3 protein and VP2 protein genes, complete cds; and VP1 protein-like gene, complete sequence",human,exclude,Anelloviridae
+PV793818.1,"MAG: Gyrovirus sp. isolate AnelloviridaeCranefe94V2 VP2 protein-like and VP1 protein-like genes, complete sequence",human,exclude,Anelloviridae
+PV793819.1,"MAG: Gyrovirus sp. isolate AnelloviridaeCranefe90 VP2 protein gene, complete cds; VP3 protein-like gene, complete sequence; and VP1 protein gene, complete cds",human,exclude,Anelloviridae
+PV793822.1,"MAG: Anelloviridae sp. isolate AnelloviridaeCranefe88V2 VP2 protein-like and VP1 protein-like genes, complete sequence",human,exclude,Anelloviridae
 PV793826.1,"MAG: Astroviridae sp. isolate AstroviridaeCranefe67 ORF1a-like, ORF1b-like, and ORF2-like genes, complete sequence",invertebrate,exclude,Astroviridae
 PV793827.1,"MAG: Astroviridae sp. isolate AstroviridaeCranefe81 ORF1a-like, ORF1b-like, and ORF2-like genes, complete sequence",invertebrate,exclude,Astroviridae
 PV793828.1,"MAG: Avastrovirus sp. isolate AstroviridaeGoosefe87 non-structural polyprotein-like, RNA-dependent RNA polymerase-like, and capsid protein-like genes, complete sequence",vertebrate,Keep,Astroviridae
@@ -34878,8 +34878,8 @@ MN769049.1,"MAG: TTV-like mini virus isolate SAfiA-11-26, complete genome",human
 MN769051.1,"MAG: TTV-like mini virus isolate SAfiA-116-23, complete genome",human,Keep,Anelloviridae
 MN769052.1,"MAG: TTV-like mini virus isolate SAfiA-116-25, complete genome",human,Keep,Anelloviridae
 MN769055.1,"MAG: TTV-like mini virus isolate SAfiA-116-35, complete genome",human,Keep,Anelloviridae
-OR800314.1,"MAG: Feral pigeon astrovirus isolate NYJ-1/2023 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR800315.1,"MAG: Feral pigeon astrovirus isolate NYJ-1/2023 nonstructural protein-like gene, complete sequence",vertebrate,Keep,Astroviridae
+OR800314.1,"MAG: Feral pigeon astrovirus isolate NYJ-1/2023 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR800315.1,"MAG: Feral pigeon astrovirus isolate NYJ-1/2023 nonstructural protein-like gene, complete sequence",vertebrate,exclude,Astroviridae
 OR826802.1,"MAG: Fabavirus betaviciae isolate CR8-JH segment RNA1, complete sequence",plant,exclude,Secoviridae
 OR826803.1,"MAG: Fabavirus betaviciae isolate CR8-JH segment RNA2, complete sequence",plant,exclude,Secoviridae
 AF067154.1,"HIV-1 isolate 301999 from India, complete genome",human,Keep,Retroviridae
@@ -40831,14 +40831,14 @@ PP255697.1,"MAG: Alphatorquevirus sp. isolate 68323-2 ORF2 protein-like gene, co
 PP255702.1,"MAG: Alphatorquevirus sp. isolate 68323-2 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255703.1,"MAG: Alphatorquevirus sp. isolate 68323-2 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255712.1,"MAG: Alphatorquevirus sp. isolate 68675-1 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255720.1,"MAG: Gammatorquevirus sp. isolate 71961-3 ORF4 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255720.1,"MAG: Gammatorquevirus sp. isolate 71961-3 ORF4 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255723.1,"MAG: Alphatorquevirus sp. isolate 81676-2 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255725.1,"MAG: Gammatorquevirus sp. isolate 85740-4 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255725.1,"MAG: Gammatorquevirus sp. isolate 85740-4 ORF1 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255726.1,"MAG: Alphatorquevirus sp. isolate 86056-1 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255740.1,"MAG: Betatorquevirus sp. isolate 88396-4 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255740.1,"MAG: Betatorquevirus sp. isolate 88396-4 ORF2 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255741.1,"MAG: Alphatorquevirus sp. isolate 88396-4 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255747.1,"MAG: Alphatorquevirus sp. isolate 88533-4 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255749.1,"MAG: Alphatorquevirus sp. isolate 88655-4 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255749.1,"MAG: Alphatorquevirus sp. isolate 88655-4 ORF1 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255753.1,"MAG: Alphatorquevirus sp. isolate 89624-1 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
 MH939189.1,"Beet ringspot virus isolate Ox segment RNA 1, complete sequence",plant,exclude,Secoviridae
 MH939190.1,"Beet ringspot virus isolate Ox segment RNA 2, complete sequence",plant,exclude,Secoviridae
@@ -41655,7 +41655,7 @@ OK181163.1,"Lucerne transient streak virus strain LTSVa-US, complete genome",pla
 PP496990.1,"MAG: Ross River virus isolate 329 Indooroopilly, complete genome",human,Keep,Togaviridae
 PP496991.1,"MAG: Sindbis virus isolate 67 Banyo, complete genome",human,Keep,Togaviridae
 PP496995.1,"MAG: Stratford virus isolate 226 Banyo, complete genome",vertebrate,Keep,Flaviviridae
-PX095920.1,"MAG: Orthopicobirnavirus sp. isolate DL/G.himalayensis/PBV-25 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
+PX095920.1,"MAG: Orthopicobirnavirus sp. isolate DL/G.himalayensis/PBV-25 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
 HG969288.1,"Watermelon chlorotic stunt virus DNA B complete sequence, clone S6",plant,exclude,Geminiviridae
 HG974566.1,"Infectious bursal disease virus segment B, complete genome, strain Faragher 52/70",vertebrate,Keep,Birnaviridae
 MW170589.1,"Influenza A virus (A/swine/Italy/111350/2018(H1N2)) segment 2 polymerase PB1 (PB1) gene, complete cds; and nonfunctional PB1-F2 protein (PB1-F2) gene, complete sequence",vertebrate,Keep,Orthomyxoviridae
@@ -41708,17 +41708,17 @@ PV793903.1,"MAG: Chaphamaparvovirus sp. isolate ParvoviridaeGoosefe91V2 nonstruc
 PV793907.1,"MAG: Chapparvovirus sp. isolate ParvoviridaeGoosefe91V8 nonstructural protein 1-like and VP1 protein-like genes, complete sequence",invertebrate,exclude,Parvoviridae
 PV793910.1,"MAG: Parvoviridae sp. isolate ParvoviridaeGoosefe94 nonstructural protein 1-like and VP1 protein-like genes, complete sequence",invertebrate,exclude,Parvoviridae
 PV793913.1,"MAG: Parvoviridae sp. isolate ParvoviridaeCranefe69V1 nonstructural protein-like gene, complete sequence",invertebrate,exclude,Parvoviridae
-PV793915.1,"MAG: Dependoparvovirus sp. isolate ParvoviridaeCranefe72 nonstructural protein 1-like gene, complete sequence",vertebrate,Keep,Parvoviridae
+PV793915.1,"MAG: Dependoparvovirus sp. isolate ParvoviridaeCranefe72 nonstructural protein 1-like gene, complete sequence",vertebrate,exclude,Parvoviridae
 PV793917.1,"MAG: Ambidensovirus sp. isolate ParvoviridaeCranefe81V2 nonstructural protein 1-like gene, complete sequence",invertebrate,exclude,Parvoviridae
 PV793919.1,"MAG: Chapparvovirus sp. isolate ParvoviridaeGoosefe90V4 nonstructural protein 1-like gene, complete sequence",invertebrate,exclude,Parvoviridae
 PV793924.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe87V2 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
-PV793925.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe87V3 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
-PV793927.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe88V2 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
-PV793928.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe88V3 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
-PV793929.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe88V4 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
-PV793930.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe95 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
-PV793931.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe96V1 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
-PV793933.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe96V3 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,Keep,Picobirnaviridae
+PV793925.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe87V3 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
+PV793927.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe88V2 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
+PV793928.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe88V3 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
+PV793929.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe88V4 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
+PV793930.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe95 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
+PV793931.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe96V1 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
+PV793933.1,"MAG: Picobirnavirus sp. isolate PicobirnaviridaeGoosefe96V3 RNA-dependent RNA polymerase-like gene, complete sequence",vertebrate,exclude,Picobirnaviridae
 PV793939.1,"MAG: Hepatovirus sp. isolate PicornaviridaeGoosefe95V5 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornaviridae
 PV793942.1,"MAG: Ludopivirus sp. isolate PicornaviridaeGoosefe91V2 polyprotein-like gene, complete sequence",invertebrate,exclude,Picornaviridae
 PV793943.1,"MAG: Ludopivirus sp. isolate PicornaviridaeCranefe73V8 polyprotein-like gene, complete sequence",invertebrate,exclude,Picornaviridae
@@ -49810,15 +49810,15 @@ KY322675.1,"Foot-and-mouth disease virus A isolate LAO/3/2014, complete genome",
 KY322676.1,"Foot-and-mouth disease virus A isolate MAY/12/2013, complete genome",vertebrate,Keep,Picornaviridae
 KY322678.1,"Foot-and-mouth disease virus A isolate MAY/23/2013, complete genome",vertebrate,Keep,Picornaviridae
 KY554976.1,"Ectromelia virus isolate Hampstead, complete genome",vertebrate,Keep,Poxviridae
-PV878474.1,"MAG: Circoviridae sp. isolate 18.3 hypothetical protein-like gene, complete sequence; and hypothetical protein gene, complete cds",vertebrate,Keep,Nenyaviridae
-PV878475.1,"MAG: Virus sp. isolate 11.7 hypothetical protein-like gene, complete sequence",vertebrate,Keep,
-PV878478.1,"MAG: Virus sp. isolate 10.11 hypothetical protein-like gene, complete sequence",vertebrate,Keep,
-PV878484.1,"MAG: Virus sp. isolate 13.5 hypothetical protein-like gene, complete sequence",vertebrate,Keep,
+PV878474.1,"MAG: Circoviridae sp. isolate 18.3 hypothetical protein-like gene, complete sequence; and hypothetical protein gene, complete cds",vertebrate,exclude,Nenyaviridae
+PV878475.1,"MAG: Virus sp. isolate 11.7 hypothetical protein-like gene, complete sequence",vertebrate,exclude,
+PV878478.1,"MAG: Virus sp. isolate 10.11 hypothetical protein-like gene, complete sequence",vertebrate,exclude,
+PV878484.1,"MAG: Virus sp. isolate 13.5 hypothetical protein-like gene, complete sequence",vertebrate,exclude,
 PV878487.1,"MAG: Merida virus isolate 17.17 hypothetical protein-like gene, complete sequence",invertebrate,exclude,Rhabdoviridae
 PV878488.1,"MAG: Picornavirales sp. isolate 17.1 hypothetical protein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-PV878489.1,"MAG: Picornavirales sp. isolate 17.3 hypothetical protein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-PV878490.1,"MAG: Picornavirales sp. isolate 17.13 hypothetical protein-like gene, complete sequence",vertebrate,Keep,Picornavirales
-PV878491.1,"MAG: Picornavirales sp. isolate 17.12 hypothetical protein-like gene, complete sequence",vertebrate,Keep,Picornavirales
+PV878489.1,"MAG: Picornavirales sp. isolate 17.3 hypothetical protein-like gene, complete sequence",vertebrate,exclude,Picornavirales
+PV878490.1,"MAG: Picornavirales sp. isolate 17.13 hypothetical protein-like gene, complete sequence",vertebrate,exclude,Picornavirales
+PV878491.1,"MAG: Picornavirales sp. isolate 17.12 hypothetical protein-like gene, complete sequence",vertebrate,exclude,Picornavirales
 PV878500.1,"MAG: Iflaviridae sp. isolate 19.6 hypothetical protein-like gene, complete sequence",invertebrate,exclude,Iflaviridae
 PP334354.1,"MAG: Human respirovirus 3 isolate HPIV3/USA/13O2/2017, complete genome",human,Keep,Paramyxoviridae
 PP334367.1,"MAG: Human respirovirus 3 isolate HPIV3/USA/8G8/2011, complete genome",human,Keep,Paramyxoviridae
@@ -61404,29 +61404,29 @@ MN514962.1,"Dromedary camel coronavirus HKU23 isolate DcCoV-HKU23/camel/Ethiopia
 MN514966.1,"Dromedary camel coronavirus HKU23 isolate DcCoV-HKU23/camel/Nigeria/NV1097/2015, complete genome",vertebrate,Keep,Coronaviridae
 MN515404.1,"Wels catfish papillomavirus 1 isolate WCFPV/Hun, complete genome",human,Keep,Papillomaviridae
 OP823402.1,"Infectious bronchitis virus isolate CA/2228/22, complete genome",vertebrate,Keep,Coronaviridae
-OR951140.1,"MAG: Bat sapovirus isolate GX2017_257_9004 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
+OR951140.1,"MAG: Bat sapovirus isolate GX2017_257_9004 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
 OR951141.1,"MAG: Bat sapovirus isolate YN2017 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951145.1,"MAG: Bat sapovirus isolate Pool-266 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951146.1,"MAG: Bat sapovirus isolate GD2016_278_26421 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
+OR951145.1,"MAG: Bat sapovirus isolate Pool-266 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
+OR951146.1,"MAG: Bat sapovirus isolate GD2016_278_26421 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
 OR951147.1,"MAG: Bat sapovirus isolate GD2017_279_6413 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951149.1,"MAG: Bat sapovirus isolate GX2016_281_4485 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951150.1,"MAG: Bat calicivirus isolate JX2020 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
+OR951150.1,"MAG: Bat calicivirus isolate JX2020 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
 OR951153.1,"MAG: Bat sapovirus isolate ZJ2020 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951154.1,"MAG: Bat sapovirus isolate Pool-312 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951155.1,"MAG: Bat sapovirus isolate Pool-313 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
+OR951154.1,"MAG: Bat sapovirus isolate Pool-312 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
+OR951155.1,"MAG: Bat sapovirus isolate Pool-313 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
 OR951157.1,"MAG: Bat sapovirus isolate LN2020 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951158.1,"MAG: Pipistrellus bat pestivirus isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,Keep,Pestiviridae
+OR951158.1,"MAG: Pipistrellus bat pestivirus isolate GD2017 polyprotein-like gene, complete sequence",vertebrate,exclude,Pestiviridae
 OR951159.1,"MAG: Hipposideros bat pestivirus isolate GX2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Pestiviridae
 OR951160.1,"MAG: Pipistrellus bat pestivirus isolate JX2020_272_10413 polyprotein-like gene, complete sequence",vertebrate,Keep,Pestiviridae
-OR951164.1,"MAG: Scotophilus bat pestivirus isolate HI2018_030_188 polyprotein-like gene, complete sequence",vertebrate,Keep,Pestiviridae
-OR951166.1,"MAG: Scotophilus bat pestivirus isolate HI2018_032_2046 polyprotein-like gene, complete sequence",vertebrate,Keep,Pestiviridae
+OR951164.1,"MAG: Scotophilus bat pestivirus isolate HI2018_030_188 polyprotein-like gene, complete sequence",vertebrate,exclude,Pestiviridae
+OR951166.1,"MAG: Scotophilus bat pestivirus isolate HI2018_032_2046 polyprotein-like gene, complete sequence",vertebrate,exclude,Pestiviridae
 OR951170.1,"MAG: Pipistrellus bat pestivirus isolate JX2020_163_7340 polyprotein-like gene, complete sequence",vertebrate,Keep,Pestiviridae
 OR951171.1,"MAG: Pipistrellus bat pestivirus isolate JX2020_166_32085 polyprotein-like gene, complete sequence",vertebrate,Keep,Pestiviridae
-OR951174.1,"MAG: Chirohepevirus sp. isolate GD2016 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Hepeviridae
-OR951188.1,"MAG: Chirohepevirus sp. isolate GD2017 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Hepeviridae
-OR951190.1,"MAG: Chirohepevirus sp. isolate GX2017 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Hepeviridae
+OR951174.1,"MAG: Chirohepevirus sp. isolate GD2016 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Hepeviridae
+OR951188.1,"MAG: Chirohepevirus sp. isolate GD2017 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Hepeviridae
+OR951190.1,"MAG: Chirohepevirus sp. isolate GX2017 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Hepeviridae
 OR951191.1,"MAG: Chirohepevirus sp. isolate GZ2019 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Hepeviridae
-OR951201.1,"MAG: Chirohepevirus sp. isolate ZJ2020 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Hepeviridae
+OR951201.1,"MAG: Chirohepevirus sp. isolate ZJ2020 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Hepeviridae
 OR951205.1,"MAG: Pteropodidae bat picornavirus isolate YN2016 polyprotein-like gene, complete sequence",vertebrate,Keep,Picornavirales
 OQ161628.1,"Soybean mosaic virus isolate Bonghwa, complete genome",plant,exclude,Potyviridae
 OQ161629.1,"Soybean mosaic virus isolate Danyang, complete genome",plant,exclude,Potyviridae
@@ -66054,7 +66054,7 @@ MT203963.1,"MAG: Circoviridae sp. isolate CN3_L16_1597, complete genome",vertebr
 MT203964.1,"MAG: Polar freshwater circular DNA virus isolate CN38_L16_2405, complete genome",vertebrate,Keep,
 MT203965.1,"MAG: Polar freshwater circular DNA virus isolate CN45_L16_3101, complete genome",vertebrate,Keep,
 MT203966.1,"MAG: Polar freshwater circular DNA virus isolate CNX_L16_2306, complete genome",vertebrate,Keep,
-MW584282.1,"MAG: Rhabdovirus sp. isolate TR103332_c1_g2_i2 putative RNA-dependent RNA polymerase-like and hypothetical protein-like genes, complete sequence",vertebrate,Keep,Rhabdoviridae
+MW584282.1,"MAG: Rhabdovirus sp. isolate TR103332_c1_g2_i2 putative RNA-dependent RNA polymerase-like and hypothetical protein-like genes, complete sequence",vertebrate,exclude,Rhabdoviridae
 MW584284.1,"MAG: Rhabdovirus sp. isolate TR105009_c0_g2_i1 hypothetical protein-like gene, complete sequence",vertebrate,Keep,Rhabdoviridae
 MW584286.1,"MAG: Betabaculovirus sp. isolate TR90556_c0_g1_i1 hypothetical protein-like mRNA, complete sequence",invertebrate,exclude,Baculoviridae
 MW584287.1,"MAG: Thaumetopoea pityocampa integrated virus isolate TR93073_c0_g1_i1 hypothetical protein-like mRNA, complete sequence",invertebrate,exclude,
@@ -66514,8 +66514,8 @@ OR387876.1,"Botryosphaeria dothidea partitivirus 1 strain BdPV1/SXD111 segment d
 JQ773422.1,"Southern rice black-streaked dwarf virus isolate YN-MShi segment S3, complete sequence",plant,exclude,Spinareoviridae
 DQ374657.1,"Simian immunodeficiency virus clone SIVcpzTAN2.69, complete genome",vertebrate,Keep,Retroviridae
 DQ374658.1,"Simian immunodeficiency virus clone SIVcpzTAN3.1, complete genome",vertebrate,Keep,Retroviridae
-PV882704.1,"MAG: Severe fever with thrombocytopenia syndrome virus isolate 24_2_K7_5 glycoprotein polyprotein-like gene, complete sequence",human,Keep,Phenuiviridae
-PV882738.1,"MAG: California hare coltivirus isolate 24_2_K82_15 VP2 protein-like gene, complete sequence",vertebrate,Keep,Spinareoviridae
+PV882704.1,"MAG: Severe fever with thrombocytopenia syndrome virus isolate 24_2_K7_5 glycoprotein polyprotein-like gene, complete sequence",human,exclude,Phenuiviridae
+PV882738.1,"MAG: California hare coltivirus isolate 24_2_K82_15 VP2 protein-like gene, complete sequence",vertebrate,exclude,Spinareoviridae
 PV882772.1,"MAG: Amur virus isolate 24_2_K87_1 RNA-dependent RNA-polymerase-like gene, complete sequence",vertebrate,Keep,Hantaviridae
 PX236989.1,"Pilchard orthomyxovirus isolate TCFV 0149-0002 segment 3, complete sequence",vertebrate,Keep,Orthomyxoviridae
 PX236990.1,"Pilchard orthomyxovirus isolate TCFV 0067-0004 segment 3, complete sequence",vertebrate,Keep,Orthomyxoviridae
@@ -68497,27 +68497,27 @@ HM027862.1,"HIV-1 isolate PP4-F1_A9 from Uganda pol protein (pol) gene, partial 
 HM211098.1,"Bat coronavirus HKU9-5-1, complete genome",vertebrate,Keep,Coronaviridae
 HM211099.1,"Bat coronavirus HKU9-5-2, complete genome",vertebrate,Keep,Coronaviridae
 HM211101.1,"Bat coronavirus HKU9-10-2, complete genome",vertebrate,Keep,Coronaviridae
-OR951008.1,"MAG: Bat astrovirus isolate SC2018_004_504491 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951009.1,"MAG: Bat astrovirus isolate SC2018_011_212065 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951012.1,"MAG: Bat astrovirus isolate HI2018 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951015.1,"MAG: Bat astrovirus isolate YN2020_057_2377 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951020.1,"MAG: Bat astrovirus isolate GD2020 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951031.1,"MAG: Bat astrovirus isolate GD2016_189_24597 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951039.1,"MAG: Bat astrovirus isolate GX2017_200_6417 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951050.1,"MAG: Bat astrovirus isolate GD2019 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951057.1,"MAG: Bat astrovirus isolate GD2016_228_4463 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951064.1,"MAG: Bat astrovirus isolate GX2017_243_51168 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951067.1,"MAG: Bat astrovirus isolate JX2020_265_22422 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951069.1,"MAG: Bat astrovirus isolate YN2017 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951070.1,"MAG: Bat astrovirus isolate HI2019 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951077.1,"MAG: Bat astrovirus isolate GX2016 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951078.1,"MAG: Bat astrovirus isolate ZJ2020 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951083.1,"MAG: Bat astrovirus isolate YN2020_321_4129 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951090.1,"MAG: Bat astrovirus isolate LN2020_331_77556 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951091.1,"MAG: Bat astrovirus isolate LN2020_329_13161 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951092.1,"MAG: Bat astrovirus isolate HN2021 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951094.1,"MAG: Bat astrovirus isolate FJ2021 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
-OR951096.1,"MAG: Bat astrovirus isolate JX2021 polyprotein 1b-like gene, complete sequence",vertebrate,Keep,Astroviridae
+OR951008.1,"MAG: Bat astrovirus isolate SC2018_004_504491 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951009.1,"MAG: Bat astrovirus isolate SC2018_011_212065 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951012.1,"MAG: Bat astrovirus isolate HI2018 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951015.1,"MAG: Bat astrovirus isolate YN2020_057_2377 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951020.1,"MAG: Bat astrovirus isolate GD2020 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951031.1,"MAG: Bat astrovirus isolate GD2016_189_24597 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951039.1,"MAG: Bat astrovirus isolate GX2017_200_6417 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951050.1,"MAG: Bat astrovirus isolate GD2019 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951057.1,"MAG: Bat astrovirus isolate GD2016_228_4463 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951064.1,"MAG: Bat astrovirus isolate GX2017_243_51168 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951067.1,"MAG: Bat astrovirus isolate JX2020_265_22422 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951069.1,"MAG: Bat astrovirus isolate YN2017 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951070.1,"MAG: Bat astrovirus isolate HI2019 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951077.1,"MAG: Bat astrovirus isolate GX2016 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951078.1,"MAG: Bat astrovirus isolate ZJ2020 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951083.1,"MAG: Bat astrovirus isolate YN2020_321_4129 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951090.1,"MAG: Bat astrovirus isolate LN2020_331_77556 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951091.1,"MAG: Bat astrovirus isolate LN2020_329_13161 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951092.1,"MAG: Bat astrovirus isolate HN2021 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951094.1,"MAG: Bat astrovirus isolate FJ2021 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
+OR951096.1,"MAG: Bat astrovirus isolate JX2021 polyprotein 1b-like gene, complete sequence",vertebrate,exclude,Astroviridae
 OR951099.1,"MAG: Bat sapovirus isolate GX2018 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951101.1,"MAG: Bat sapovirus isolate GX2016_078_10033 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951102.1,"MAG: Bat sapovirus isolate GD2017_087_34126 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
@@ -70064,7 +70064,7 @@ FJ623490.1,"HIV-1 isolate 06KECst_015 from Kenya, complete genome",human,Keep,Re
 FJ623491.1,"HIV-1 isolate 06KECst_010 from Kenya, complete genome",human,Keep,Retroviridae
 FJ623492.1,"HIV-1 isolate 06KECst_027 from Kenya, complete genome",human,Keep,Retroviridae
 FJ623495.1,"HIV-1 isolate 06KECst_014 from Kenya, complete genome",human,Keep,Retroviridae
-PQ678123.1,"MAG: Yunnan rodent narmovirus 1 isolate WSXC-YNSF164 nucleocapsid protein-like gene, complete sequence",vertebrate,Keep,Paramyxoviridae
+PQ678123.1,"MAG: Yunnan rodent narmovirus 1 isolate WSXC-YNSF164 nucleocapsid protein-like gene, complete sequence",vertebrate,exclude,Paramyxoviridae
 PQ678132.1,"MAG: Yunnan rodent orbivirus 3 isolate KMSM-YNSF144 segment S7, complete sequence",vertebrate,Keep,Sedoreoviridae
 PQ678134.1,"MAG: Yunnan shrew orbivirus 7 isolate BSTC-YNSC81 segment S2, complete sequence",vertebrate,Keep,Sedoreoviridae
 PQ678135.1,"MAG: Yunnan shrew orbivirus 5 isolate YNMIX-YNSC212 segment S4, complete sequence",vertebrate,Keep,Sedoreoviridae
@@ -71471,10 +71471,10 @@ PV793839.1,"MAG: Caliciviridae sp. isolate CaliciviridaeGoosefe96 polyprotein-li
 PV793840.1,"MAG: Caliciviridae sp. isolate CaliciviridaeCranefe73V2 RNA-dependent RNA polymerase-like gene, complete sequence",invertebrate,exclude,Caliciviridae
 PV793841.1,"MAG: Caliciviridae sp. isolate CaliciviridaeGoosefe95V2 RNA-dependent RNA polymerase-like gene, complete sequence",invertebrate,exclude,Caliciviridae
 PV793842.1,"MAG: Caliciviridae sp. isolate CaliciviridaeGoosefe87V2 polyprotein-like gene, complete sequence",invertebrate,exclude,Caliciviridae
-PV793850.1,"MAG: Circovirus sp. isolate CircoviridaeGoosefe90 replication protein-like and capsid protein-like genes, complete sequence",vertebrate,Keep,Circoviridae
-PV793857.1,"MAG: Gemykibivirus sp. isolate GenomoviridaeCranefe67 capsid protein-like and replication protein-like genes, complete sequence",vertebrate,Keep,Genomoviridae
-PV793858.1,"MAG: Genomoviridae sp. isolate GenomoviridaeCranefe76 capsid protein-like and replication protein-like genes, complete sequence",vertebrate,Keep,Genomoviridae
-PV793860.1,"MAG: Smacoviridae sp. isolate SmacoviridaeGoosefe88V2 capsid protein-like and replication-associated protein-like genes, complete sequence",vertebrate,Keep,Smacoviridae
+PV793850.1,"MAG: Circovirus sp. isolate CircoviridaeGoosefe90 replication protein-like and capsid protein-like genes, complete sequence",vertebrate,exclude,Circoviridae
+PV793857.1,"MAG: Gemykibivirus sp. isolate GenomoviridaeCranefe67 capsid protein-like and replication protein-like genes, complete sequence",vertebrate,exclude,Genomoviridae
+PV793858.1,"MAG: Genomoviridae sp. isolate GenomoviridaeCranefe76 capsid protein-like and replication protein-like genes, complete sequence",vertebrate,exclude,Genomoviridae
+PV793860.1,"MAG: Smacoviridae sp. isolate SmacoviridaeGoosefe88V2 capsid protein-like and replication-associated protein-like genes, complete sequence",vertebrate,exclude,Smacoviridae
 PV793890.1,"MAG: Ambidensovirus sp. isolate ParvoviridaeCranefe65V3 NS2-like, NS1-like, and VP1 protein-like genes, complete sequence",invertebrate,exclude,Parvoviridae
 PV793891.1,"MAG: Ambidensovirus sp. isolate ParvoviridaeCranefe73 nonstructural protein 1-like and VP1 protein-like genes, complete sequence",invertebrate,exclude,Parvoviridae
 PV793897.1,"MAG: Ambidensovirus sp. isolate ParvoviridaeGoosefe89V2 NS2-like, nonstructural protein 1-like, and VP1 protein-like genes, complete sequence",invertebrate,exclude,Parvoviridae
@@ -71624,7 +71624,7 @@ MW772514.1,"Influenza A virus (A/swine/Brazil/124-19/2019(H1N1)) segment 2 polym
 MW772529.1,"Influenza A virus (A/swine/Brazil/011-20/2020(H1N2)) segment 2 polymerase PB1 (PB1) gene, complete cds; and nonfunctional PB1-F2 protein (PB1-F2) gene, complete sequence",vertebrate,Keep,Orthomyxoviridae
 MW772561.1,"Influenza A virus (A/swine/Brazil/066-19-2/2018(H1N1)) segment 2 polymerase PB1 (PB1) gene, complete cds; and nonfunctional PB1-F2 protein (PB1-F2) gene, complete sequence",vertebrate,Keep,Orthomyxoviridae
 OR802805.1,"Influenza A virus (A/swine/Brazil/1559-2022/2022(H1N2)) segment 2 polymerase PB1 (PB1) gene, complete cds; and PB1-F2 gene, complete sequence",vertebrate,Keep,Orthomyxoviridae
-MW584302.1,"MAG: Rhabdovirus sp. isolate TR101106_c2_g3_i1 hypothetical protein-like gene, complete sequence",vertebrate,Keep,Rhabdoviridae
+MW584302.1,"MAG: Rhabdovirus sp. isolate TR101106_c2_g3_i1 hypothetical protein-like gene, complete sequence",vertebrate,exclude,Rhabdoviridae
 MW584308.1,"MAG: Betabaculovirus sp. isolate TR81448_c0_g1_i1 hypothetical protein-like mRNA, complete sequence",invertebrate,exclude,Baculoviridae
 MW584315.1,"MAG: Thaumetopoea pityocampa associated virus isolate TR93735_c0_g1_i1 putative RNA-dependent RNA polymerase-like mRNA, complete sequence",invertebrate,exclude,Baculoviridae
 MW645361.1,"MAG: Squash leaf curl virus isolate D12_646 segment DNA-B, complete sequence",plant,exclude,Geminiviridae
@@ -75681,17 +75681,17 @@ MT206057.1,"MAG: Polar freshwater circular DNA virus isolate CN48_L17_4788, comp
 MT206058.1,"MAG: Circoviridae sp. isolate CN3_L17_4541, complete genome",vertebrate,Keep,Nenyaviridae
 MT206059.1,"MAG: Polar freshwater circular DNA virus isolate CNX_L17_4550, complete genome",vertebrate,Keep,
 MT206060.1,"MAG: Polar freshwater circular DNA virus isolate CN79_L17_4259, complete genome",vertebrate,Keep,
-PP255754.1,"MAG: Betatorquevirus sp. isolate 89624-1 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255756.1,"MAG: Gammatorquevirus sp. isolate 89624-1 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255754.1,"MAG: Betatorquevirus sp. isolate 89624-1 ORF1 protein-like gene, complete sequence",human,exclude,Anelloviridae
+PP255756.1,"MAG: Gammatorquevirus sp. isolate 89624-1 ORF2 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255763.1,"MAG: Alphatorquevirus sp. isolate 89628-2 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255765.1,"MAG: Alphatorquevirus sp. isolate 89680-4 ORF1 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255765.1,"MAG: Alphatorquevirus sp. isolate 89680-4 ORF1 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255766.1,"MAG: Alphatorquevirus sp. isolate 91286-2 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255768.1,"MAG: Alphatorquevirus sp. isolate 91289-3 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255770.1,"MAG: Alphatorquevirus sp. isolate 91291-3 ORF2 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255781.1,"MAG: Gammatorquevirus sp. isolate 91291-3 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255781.1,"MAG: Gammatorquevirus sp. isolate 91291-3 ORF3 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255782.1,"MAG: Alphatorquevirus sp. isolate 91291-3 ORF5 protein-like gene, complete sequence",human,Keep,Anelloviridae
 PP255783.1,"MAG: Alphatorquevirus sp. isolate 91291-3 ORF3 protein-like gene, complete sequence",human,Keep,Anelloviridae
-PP255789.1,"MAG: Gammatorquevirus sp. isolate 67541 ORF6 protein-like gene, complete sequence",human,Keep,Anelloviridae
+PP255789.1,"MAG: Gammatorquevirus sp. isolate 67541 ORF6 protein-like gene, complete sequence",human,exclude,Anelloviridae
 PP255790.1,"MAG: Alphatorquevirus sp. isolate 67615-4 ORF11 protein-like gene, complete sequence",human,Keep,Anelloviridae
 MT207648.1,"MAG: Polar freshwater circular DNA virus isolate CN21_L18_1930, complete genome",vertebrate,Keep,
 MT207649.1,"MAG: Circoviridae sp. isolate CN3_L18_1655, complete genome",vertebrate,Keep,Nenyaviridae
@@ -77456,13 +77456,13 @@ LC022792.1,"Porcine epidemic diarrhea virus genomic RNA, complete genome, strain
 OR951106.1,"MAG: Bat sapovirus isolate GX2017_183_49402 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951107.1,"MAG: Bat sapovirus isolate GX2017_197_22354 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951109.1,"MAG: Bat sapovirus isolate GX2017_201_188356 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951112.1,"MAG: Bat sapovirus isolate GD2017_207_23251 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
+OR951112.1,"MAG: Bat sapovirus isolate GD2017_207_23251 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
 OR951116.1,"MAG: Bat sapovirus isolate GD2020 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951117.1,"MAG: Bat sapovirus isolate JX2020_217_538 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
+OR951117.1,"MAG: Bat sapovirus isolate JX2020_217_538 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
 OR951119.1,"MAG: Bat sapovirus isolate JX2020_217_9014 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951120.1,"MAG: Bat sapovirus isolate JX2020_217_22022 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951124.1,"MAG: Bat sapovirus isolate GD2016_220_21719 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
-OR951125.1,"MAG: Bat sapovirus isolate GD2016_228_8320 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
+OR951124.1,"MAG: Bat sapovirus isolate GD2016_220_21719 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
+OR951125.1,"MAG: Bat sapovirus isolate GD2016_228_8320 nonstructural polyprotein-like gene, complete sequence",vertebrate,exclude,Caliciviridae
 OR951126.1,"MAG: Bat sapovirus isolate GD2017_231_6287 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951127.1,"MAG: Bat sapovirus isolate GD2017_231_18393 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
 OR951128.1,"MAG: Bat sapovirus isolate GX2016_241_83445 nonstructural polyprotein-like gene, complete sequence",vertebrate,Keep,Caliciviridae
@@ -82721,8 +82721,8 @@ PX184807.1,"HIV-1 isolate V704_0562_160_REN_14_1 from Peru rev protein-like (rev
 PX184808.1,"HIV-1 isolate V704_0562_160_REN_15_1 from Peru rev protein-like (rev) gene, complete sequence; tat protein-like (tat) gene, partial sequence; vpu protein-like (vpu) and envelope glycoprotein-like (env) genes, complete sequence; and nef protein-like (nef) gene, partial sequence",human,Keep,Retroviridae
 PX184809.1,"HIV-1 isolate V704_0562_160_REN_16_1 from Peru rev protein-like (rev) gene, complete sequence; tat protein-like (tat) gene, partial sequence; vpu protein-like (vpu) and envelope glycoprotein-like (env) genes, complete sequence; and nef protein-like (nef) gene, partial sequence",human,Keep,Retroviridae
 PX184817.1,"HIV-1 isolate V704_0562_160_REN_24_1 from Peru rev protein-like (rev) gene, complete sequence; tat protein-like (tat) gene, partial sequence; vpu protein-like (vpu) and envelope glycoprotein-like (env) genes, complete sequence; and nef protein-like (nef) gene, partial sequence",human,Keep,Retroviridae
-PQ110300.1,"MAG: Oryctes associated picobirnavirus clone OR_el_ag1 capsid protein-like gene, complete sequence",vertebrate,Keep,Birnaviridae
-PQ110301.1,"MAG: Oryctes associated picobirnavirus clone OR_el_ag1 RdRp-like gene, complete sequence",vertebrate,Keep,Birnaviridae
+PQ110300.1,"MAG: Oryctes associated picobirnavirus clone OR_el_ag1 capsid protein-like gene, complete sequence",vertebrate,exclude,Birnaviridae
+PQ110301.1,"MAG: Oryctes associated picobirnavirus clone OR_el_ag1 RdRp-like gene, complete sequence",vertebrate,exclude,Birnaviridae
 KF955510.1,"Dengue virus 4 isolate DENV-4/KH/BID-V2055/2002, complete genome",human,Keep,Flaviviridae
 MH595443.1,"Sesame curly top virus isolate IR/Jir/JIR36/Ses/17, complete genome",plant,exclude,Geminiviridae
 MH595454.1,"Sesame curly top virus isolate IR/Orz/LH_4/14, complete genome",plant,exclude,Geminiviridae

@@ -2239,16 +2239,20 @@ def _filter_excluded_groups_from_fasta(
     label: str = "group",
 ) -> None:
     """
-    Remove phage / plant / fungi / invertebrate / protozoa references using a curated
-    group annotation CSV (status=exclude). Skips if metadata already has groups_filtered=True.
+    Remove phage / plant / fungi / invertebrate / protozoa (and other curated) references
+    using a group annotation CSV (status=exclude).
+
+    Always re-checks the FASTA against the current CSV so newly excluded accessions
+    are removed even if groups_filtered was set by an earlier prepare-db run.
     """
     try:
         meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
     except Exception:
         meta = {}
     if meta.get("groups_filtered"):
-        logger.info(f"{label} group filter already applied (metadata). Skipping.")
-        return
+        logger.info(
+            f"{label} group filter previously applied; re-checking FASTA for newly excluded accessions..."
+        )
 
     if csv_path is None:
         logger.warning(f"{label} group annotation CSV not found; skipping group filter.")
@@ -2301,7 +2305,7 @@ def _filter_excluded_groups_from_fasta(
                     pass
         logger.info(
             f"{label} group filter applied ({csv_path.name}): removed {removed:,} "
-            f"phage/plant/fungi/invertebrate/protozoa reference(s), kept {kept:,} total sequence(s)."
+            f"excluded-group reference(s), kept {kept:,} total sequence(s)."
         )
     else:
         try:
@@ -2315,7 +2319,8 @@ def _filter_excluded_groups_from_fasta(
 
     meta["groups_filtered"] = True
     meta["group_annotation_csv"] = csv_path.name
-    meta["group_references_removed"] = removed
+    meta["group_references_removed_last_pass"] = removed
+    meta["group_references_removed"] = int(meta.get("group_references_removed", 0) or 0) + removed
     meta["phages_filtered"] = True
     meta["sequence_count"] = kept
     try:
@@ -2324,6 +2329,123 @@ def _filter_excluded_groups_from_fasta(
             json.dump(meta, f, indent=2)
     except Exception as e:
         logger.warning(f"Could not update {label} metadata after group filter: {e}")
+
+
+def _filter_rvdb_short_mag_gene_fragments(
+    fasta_path: Path,
+    metadata_file: Path,
+    max_length: int = 3000,
+) -> None:
+    """
+    Remove short MAG gene/protein stubs that are not complete genomes.
+
+    Matches headers with MAG: + gene/protein/CDS language, without 'complete genome',
+    and sequence length < max_length (default 3000 bp). Keeps MAG complete genomes and
+    MAG segment genomes that lack gene-fragment wording.
+    """
+    import re
+
+    try:
+        meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+    except Exception:
+        meta = {}
+    if (
+        meta.get("mag_short_gene_fragments_filtered")
+        and int(meta.get("mag_short_gene_fragments_max_length", 0) or 0) == int(max_length)
+    ):
+        logger.info(
+            f"RVDB short MAG gene-fragment filter already applied (max_length={max_length}). Skipping."
+        )
+        return
+
+    mag_pat = re.compile(r"\bMAG:", re.I)
+    complete_genome_pat = re.compile(r"complete genome", re.I)
+    gene_pat = re.compile(
+        r"\b("
+        r"gene|cds|protein|polyprotein|hypothetical protein|"
+        r"orf\d*|polymerase|RdRp|RNA-dependent RNA polymerase|"
+        r"capsid|spike|envelope|nucleocapsid|replicase|"
+        r"1[ab]-like|protein-like|gene-like"
+        r")\b",
+        re.I,
+    )
+
+    def _is_short_mag_gene_stub(header: str, seq_len: int) -> bool:
+        if seq_len >= max_length:
+            return False
+        if not mag_pat.search(header):
+            return False
+        if complete_genome_pat.search(header):
+            return False
+        return bool(gene_pat.search(header))
+
+    tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_short_mag_genes")
+    kept = 0
+    removed = 0
+
+    with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+        tmp_out, "w", encoding="utf-8", newline="\n"
+    ) as f_out:
+        cur_header = ""
+        cur_seq_chunks: list = []
+
+        def flush_record():
+            nonlocal kept, removed
+            if not cur_header:
+                return
+            seq_len = sum(len(x) for x in cur_seq_chunks)
+            if _is_short_mag_gene_stub(cur_header, seq_len):
+                removed += 1
+                return
+            kept += 1
+            f_out.write(">" + cur_header + "\n")
+            for chunk in cur_seq_chunks:
+                f_out.write(chunk + "\n")
+
+        for line in f_in:
+            if line.startswith(">"):
+                flush_record()
+                cur_header = line[1:].rstrip("\n")
+                cur_seq_chunks = []
+            else:
+                cur_seq_chunks.append(line.strip())
+        flush_record()
+
+    if removed > 0:
+        tmp_out.replace(fasta_path)
+        for idx in (
+            Path(str(fasta_path) + ".mmi"),
+            fasta_path.with_suffix(fasta_path.suffix + ".mmi"),
+        ):
+            if idx.exists():
+                try:
+                    idx.unlink()
+                except Exception:
+                    pass
+        logger.info(
+            f"RVDB short MAG gene-fragment filter: removed {removed:,} MAG gene/protein "
+            f"stub(s) < {max_length} bp (not complete genomes); kept {kept:,}."
+        )
+    else:
+        try:
+            tmp_out.unlink()
+        except FileNotFoundError:
+            pass
+        logger.info(
+            f"RVDB short MAG gene-fragment filter: nothing to remove "
+            f"(max_length={max_length})."
+        )
+
+    meta["mag_short_gene_fragments_filtered"] = True
+    meta["mag_short_gene_fragments_max_length"] = int(max_length)
+    meta["mag_short_gene_fragments_removed"] = removed
+    meta["sequence_count"] = kept
+    try:
+        metadata_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not update RVDB metadata after MAG gene-fragment filter: {e}")
 
 
 def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
@@ -2344,6 +2466,8 @@ def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
         _get_rvdb_group_annotation_csv(),
         label="RVDB",
     )
+    # Also drop short MAG gene/protein stubs (<3 kb, not complete genomes).
+    _filter_rvdb_short_mag_gene_fragments(fasta_path, metadata_file, max_length=3000)
 
 
 def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path) -> None:
