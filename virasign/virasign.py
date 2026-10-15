@@ -1392,6 +1392,7 @@ def download_rvdb_database(
                 "orthopox_human_only",
                 "max_ambiguous_fraction",
                 "endogenous_viral_elements_filtered",
+                "synthetic_sequences_filtered",
                 "note",  # always last
             ]
 
@@ -2145,16 +2146,18 @@ def _most_abundant_stat(stats: list) -> dict:
 
 def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
     """
-    Family-level false-positive reduction for mixed host signals.
+    Family-level false-positive reduction for cross-mapping signals.
 
-    Default species-level dedup is unchanged. Extra rule only when a viral family
-    contains ≥1 human hit AND ≥1 non-human hit (vertebrate/unknown/other):
-    keep the single most abundant hit in that family (by mapped_reads) and drop
-    the rest — regardless of host. This lets a true cowpox (non-human) signal
-    outcompete a cross-mapping mpox (human) false positive, and vice versa.
+    Applies to all databases (RefSeq, RVDB, custom) via shared host/family
+    annotation CSVs. Default species-level dedup is unchanged. Extra rule when
+    a viral family has either:
+      (1) mixed hosts: ≥1 human hit AND ≥1 non-human hit, or
+      (2) all non-human: ≥2 non-human hits and no human hits
+          (e.g. Murid + Macacine betaherpesvirus both vertebrate Orthoherpesviridae).
 
-    Families with only-human or only-non-human hits are left untouched (e.g. dengue
-    serotypes all human → no family collapse).
+    In those cases, keep the single most abundant hit in that family (by
+    mapped_reads) and drop the rest. Human-only families are left untouched
+    (e.g. dengue serotypes all human → no family collapse).
     """
     if not stats_list:
         return []
@@ -2162,7 +2165,7 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
     annotations = _load_refseq_host_family_annotations()
     if not annotations:
         logger.info(
-            "Host/family annotation CSV unavailable; skipping mixed-family host collapse."
+            "Host/family annotation CSV unavailable; skipping family-level host collapse."
         )
         return stats_list
 
@@ -2184,6 +2187,7 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
     for family, members in by_family.items():
         humans = []
         nonhumans = []
+        unlabeled = []
         for stat in members:
             group = (stat.get("host_group") or "").strip().lower()
             if group == "human":
@@ -2191,17 +2195,25 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
             elif group:
                 # vertebrate / unknown / plant / fungi / invertebrate / Phage / ...
                 nonhumans.append(stat)
+            else:
+                unlabeled.append(stat)
 
-        if humans and nonhumans:
+        mixed_host = bool(humans and nonhumans)
+        # All-non-human multi-hit families (incl. unlabeled hosts when no human is present).
+        all_nonhuman_multi = (not humans) and (len(nonhumans) + len(unlabeled) >= 2)
+        if mixed_host or all_nonhuman_multi:
+            # Collapse the full family membership (includes any unlabeled hosts).
             winner = _most_abundant_stat(members)
             kept.append(winner)
             dropped_members = [s for s in members if s is not winner]
             dropped += len(dropped_members)
+            mode = "mixed human/non-human" if mixed_host else "all non-human"
             collapsed_families.append(
                 (
                     family,
                     winner,
                     dropped_members,
+                    mode,
                 )
             )
         else:
@@ -2209,11 +2221,11 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
 
     if collapsed_families:
         logger.info(
-            f"Mixed-host family collapse: removed {dropped} hit(s) across "
-            f"{len(collapsed_families)} family(ies) with mixed human/non-human signals "
-            f"(kept most abundant per family; human-only / non-human-only families unchanged)."
+            f"Family-level collapse (all databases): removed {dropped} hit(s) across "
+            f"{len(collapsed_families)} family(ies) "
+            f"(kept most abundant per family; human-only families unchanged)."
         )
-        for family, winner, dropped_members in collapsed_families:
+        for family, winner, dropped_members, mode in collapsed_families:
             w_acc = winner.get("accession", "?")
             w_reads = int(winner.get("mapped_reads", 0) or 0)
             w_host = (winner.get("host_group") or "?").strip() or "?"
@@ -2221,13 +2233,13 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
             dropped_accs = [s.get("accession", "?") for s in dropped_members[:8]]
             extra = "" if len(dropped_members) <= 8 else "..."
             logger.info(
-                f"  - {family}: kept {w_acc} ({w_host}, {w_reads} reads"
+                f"  - {family} [{mode}]: kept {w_acc} ({w_host}, {w_reads} reads"
                 + (f", {w_sp}" if w_sp else "")
                 + f"); dropped {len(dropped_members)} "
                 f"[{', '.join(dropped_accs)}{extra}]"
             )
     else:
-        logger.info("Mixed-host family collapse: no mixed human/non-human families to collapse.")
+        logger.info("Family-level collapse: no mixed-host or multi non-human families to collapse.")
 
     return kept
 
@@ -2458,6 +2470,264 @@ def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> Non
     )
 
 
+def _get_descendant_taxids(nodes_file: Path, root_taxid: str) -> set:
+    """Return root_taxid plus all descendant taxids from nodes.dmp."""
+    parent_to_children: Dict[str, List[str]] = {}
+    with open(nodes_file, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.rstrip("\n\r")
+            if not line:
+                continue
+            if line.endswith("\t|"):
+                line = line[:-2]
+            parts = [p.strip() for p in line.split("\t|\t")]
+            if len(parts) >= 2:
+                parent_to_children.setdefault(parts[1], []).append(parts[0])
+
+    out = {root_taxid}
+    queue = [root_taxid]
+    while queue:
+        cur = queue.pop()
+        for child in parent_to_children.get(cur, []):
+            if child not in out:
+                out.add(child)
+                queue.append(child)
+    return out
+
+
+def _collect_fasta_accessions(fasta_path: Path) -> set:
+    """Collect accession IDs (versioned + base) from FASTA headers."""
+    accs = set()
+    with open(fasta_path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if not line.startswith(">"):
+                continue
+            header = line[1:].strip()
+            acc = extract_accession_from_header(header) if header else ""
+            if not acc:
+                acc = header.split()[0].strip() if header else ""
+            if not acc:
+                continue
+            accs.add(acc)
+            accs.add(acc.split(".")[0])
+    return accs
+
+
+def _load_artificial_sequence_accessions(
+    database_dir: Path,
+    fasta_accessions: set,
+) -> set:
+    """
+    Accessions in `fasta_accessions` whose NCBI taxid is under 'artificial sequences'
+    (taxid 81077), e.g. synthetic Vaccinia virus.
+    """
+    if not fasta_accessions:
+        return set()
+
+    tax_dir = get_taxonomy_dir(database_dir, create=False)
+    ncbi_dir = tax_dir / "ncbi_files"
+    nodes_file = ncbi_dir / "nodes.dmp"
+    if not nodes_file.exists():
+        return set()
+
+    acc2tax_candidates = sorted(ncbi_dir.glob("*accession2taxid*"))
+    if not acc2tax_candidates:
+        return set()
+    acc2tax_file = acc2tax_candidates[0]
+
+    try:
+        artificial_taxids = _get_descendant_taxids(nodes_file, "81077")
+    except Exception as e:
+        logger.warning(f"Could not parse nodes.dmp for artificial-sequence taxids: {e}")
+        return set()
+
+    wanted = set(fasta_accessions)
+    found = set()
+    opener = gzip.open if str(acc2tax_file).endswith(".gz") else open
+    try:
+        with opener(acc2tax_file, "rt", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line or line.startswith("accession"):
+                    continue
+                parts = line.rstrip("\n").split("\t")
+                if len(parts) < 3:
+                    continue
+                acc_base, acc_ver, taxid = parts[0], parts[1], parts[2]
+                if taxid not in artificial_taxids:
+                    continue
+                if acc_ver in wanted or acc_base in wanted:
+                    found.add(acc_ver)
+                    found.add(acc_base)
+                    # Early exit once every FASTA accession has been classified as artificial
+                    # is not possible cheaply; scanning once is fine for prepare-db.
+    except Exception as e:
+        logger.warning(f"Could not scan {acc2tax_file.name} for artificial sequences: {e}")
+        return set()
+    return found
+
+
+def _load_synthetic_organism_accessions(database_dir: Path) -> set:
+    """Accessions whose cached organism/species name contains 'synthetic'."""
+    found = set()
+    synth_pat = re.compile(r"\bsynthetic\b", re.I)
+    tax_dir = get_taxonomy_dir(database_dir, create=False)
+
+    json_path = tax_dir / "accession_to_organism.json"
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            for acc, org in data.items():
+                if synth_pat.search(str(org or "")):
+                    found.add(str(acc))
+                    found.add(str(acc).split(".")[0])
+        except Exception:
+            pass
+
+    db_path = tax_dir / "accession_to_organism_database.db"
+    if db_path.exists():
+        try:
+            con = sqlite3.connect(str(db_path))
+            cur = con.cursor()
+            # species column may be missing in older DBs
+            try:
+                cur.execute(
+                    "SELECT accession, organism, species FROM accession_to_organism "
+                    "WHERE lower(organism) LIKE '%synthetic%' "
+                    "OR lower(COALESCE(species,'')) LIKE '%synthetic%'"
+                )
+                rows = cur.fetchall()
+            except sqlite3.OperationalError:
+                cur.execute(
+                    "SELECT accession, organism FROM accession_to_organism "
+                    "WHERE lower(organism) LIKE '%synthetic%'"
+                )
+                rows = [(a, o, "") for a, o in cur.fetchall()]
+            for acc, org, species in rows:
+                if synth_pat.search(str(org or "")) or synth_pat.search(str(species or "")):
+                    found.add(str(acc))
+                    found.add(str(acc).split(".")[0])
+            con.close()
+        except Exception:
+            pass
+    return found
+
+
+def _filter_rvdb_synthetic_sequences(
+    fasta_path: Path,
+    metadata_file: Path,
+    force_taxonomy_scan: bool = False,
+) -> None:
+    """
+    Remove synthetic / artificial sequences from an RVDB FASTA.
+
+    Matches:
+    - headers containing 'synthetic' / 'artificial sequence(s)'
+    - accessions under NCBI taxid 81077 ('artificial sequences'), when taxonomy dumps exist
+    - accessions whose cached organism name contains 'synthetic'
+    """
+    fasta_path = Path(fasta_path)
+    metadata_file = Path(metadata_file)
+    database_dir = fasta_path.parent
+
+    try:
+        meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+    except Exception:
+        meta = {}
+
+    header_pat = re.compile(
+        r"\bsynthetic\b|\bartificial\s+sequences?\b|\bsynthetic\s+viruses?\b",
+        re.I,
+    )
+
+    # Fast pass: header keywords always applied.
+    # Taxonomy lineage scan is expensive; skip if already done unless forced (prepare-db).
+    do_tax_scan = force_taxonomy_scan or not bool(meta.get("synthetic_sequences_filtered"))
+
+    remove_accs = set()
+    if do_tax_scan:
+        fasta_accs = _collect_fasta_accessions(fasta_path)
+        tax_accs = _load_artificial_sequence_accessions(database_dir, fasta_accs)
+        if tax_accs:
+            logger.info(
+                f"Synthetic/artificial taxonomy filter: {len(tax_accs):,} accession key(s) "
+                f"under NCBI 'artificial sequences' (taxid 81077)."
+            )
+            remove_accs |= tax_accs
+        remove_accs |= _load_synthetic_organism_accessions(database_dir)
+
+    tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_synthetic")
+    kept = 0
+    removed = 0
+    removed_reasons: Dict[str, int] = {}
+
+    with open(fasta_path, "r", encoding="utf-8", errors="replace") as f_in, open(
+        tmp_out, "w", encoding="utf-8", newline="\n"
+    ) as f_out:
+        write = False
+        for line in f_in:
+            if line.startswith(">"):
+                header = line[1:].strip()
+                acc = extract_accession_from_header(header) if header else ""
+                if not acc:
+                    acc = header.split()[0].strip() if header else ""
+                acc_base = acc.split(".")[0] if acc else ""
+                reason = ""
+                if header_pat.search(header):
+                    reason = "synthetic/artificial header"
+                elif acc in remove_accs or acc_base in remove_accs:
+                    reason = "artificial sequences taxonomy / synthetic organism"
+                if reason:
+                    write = False
+                    removed += 1
+                    removed_reasons[reason] = removed_reasons.get(reason, 0) + 1
+                else:
+                    write = True
+                    kept += 1
+            if write:
+                f_out.write(line)
+
+    if removed > 0:
+        tmp_out.replace(fasta_path)
+        for idx in (
+            Path(str(fasta_path) + ".mmi"),
+            fasta_path.with_suffix(fasta_path.suffix + ".mmi"),
+        ):
+            if idx.exists():
+                try:
+                    idx.unlink()
+                except Exception:
+                    pass
+        detail = ", ".join(f"{k}: {v}" for k, v in sorted(removed_reasons.items()))
+        logger.info(
+            f"RVDB synthetic/artificial filter: removed {removed:,} sequence(s) ({detail}); "
+            f"kept {kept:,}."
+        )
+    else:
+        try:
+            tmp_out.unlink()
+        except FileNotFoundError:
+            pass
+        if do_tax_scan:
+            logger.info("RVDB synthetic/artificial filter: no synthetic sequences found.")
+        else:
+            logger.info(
+                "RVDB synthetic/artificial filter: previously applied; "
+                "no synthetic headers remaining."
+            )
+
+    try:
+        meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+    except Exception:
+        meta = {}
+    meta["synthetic_sequences_filtered"] = True
+    try:
+        # Prefer stable metadata writer if available in this scope; else write JSON.
+        with open(metadata_file, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+    except OSError as e:
+        logger.warning(f"Could not update metadata after synthetic filter: {e}")
+
+
 def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
     """Remove curated out-of-scope groups from an RVDB FASTA."""
     _filter_excluded_groups_from_fasta(
@@ -2468,6 +2738,8 @@ def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
     )
     # Also drop short MAG gene/protein stubs (<3 kb, not complete genomes).
     _filter_rvdb_short_mag_gene_fragments(fasta_path, metadata_file, max_length=3000)
+    # Drop synthetic / artificial sequences (e.g. synthetic Vaccinia virus).
+    _filter_rvdb_synthetic_sequences(fasta_path, metadata_file, force_taxonomy_scan=False)
 
 
 def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path) -> None:
@@ -4466,8 +4738,10 @@ def deduplicate_by_organism(
     the reference genomes; if identity and coverage are both ≥90%, merge them;
     if either is below 90% (e.g. dengue types ~60-70%), keep both.
 
-    After that, apply mixed-host family collapse: in families with both human and
-    non-human hits, keep only the most abundant hit (by mapped_reads).
+    After that, apply family-level collapse for all databases (RefSeq, RVDB, custom):
+    in families with mixed human/non-human hits, or with ≥2 non-human hits and no
+    human hits, keep only the most abundant hit (by mapped_reads). Human-only
+    families are left unchanged.
     """
     if not stats_list:
         return []
@@ -12804,6 +13078,18 @@ Examples
                 raise
             except Exception as e:
                 print(f"    taxonomy: failed ({e})")
+            # After taxonomy dumps exist, drop synthetic/artificial sequences from RVDB
+            # (e.g. EU410304 synthetic Vaccinia — not visible from the FASTA header alone).
+            if "rvdb" in str(fp).lower():
+                try:
+                    meta_file = fp.parent / "database_metadata.json"
+                    logger.info("Re-applying RVDB synthetic/artificial filter with taxonomy...")
+                    _filter_rvdb_synthetic_sequences(fp, meta_file, force_taxonomy_scan=True)
+                    idx = ensure_minimap2_index(fp)
+                    print(f"    synthetic filter + index: {idx}")
+                except Exception as e:
+                    logger.warning(f"RVDB synthetic filter after taxonomy failed: {e}")
+                    print(f"    synthetic filter: failed ({e})")
         return 0
     
     # Find samples
