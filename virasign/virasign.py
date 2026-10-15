@@ -12187,7 +12187,7 @@ Examples
         "-v",
         "--version",
         action="version",
-        version=f"%(prog)s {virasign_version}",
+        version=f"%(prog)s v{virasign_version}",
         help="Show installed Virasign version.",
     )
 
