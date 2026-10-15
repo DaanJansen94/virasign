@@ -67016,7 +67016,7 @@ EU001282.1,"Diolcogaster facetosa bracovirus segment 27, complete sequence.",inv
 EU001283.1,"Diolcogaster facetosa bracovirus segment 28, complete sequence.",invertebrate,exclude,Polydnaviriformidae
 EU001284.1,"Diolcogaster facetosa bracovirus segment 29, complete sequence.",invertebrate,exclude,Polydnaviriformidae
 EU001285.1,"Diolcogaster facetosa bracovirus segment 31, complete sequence.",invertebrate,exclude,Polydnaviriformidae
-EU410304.1,"Vaccinia virus GLV-1h68, complete genome.",human,Keep,
+EU410304.1,"Vaccinia virus GLV-1h68, complete genome.",synthetic,exclude,Poxviridae
 LC171345.1,"Adonis mosaic virus DNA, complete genome, isolate: HSP-2.",plant,exclude,Tombusviridae
 AF083132.1,"Porcine adenovirus 3 strain 6618, complete genome",vertebrate,Keep,Adenoviridae
 AF104263.1,"Hepatitis D virus 1 strain TW2667, complete genome",human,Keep,Kolmioviridae

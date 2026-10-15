@@ -2033,7 +2033,7 @@ def _iter_group_annotation_csvs() -> list:
 def _load_excluded_group_accessions(csv_path: Path) -> set:
     """
     Return accession IDs (versioned + unversioned) marked status=exclude in a
-    curated annotation CSV (phage / plant / fungi / invertebrate groups).
+    curated annotation CSV (phage / plant / fungi / invertebrate / synthetic / …).
     """
     import csv as _csv
 
@@ -2054,6 +2054,35 @@ def _load_excluded_group_accessions(csv_path: Path) -> set:
             excluded.add(acc)
             excluded.add(acc.split(".")[0])
     return excluded
+
+
+def _load_synthetic_group_accessions_from_csvs() -> set:
+    """
+    Accessions curated as synthetic/artificial in host/group annotation CSVs
+    (group column contains 'synthetic' or 'artificial'), versioned + unversioned.
+    Fast alternative to scanning NCBI accession2taxid at runtime.
+    """
+    import csv as _csv
+
+    out = set()
+    for csv_path in _iter_group_annotation_csvs():
+        try:
+            with csv_path.open("r", encoding="utf-8", newline="") as fh:
+                reader = _csv.DictReader(fh)
+                if "accession" not in (reader.fieldnames or []):
+                    continue
+                for row in reader:
+                    group = str(row.get("group", "")).strip().lower()
+                    if "synthetic" not in group and "artificial" not in group:
+                        continue
+                    acc = str(row.get("accession", "")).strip()
+                    if not acc:
+                        continue
+                    out.add(acc)
+                    out.add(acc.split(".")[0])
+        except Exception as e:
+            logger.warning(f"Could not load synthetic accessions from {csv_path}: {e}")
+    return out
 
 
 # Backward-compatible alias.
@@ -2492,7 +2521,7 @@ def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> Non
         _get_refseq_group_annotation_csv(),
         label="RefSeq",
     )
-    # Same synthetic/artificial filter as RVDB (header now; taxonomy after dumps exist).
+    # Same synthetic/artificial filter as RVDB (curated CSV group + headers).
     _filter_synthetic_sequences(
         fasta_path, metadata_file, force_taxonomy_scan=False, db_label="RefSeq"
     )
@@ -2658,55 +2687,31 @@ def _filter_synthetic_sequences(
     """
     Remove synthetic / artificial sequences from a viral FASTA (RVDB or RefSeq).
 
-    Matches:
+    Fast path (default):
     - headers containing 'synthetic' / 'artificial sequence(s)'
-    - accessions under NCBI taxid 81077 ('artificial sequences'), when taxonomy dumps exist
-      (needed for cases like EU410304 whose header does not say 'synthetic')
-    - accessions whose cached organism name contains 'synthetic'
+    - accessions curated as group=synthetic/artificial in the host/family CSVs
+      (same CSVs as host/family annotation; prefer status=exclude there too so the
+      normal group filter also drops them)
 
-    Note: `synthetic_taxonomy_filtered` is set only after a successful taxonomy scan.
-    Header-only passes must not mark taxonomy filtering as done (DB rebuilds before
-    taxonomy is ready used to skip EU410304 permanently).
+    The old NCBI accession2taxid scan (taxid 81077) is no longer used at runtime —
+    curate synthetics once in the CSV instead. `force_taxonomy_scan` is kept for
+    backward compatibility but is ignored.
     """
+    del force_taxonomy_scan  # deprecated; CSV + header only
     fasta_path = Path(fasta_path)
     metadata_file = Path(metadata_file)
-    database_dir = fasta_path.parent
-
-    try:
-        meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
-    except Exception:
-        meta = {}
 
     header_pat = re.compile(
         r"\bsynthetic\b|\bartificial\s+sequences?\b|\bsynthetic\s+viruses?\b",
         re.I,
     )
 
-    tax_available = _rvdb_taxonomy_dumps_available(database_dir)
-    # Always header-filter. Run taxonomy scan whenever dumps exist and we have not
-    # completed a taxonomy-backed pass yet (or when forced after --prepare-db).
-    do_tax_scan = bool(
-        force_taxonomy_scan
-        or (tax_available and not bool(meta.get("synthetic_taxonomy_filtered")))
-    )
-
-    remove_accs = set()
-    if do_tax_scan:
-        if not tax_available:
-            logger.info(
-                f"{db_label} synthetic filter: taxonomy dumps not available yet; "
-                "header-only pass (will re-scan when taxonomy is ready)."
-            )
-        else:
-            fasta_accs = _collect_fasta_accessions(fasta_path)
-            tax_accs = _load_artificial_sequence_accessions(database_dir, fasta_accs)
-            if tax_accs:
-                logger.info(
-                    f"Synthetic/artificial taxonomy filter ({db_label}): {len(tax_accs):,} accession key(s) "
-                    f"under NCBI 'artificial sequences' (taxid 81077)."
-                )
-                remove_accs |= tax_accs
-            remove_accs |= _load_synthetic_organism_accessions(database_dir)
+    remove_accs = _load_synthetic_group_accessions_from_csvs()
+    if remove_accs:
+        logger.info(
+            f"Synthetic/artificial CSV filter ({db_label}): "
+            f"{len(remove_accs):,} curated accession key(s)."
+        )
 
     tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_synthetic")
     kept = 0
@@ -2728,7 +2733,7 @@ def _filter_synthetic_sequences(
                 if header_pat.search(header):
                     reason = "synthetic/artificial header"
                 elif acc in remove_accs or acc_base in remove_accs:
-                    reason = "artificial sequences taxonomy / synthetic organism"
+                    reason = "synthetic/artificial curated CSV"
                 if reason:
                     write = False
                     removed += 1
@@ -2760,30 +2765,20 @@ def _filter_synthetic_sequences(
             tmp_out.unlink()
         except FileNotFoundError:
             pass
-        if do_tax_scan and tax_available:
-            logger.info(f"{db_label} synthetic/artificial filter: no synthetic sequences found.")
-        elif do_tax_scan:
-            logger.info(
-                f"{db_label} synthetic/artificial filter: header-only pass complete "
-                "(taxonomy scan deferred until NCBI dumps are available)."
-            )
-        else:
-            logger.info(
-                f"{db_label} synthetic/artificial filter: taxonomy pass already done; "
-                "no synthetic headers remaining."
-            )
+        logger.info(
+            f"{db_label} synthetic/artificial filter: no synthetic sequences found "
+            "(header + curated CSV)."
+        )
 
     try:
         meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
     except Exception:
         meta = {}
     meta["synthetic_header_filtered"] = True
-    if do_tax_scan and tax_available:
-        meta["synthetic_taxonomy_filtered"] = True
-        meta["synthetic_sequences_filtered"] = True
-    elif not tax_available:
-        # Do NOT claim taxonomy filtering is done — EU410304-like entries need it.
-        meta["synthetic_sequences_filtered"] = False
+    meta["synthetic_csv_filtered"] = True
+    # Keep legacy flag so older metadata / skip logic stays consistent.
+    meta["synthetic_taxonomy_filtered"] = True
+    meta["synthetic_sequences_filtered"] = True
     try:
         with open(metadata_file, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
@@ -2814,9 +2809,7 @@ def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
     )
     # Also drop short MAG gene/protein stubs (<3 kb, not complete genomes).
     _filter_rvdb_short_mag_gene_fragments(fasta_path, metadata_file, max_length=3000)
-    # Drop synthetic / artificial sequences (e.g. synthetic Vaccinia virus).
-    # Header-only if taxonomy dumps are not ready yet; call
-    # _ensure_synthetic_filter_after_taxonomy() once NCBI dumps exist.
+    # Drop synthetic / artificial sequences (CSV group=synthetic/artificial + headers).
     _filter_synthetic_sequences(
         fasta_path, metadata_file, force_taxonomy_scan=False, db_label="RVDB"
     )
@@ -2824,13 +2817,11 @@ def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
 
 def _ensure_synthetic_filter_after_taxonomy(database_fasta: Path) -> None:
     """
-    After taxonomy dumps are available, remove synthetic/artificial sequences
-    from RVDB or RefSeq that cannot be detected from FASTA headers alone
-    (e.g. EU410304).
+    Ensure synthetic/artificial sequences are dropped from RVDB/RefSeq using the
+    curated host/group CSVs (+ header keywords). Fast; safe to call every run.
 
-    Safe to call on every run: skips the expensive taxonomy scan once
-    `synthetic_taxonomy_filtered` is set in database_metadata.json.
-    Rebuilds the minimap2 index if sequences were removed.
+    Skips when `synthetic_csv_filtered` (or legacy `synthetic_taxonomy_filtered`)
+    is already set. Rebuilds the minimap2 index if sequences were removed.
     """
     fp = Path(database_fasta)
     label = _db_label_from_fasta_path(fp)
@@ -2844,30 +2835,22 @@ def _ensure_synthetic_filter_after_taxonomy(database_fasta: Path) -> None:
     except Exception:
         meta = {}
 
-    tax_ready = _rvdb_taxonomy_dumps_available(fp.parent)
-    already_done = bool(meta.get("synthetic_taxonomy_filtered"))
-    if already_done and tax_ready:
+    already_done = bool(
+        meta.get("synthetic_csv_filtered") or meta.get("synthetic_taxonomy_filtered")
+    )
+    if already_done:
         logger.info(
-            f"{label} synthetic/artificial taxonomy filter already applied "
-            f"({fp.name}); skipping re-scan."
-        )
-        return
-    if not tax_ready:
-        logger.warning(
-            f"{label} taxonomy dumps not ready; synthetic/artificial sequences that lack "
-            "'synthetic' in the header (e.g. EU410304) may remain until taxonomy is built."
+            f"{label} synthetic/artificial filter already applied ({fp.name}); skipping."
         )
         return
 
     before_mtime = fp.stat().st_mtime
     logger.info(
-        f"Applying {label} synthetic/artificial filter with NCBI taxonomy "
-        "(artificial sequences taxid 81077)..."
+        f"Applying {label} synthetic/artificial filter (curated CSV + headers)..."
     )
     _filter_synthetic_sequences(
-        fp, meta_file, force_taxonomy_scan=True, db_label=label
+        fp, meta_file, force_taxonomy_scan=False, db_label=label
     )
-    # Rebuild index if FASTA changed (sequences removed).
     try:
         after_mtime = fp.stat().st_mtime
     except OSError:
@@ -9720,94 +9703,101 @@ def generate_html_visualization(
 
         controls_set = set(controls)
 
-        # Load all per-sample final JSON hits that exist.
-        # Some controls may have no final JSON (true negatives); treat as all-zeros for all labels.
-        sample_hits: Dict[str, List[dict]] = {}
-        sample_db: Dict[str, str] = {}  # sample_name -> database_name (for summary grouping)
+        # Load per-sample final JSON hits.
+        # Multi-db layout is sample/RVDB|RefSeq/<sample>_final_selected_references.json —
+        # NEVER use jf.parent.name alone (that is the DB folder, which previously caused
+        # every sample's final JSON to be overwritten with one sample's hits).
+        import math
+        from statistics import mean, stdev
+
+        def _sample_db_from_final_json(jf: Path) -> Tuple[str, str]:
+            try:
+                rel = jf.relative_to(output_dir)
+                parts = rel.parts
+            except Exception:
+                parts = jf.parts
+            if len(parts) >= 3 and parts[1] in ("RVDB", "RefSeq", "Custom"):
+                return parts[0], parts[1]
+            if len(parts) >= 2:
+                return parts[0], "Unknown"
+            return jf.parent.name, "Unknown"
+
+        # Keyed by (sample_name, database_name) so RVDB and RefSeq stay independent.
+        sample_hits: Dict[Tuple[str, str], List[dict]] = {}
+        sample_jf: Dict[Tuple[str, str], Path] = {}
         for jf in final_json_files:
             try:
-                sample_name = jf.parent.name
+                sample_name, db_name = _sample_db_from_final_json(jf)
                 with open(jf, "r") as f:
                     hits = json.load(f) or []
                 if not isinstance(hits, list):
                     continue
-                sample_hits[sample_name] = hits
-                # Infer DB from folder path when outputs are split; otherwise Unknown.
-                # This is used only for HTML/CSV grouping, not for math.
-                # Example: sample/RVDB/sample_final_selected_references.json
-                parts = jf.parts
-                db_name = "Unknown"
-                if len(parts) >= 2 and parts[-2] in ("RVDB", "RefSeq", "Custom"):
-                    db_name = parts[-2]
-                sample_db[sample_name] = db_name
+                key = (sample_name, db_name)
+                sample_hits[key] = hits
+                sample_jf[key] = jf
             except Exception as e:
                 logger.debug(f"Z-score: could not read {jf}: {e}")
 
-        # Build background distributions per label.
-        import math
-        from statistics import mean, stdev
-
-        # Union of labels observed anywhere (final hits); this is enough because absent => 0.
-        labels: set = set()
-        for hits in sample_hits.values():
-            for h in hits:
-                lab = _label_for_zscore(h)
-                if lab:
-                    labels.add(lab)
-
-        # If no labels at all, nothing to do.
-        if not labels:
+        if not sample_hits:
             return controls_set, {}
 
-        # Pre-compute per-label control values.
-        control_values: Dict[str, List[float]] = {}
-        for lab in labels:
-            vals = []
-            for c in controls:
-                hits = sample_hits.get(c) or []
-                # Find label value; if label not present, x=0.
-                x = 0
-                for h in hits:
-                    if _label_for_zscore(h) == lab:
-                        x = int(h.get("mapped_reads", 0) or 0)
-                        break
-                y = math.log10(x + 1)
-                vals.append(float(y))
-            control_values[lab] = vals
-
-        # Compute mu/sigma per label.
-        mu_sigma: Dict[str, Tuple[float, float]] = {}
-        for lab, vals in control_values.items():
-            try:
-                mu = float(mean(vals))
-                sigma = float(stdev(vals)) if len(vals) >= 2 else 0.0
-            except Exception:
-                mu, sigma = 0.0, 0.0
-            mu_sigma[lab] = (mu, sigma)
-
-        # Apply z-scores to non-control sample JSONs only.
+        # Z-scores are computed per database (control background must not mix RVDB/RefSeq).
+        dbs = sorted({db for (_, db) in sample_hits.keys()})
         eps = 1e-6
         z_cap = 100.0
 
-        for sample_name, hits in list(sample_hits.items()):
-            if sample_name in controls_set:
-                # Controls themselves should not carry Z-scores; clear any stale values.
-                cleared = False
-                for h in hits:
-                    if not isinstance(h, dict):
-                        continue
-                    if "zscore" in h or "zscore_controls" in h:
-                        h.pop("zscore", None)
-                        h.pop("zscore_controls", None)
-                        cleared = True
-                if cleared:
-                    try:
-                        for jf in final_json_files:
-                            if jf.parent.name != sample_name:
-                                continue
+        for db_name in dbs:
+            db_keys = [k for k in sample_hits if k[1] == db_name]
+            labels: set = set()
+            for key in db_keys:
+                for h in sample_hits[key]:
+                    lab = _label_for_zscore(h)
+                    if lab:
+                        labels.add(lab)
+            if not labels:
+                continue
+
+            control_values: Dict[str, List[float]] = {}
+            for lab in labels:
+                vals = []
+                for c in controls:
+                    hits = sample_hits.get((c, db_name)) or []
+                    x = 0
+                    for h in hits:
+                        if _label_for_zscore(h) == lab:
+                            x = int(h.get("mapped_reads", 0) or 0)
+                            break
+                    vals.append(float(math.log10(x + 1)))
+                control_values[lab] = vals
+
+            mu_sigma: Dict[str, Tuple[float, float]] = {}
+            for lab, vals in control_values.items():
+                try:
+                    mu = float(mean(vals))
+                    sigma = float(stdev(vals)) if len(vals) >= 2 else 0.0
+                except Exception:
+                    mu, sigma = 0.0, 0.0
+                mu_sigma[lab] = (mu, sigma)
+
+            for key in db_keys:
+                sample_name, _db = key
+                hits = sample_hits[key]
+                jf = sample_jf[key]
+                base_dir = jf.parent
+
+                if sample_name in controls_set:
+                    cleared = False
+                    for h in hits:
+                        if not isinstance(h, dict):
+                            continue
+                        if "zscore" in h or "zscore_controls" in h:
+                            h.pop("zscore", None)
+                            h.pop("zscore_controls", None)
+                            cleared = True
+                    if cleared:
+                        try:
                             with open(jf, "w") as f:
                                 json.dump(hits, f, indent=2)
-                            base_dir = jf.parent
                             for h in hits:
                                 if not isinstance(h, dict):
                                     continue
@@ -9827,75 +9817,73 @@ def generate_html_visualization(
                                             json.dump(payload, sf, indent=2)
                                 except Exception:
                                     pass
-                    except Exception as e:
-                        logger.debug(f"Z-score: could not clear control JSON for {sample_name}: {e}")
-                continue
-            changed = False
-            for h in hits:
-                lab = _label_for_zscore(h)
-                if not lab:
+                        except Exception as e:
+                            logger.debug(
+                                f"Z-score: could not clear control JSON for {sample_name}/{db_name}: {e}"
+                            )
                     continue
-                x = int(h.get("mapped_reads", 0) or 0)
-                y = float(math.log10(x + 1))
-                mu, sigma = mu_sigma.get(lab, (0.0, 0.0))
-                denom = sigma if sigma > 0 else eps
-                z = (y - mu) / denom
-                if z > z_cap:
-                    z = z_cap
-                elif z < -z_cap:
-                    z = -z_cap
-                # Add requested fields.
-                h["zscore"] = float(z)
-                h["zscore_controls"] = controls
-                changed = True
 
-            if changed:
-                # Write back into its JSON file (may be nested in RVDB/RefSeq subfolders).
-                # Locate by sample_name in path.
+                changed = False
+                for h in hits:
+                    if not isinstance(h, dict):
+                        continue
+                    lab = _label_for_zscore(h)
+                    if not lab:
+                        continue
+                    x = int(h.get("mapped_reads", 0) or 0)
+                    y = float(math.log10(x + 1))
+                    mu, sigma = mu_sigma.get(lab, (0.0, 0.0))
+                    denom = sigma if sigma > 0 else eps
+                    z = (y - mu) / denom
+                    if z > z_cap:
+                        z = z_cap
+                    elif z < -z_cap:
+                        z = -z_cap
+                    h["zscore"] = float(z)
+                    h["zscore_controls"] = controls
+                    changed = True
+
+                if not changed:
+                    continue
                 try:
-                    # Prefer the same file we loaded from final_json_files.
-                    # If multiple JSONs exist (multi-db), update all matching sample JSONs.
-                    for jf in final_json_files:
-                        if jf.parent.name != sample_name:
-                            continue
-                        with open(jf, "w") as f:
-                            json.dump(hits, f, indent=2)
+                    with open(jf, "w") as f:
+                        json.dump(hits, f, indent=2)
                 except Exception as e:
-                    logger.debug(f"Z-score: could not write JSON for {sample_name}: {e}")
+                    logger.debug(
+                        f"Z-score: could not write JSON for {sample_name}/{db_name}: {e}"
+                    )
+                    continue
 
-                # Also propagate into per-virus sidecar JSONs: <sample>/<accession>/<accession>.json
-                # (These sidecars are used by downstream pipelines and match the folder artifacts.)
+                # Propagate into per-virus sidecars under this DB folder only.
                 try:
-                    for jf in final_json_files:
-                        if jf.parent.name != sample_name:
+                    for h in hits:
+                        acc = (h.get("accession") or "").strip()
+                        if not acc:
                             continue
-                        base_dir = jf.parent
-                        for h in hits:
-                            acc = (h.get("accession") or "").strip()
-                            if not acc:
-                                continue
-                            sidecar = base_dir / acc / f"{acc}.json"
-                            if not sidecar.exists():
-                                continue
-                            try:
-                                with open(sidecar, "r", encoding="utf-8", errors="replace") as sf:
-                                    payload = json.load(sf) if sf.readable() else {}
-                            except Exception:
-                                payload = {}
-                            if not isinstance(payload, dict):
-                                payload = {}
-                            payload["zscore"] = h.get("zscore")
-                            payload["zscore_controls"] = controls
-                            with open(sidecar, "w") as sf:
-                                json.dump(payload, sf, indent=2)
+                        sidecar = base_dir / acc / f"{acc}.json"
+                        if not sidecar.exists():
+                            continue
+                        try:
+                            with open(sidecar, "r", encoding="utf-8", errors="replace") as sf:
+                                payload = json.load(sf)
+                        except Exception:
+                            payload = {}
+                        if not isinstance(payload, dict):
+                            payload = {}
+                        payload["zscore"] = h.get("zscore")
+                        payload["zscore_controls"] = controls
+                        with open(sidecar, "w") as sf:
+                            json.dump(payload, sf, indent=2)
                 except Exception as e:
-                    logger.debug(f"Z-score: could not write sidecars for {sample_name}: {e}")
+                    logger.debug(
+                        f"Z-score: could not write sidecars for {sample_name}/{db_name}: {e}"
+                    )
 
-        # Controls by DB for reporting (not shown in HTML/CSV per your request, but returned if needed).
         controls_by_db: Dict[str, List[str]] = {}
         for c in controls:
-            db = sample_db.get(c, "Unknown")
-            controls_by_db.setdefault(db, []).append(c)
+            for db_name in dbs:
+                if (c, db_name) in sample_hits:
+                    controls_by_db.setdefault(db_name, []).append(c)
         return controls_set, controls_by_db
 
     # Compute/write Z-scores before building HTML/CSV (so the reports include the field).
@@ -9944,15 +9932,31 @@ def generate_html_visualization(
             with open(json_file, 'r') as f:
                 data = json.load(f)
 
-            # Enrich hit rows with coverage_profile from per-hit sidecars (kept out of sample-level final JSON
-            # to avoid huge files). This keeps the HTML interactive coverage plots working.
+            # Enrich hit rows from per-hit sidecars (sample-level final JSON omits bulky
+            # coverage_profile; also backfill scalars like NOGR if a restore/older final JSON
+            # dropped them).
             try:
                 base_dir = json_file.parent  # contains per-accession folders
                 if isinstance(data, list):
+                    _sidecar_scalar_keys = (
+                        "nogr_regions",
+                        "nogr_bases",
+                        "mapped_reads",
+                        "avg_identity",
+                        "coverage_depth",
+                        "coverage_breadth",
+                        "organism",
+                        "viral_species",
+                        "segment",
+                        "nextclade_clade",
+                        "nextclade_dataset",
+                        "database_source",
+                        "description",
+                        "zscore",
+                        "zscore_controls",
+                    )
                     for item in data:
                         if not isinstance(item, dict):
-                            continue
-                        if "coverage_profile" in item:
                             continue
                         acc = (item.get("accession") or "").strip()
                         if not acc:
@@ -9963,8 +9967,25 @@ def generate_html_visualization(
                         with open(sidecar, "r", encoding="utf-8", errors="replace") as sf:
                             payload = json.load(sf)
                         hit = payload.get("hit") if isinstance(payload, dict) else None
-                        if isinstance(hit, dict) and "coverage_profile" in hit:
+                        if not isinstance(hit, dict):
+                            continue
+                        if "coverage_profile" not in item and "coverage_profile" in hit:
                             item["coverage_profile"] = hit.get("coverage_profile")
+                        for k in _sidecar_scalar_keys:
+                            if k in hit and (
+                                k not in item
+                                or item.get(k) is None
+                                or item.get(k) == ""
+                            ):
+                                item[k] = hit.get(k)
+                        # Sidecar top-level zscore (written by Z-score step) if hit lacks it.
+                        if item.get("zscore") is None and payload.get("zscore") is not None:
+                            item["zscore"] = payload.get("zscore")
+                        if (
+                            not item.get("zscore_controls")
+                            and payload.get("zscore_controls") is not None
+                        ):
+                            item["zscore_controls"] = payload.get("zscore_controls")
             except Exception:
                 pass
             
@@ -13188,8 +13209,8 @@ Examples
 
     # Build/load taxonomy once in the parent BEFORE parallel workers start.
     # Workers still call ensure_taxonomy_resources (locked); if parent finished, they reuse it.
-    # For RVDB, synthetic/artificial filtering that needs NCBI taxonomy runs here too
-    # (fresh downloads only do a header pass during download_rvdb_database).
+    # Synthetic/artificial refs are dropped via curated host/group CSVs (+ headers), not a
+    # runtime accession2taxid scan.
     if not getattr(args, "prepare_db", False):
         logger.info("Ensuring taxonomy database is finished before sample processing...")
         for database_fasta_path in database_fasta_paths:
@@ -13211,7 +13232,7 @@ Examples
                 _ensure_synthetic_filter_after_taxonomy(Path(database_fasta_path))
             except Exception as e:
                 logger.warning(
-                    f"Synthetic filter after taxonomy failed for {database_fasta_path}: {e}"
+                    f"Synthetic filter failed for {database_fasta_path}: {e}"
                 )
 
     # Prepare DB only mode: download/unpack/index completed, no sample processing.
@@ -13235,15 +13256,14 @@ Examples
                 raise
             except Exception as e:
                 print(f"    taxonomy: failed ({e})")
-            # After taxonomy dumps exist, drop synthetic/artificial sequences from
-            # RVDB/RefSeq (e.g. EU410304 — not always visible from the FASTA header).
+            # Drop synthetic/artificial sequences via curated CSV + headers (fast).
             try:
                 _ensure_synthetic_filter_after_taxonomy(fp)
                 if _db_label_from_fasta_path(fp) in ("RVDB", "RefSeq"):
                     idx = ensure_minimap2_index(fp)
                     print(f"    synthetic filter + index: {idx}")
             except Exception as e:
-                logger.warning(f"Synthetic filter after taxonomy failed: {e}")
+                logger.warning(f"Synthetic filter failed: {e}")
                 print(f"    synthetic filter: failed ({e})")
         return 0
     
