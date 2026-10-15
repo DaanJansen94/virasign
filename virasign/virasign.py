@@ -1392,6 +1392,8 @@ def download_rvdb_database(
                 "orthopox_human_only",
                 "max_ambiguous_fraction",
                 "endogenous_viral_elements_filtered",
+                "synthetic_header_filtered",
+                "synthetic_taxonomy_filtered",
                 "synthetic_sequences_filtered",
                 "note",  # always last
             ]
@@ -2149,15 +2151,17 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
     Family-level false-positive reduction for cross-mapping signals.
 
     Applies to all databases (RefSeq, RVDB, custom) via shared host/family
-    annotation CSVs. Default species-level dedup is unchanged. Extra rule when
-    a viral family has either:
-      (1) mixed hosts: ≥1 human hit AND ≥1 non-human hit, or
-      (2) all non-human: ≥2 non-human hits and no human hits
-          (e.g. Murid + Macacine betaherpesvirus both vertebrate Orthoherpesviridae).
+    annotation CSVs. Default species-level dedup is unchanged. Extra rules:
 
-    In those cases, keep the single most abundant hit in that family (by
-    mapped_reads) and drop the rest. Human-only families are left untouched
-    (e.g. dengue serotypes all human → no family collapse).
+      (1) mixed hosts, multiple humans (e.g. dengue I+III + non-human flavivirus):
+          keep all human hits; drop non-human/unlabeled family members only.
+      (2) mixed hosts, single human (e.g. cowpox vs mpox FP):
+          keep the single most abundant hit in the family.
+      (3) all non-human, ≥2 hits (e.g. Murid + Macacine betaherpesvirus):
+          keep the single most abundant hit in the family.
+
+    Human-only families are left untouched (dengue serotypes stay separate;
+    species-level ANI still decides merge vs keep).
     """
     if not stats_list:
         return []
@@ -2201,42 +2205,62 @@ def collapse_nonhuman_in_mixed_host_families(stats_list: list) -> list:
         mixed_host = bool(humans and nonhumans)
         # All-non-human multi-hit families (incl. unlabeled hosts when no human is present).
         all_nonhuman_multi = (not humans) and (len(nonhumans) + len(unlabeled) >= 2)
-        if mixed_host or all_nonhuman_multi:
-            # Collapse the full family membership (includes any unlabeled hosts).
+
+        if mixed_host and len(humans) >= 2:
+            # Multi-human family (e.g. dengue type I + III in Flaviviridae) plus
+            # non-human cross-maps: keep all human hits (already species/ANI-deduped),
+            # drop non-human / unlabeled family members only.
+            kept.extend(humans)
+            dropped_members = list(nonhumans) + list(unlabeled)
+            if dropped_members:
+                dropped += len(dropped_members)
+                collapsed_families.append(
+                    (family, humans, dropped_members, "mixed: keep all humans, drop non-human")
+                )
+        elif mixed_host:
+            # Single human + non-human(s): winner-takes-all (e.g. cowpox vs mpox FP).
             winner = _most_abundant_stat(members)
             kept.append(winner)
             dropped_members = [s for s in members if s is not winner]
             dropped += len(dropped_members)
-            mode = "mixed human/non-human" if mixed_host else "all non-human"
             collapsed_families.append(
-                (
-                    family,
-                    winner,
-                    dropped_members,
-                    mode,
-                )
+                (family, [winner], dropped_members, "mixed human/non-human")
+            )
+        elif all_nonhuman_multi:
+            winner = _most_abundant_stat(members)
+            kept.append(winner)
+            dropped_members = [s for s in members if s is not winner]
+            dropped += len(dropped_members)
+            collapsed_families.append(
+                (family, [winner], dropped_members, "all non-human")
             )
         else:
+            # Human-only families (and single-hit families): unchanged.
             kept.extend(members)
 
     if collapsed_families:
         logger.info(
             f"Family-level collapse (all databases): removed {dropped} hit(s) across "
             f"{len(collapsed_families)} family(ies) "
-            f"(kept most abundant per family; human-only families unchanged)."
+            f"(human-only families unchanged; multi-human mixed families keep all humans)."
         )
-        for family, winner, dropped_members, mode in collapsed_families:
-            w_acc = winner.get("accession", "?")
-            w_reads = int(winner.get("mapped_reads", 0) or 0)
-            w_host = (winner.get("host_group") or "?").strip() or "?"
-            w_sp = (winner.get("viral_species") or winner.get("organism") or "").strip()
+        for family, winners, dropped_members, mode in collapsed_families:
+            kept_bits = []
+            for winner in winners:
+                w_acc = winner.get("accession", "?")
+                w_reads = int(winner.get("mapped_reads", 0) or 0)
+                w_host = (winner.get("host_group") or "?").strip() or "?"
+                w_sp = (winner.get("viral_species") or winner.get("organism") or "").strip()
+                kept_bits.append(
+                    f"{w_acc} ({w_host}, {w_reads} reads"
+                    + (f", {w_sp}" if w_sp else "")
+                    + ")"
+                )
             dropped_accs = [s.get("accession", "?") for s in dropped_members[:8]]
             extra = "" if len(dropped_members) <= 8 else "..."
             logger.info(
-                f"  - {family} [{mode}]: kept {w_acc} ({w_host}, {w_reads} reads"
-                + (f", {w_sp}" if w_sp else "")
-                + f"); dropped {len(dropped_members)} "
-                f"[{', '.join(dropped_accs)}{extra}]"
+                f"  - {family} [{mode}]: kept {', '.join(kept_bits)}; "
+                f"dropped {len(dropped_members)} [{', '.join(dropped_accs)}{extra}]"
             )
     else:
         logger.info("Family-level collapse: no mixed-host or multi non-human families to collapse.")
@@ -2461,12 +2485,16 @@ def _filter_rvdb_short_mag_gene_fragments(
 
 
 def _filter_refseq_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
-    """Remove curated out-of-scope groups from a RefSeq FASTA."""
+    """Remove curated out-of-scope groups from a RefSeq FASTA; also drop synthetics."""
     _filter_excluded_groups_from_fasta(
         fasta_path,
         metadata_file,
         _get_refseq_group_annotation_csv(),
         label="RefSeq",
+    )
+    # Same synthetic/artificial filter as RVDB (header now; taxonomy after dumps exist).
+    _filter_synthetic_sequences(
+        fasta_path, metadata_file, force_taxonomy_scan=False, db_label="RefSeq"
     )
 
 
@@ -2612,18 +2640,33 @@ def _load_synthetic_organism_accessions(database_dir: Path) -> set:
     return found
 
 
-def _filter_rvdb_synthetic_sequences(
+def _rvdb_taxonomy_dumps_available(database_dir: Path) -> bool:
+    """True when nodes.dmp + accession2taxid exist for artificial-sequence filtering."""
+    ncbi_dir = get_taxonomy_dir(database_dir, create=False) / "ncbi_files"
+    nodes = ncbi_dir / "nodes.dmp"
+    if not nodes.exists():
+        return False
+    return bool(list(ncbi_dir.glob("*accession2taxid*")))
+
+
+def _filter_synthetic_sequences(
     fasta_path: Path,
     metadata_file: Path,
     force_taxonomy_scan: bool = False,
+    db_label: str = "database",
 ) -> None:
     """
-    Remove synthetic / artificial sequences from an RVDB FASTA.
+    Remove synthetic / artificial sequences from a viral FASTA (RVDB or RefSeq).
 
     Matches:
     - headers containing 'synthetic' / 'artificial sequence(s)'
     - accessions under NCBI taxid 81077 ('artificial sequences'), when taxonomy dumps exist
+      (needed for cases like EU410304 whose header does not say 'synthetic')
     - accessions whose cached organism name contains 'synthetic'
+
+    Note: `synthetic_taxonomy_filtered` is set only after a successful taxonomy scan.
+    Header-only passes must not mark taxonomy filtering as done (DB rebuilds before
+    taxonomy is ready used to skip EU410304 permanently).
     """
     fasta_path = Path(fasta_path)
     metadata_file = Path(metadata_file)
@@ -2639,21 +2682,31 @@ def _filter_rvdb_synthetic_sequences(
         re.I,
     )
 
-    # Fast pass: header keywords always applied.
-    # Taxonomy lineage scan is expensive; skip if already done unless forced (prepare-db).
-    do_tax_scan = force_taxonomy_scan or not bool(meta.get("synthetic_sequences_filtered"))
+    tax_available = _rvdb_taxonomy_dumps_available(database_dir)
+    # Always header-filter. Run taxonomy scan whenever dumps exist and we have not
+    # completed a taxonomy-backed pass yet (or when forced after --prepare-db).
+    do_tax_scan = bool(
+        force_taxonomy_scan
+        or (tax_available and not bool(meta.get("synthetic_taxonomy_filtered")))
+    )
 
     remove_accs = set()
     if do_tax_scan:
-        fasta_accs = _collect_fasta_accessions(fasta_path)
-        tax_accs = _load_artificial_sequence_accessions(database_dir, fasta_accs)
-        if tax_accs:
+        if not tax_available:
             logger.info(
-                f"Synthetic/artificial taxonomy filter: {len(tax_accs):,} accession key(s) "
-                f"under NCBI 'artificial sequences' (taxid 81077)."
+                f"{db_label} synthetic filter: taxonomy dumps not available yet; "
+                "header-only pass (will re-scan when taxonomy is ready)."
             )
-            remove_accs |= tax_accs
-        remove_accs |= _load_synthetic_organism_accessions(database_dir)
+        else:
+            fasta_accs = _collect_fasta_accessions(fasta_path)
+            tax_accs = _load_artificial_sequence_accessions(database_dir, fasta_accs)
+            if tax_accs:
+                logger.info(
+                    f"Synthetic/artificial taxonomy filter ({db_label}): {len(tax_accs):,} accession key(s) "
+                    f"under NCBI 'artificial sequences' (taxid 81077)."
+                )
+                remove_accs |= tax_accs
+            remove_accs |= _load_synthetic_organism_accessions(database_dir)
 
     tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_synthetic")
     kept = 0
@@ -2699,7 +2752,7 @@ def _filter_rvdb_synthetic_sequences(
                     pass
         detail = ", ".join(f"{k}: {v}" for k, v in sorted(removed_reasons.items()))
         logger.info(
-            f"RVDB synthetic/artificial filter: removed {removed:,} sequence(s) ({detail}); "
+            f"{db_label} synthetic/artificial filter: removed {removed:,} sequence(s) ({detail}); "
             f"kept {kept:,}."
         )
     else:
@@ -2707,11 +2760,16 @@ def _filter_rvdb_synthetic_sequences(
             tmp_out.unlink()
         except FileNotFoundError:
             pass
-        if do_tax_scan:
-            logger.info("RVDB synthetic/artificial filter: no synthetic sequences found.")
+        if do_tax_scan and tax_available:
+            logger.info(f"{db_label} synthetic/artificial filter: no synthetic sequences found.")
+        elif do_tax_scan:
+            logger.info(
+                f"{db_label} synthetic/artificial filter: header-only pass complete "
+                "(taxonomy scan deferred until NCBI dumps are available)."
+            )
         else:
             logger.info(
-                "RVDB synthetic/artificial filter: previously applied; "
+                f"{db_label} synthetic/artificial filter: taxonomy pass already done; "
                 "no synthetic headers remaining."
             )
 
@@ -2719,13 +2777,31 @@ def _filter_rvdb_synthetic_sequences(
         meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
     except Exception:
         meta = {}
-    meta["synthetic_sequences_filtered"] = True
+    meta["synthetic_header_filtered"] = True
+    if do_tax_scan and tax_available:
+        meta["synthetic_taxonomy_filtered"] = True
+        meta["synthetic_sequences_filtered"] = True
+    elif not tax_available:
+        # Do NOT claim taxonomy filtering is done — EU410304-like entries need it.
+        meta["synthetic_sequences_filtered"] = False
     try:
-        # Prefer stable metadata writer if available in this scope; else write JSON.
         with open(metadata_file, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
     except OSError as e:
         logger.warning(f"Could not update metadata after synthetic filter: {e}")
+
+
+# Backward-compatible alias
+_filter_rvdb_synthetic_sequences = _filter_synthetic_sequences
+
+
+def _db_label_from_fasta_path(fasta_path: Path) -> str:
+    p = str(fasta_path).lower()
+    if "rvdb" in p:
+        return "RVDB"
+    if "refseq" in p:
+        return "RefSeq"
+    return "database"
 
 
 def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
@@ -2739,7 +2815,72 @@ def _filter_rvdb_excluded_groups(fasta_path: Path, metadata_file: Path) -> None:
     # Also drop short MAG gene/protein stubs (<3 kb, not complete genomes).
     _filter_rvdb_short_mag_gene_fragments(fasta_path, metadata_file, max_length=3000)
     # Drop synthetic / artificial sequences (e.g. synthetic Vaccinia virus).
-    _filter_rvdb_synthetic_sequences(fasta_path, metadata_file, force_taxonomy_scan=False)
+    # Header-only if taxonomy dumps are not ready yet; call
+    # _ensure_synthetic_filter_after_taxonomy() once NCBI dumps exist.
+    _filter_synthetic_sequences(
+        fasta_path, metadata_file, force_taxonomy_scan=False, db_label="RVDB"
+    )
+
+
+def _ensure_synthetic_filter_after_taxonomy(database_fasta: Path) -> None:
+    """
+    After taxonomy dumps are available, remove synthetic/artificial sequences
+    from RVDB or RefSeq that cannot be detected from FASTA headers alone
+    (e.g. EU410304).
+
+    Safe to call on every run: skips the expensive taxonomy scan once
+    `synthetic_taxonomy_filtered` is set in database_metadata.json.
+    Rebuilds the minimap2 index if sequences were removed.
+    """
+    fp = Path(database_fasta)
+    label = _db_label_from_fasta_path(fp)
+    if label not in ("RVDB", "RefSeq"):
+        return
+    if not fp.exists():
+        return
+    meta_file = fp.parent / "database_metadata.json"
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {}
+    except Exception:
+        meta = {}
+
+    tax_ready = _rvdb_taxonomy_dumps_available(fp.parent)
+    already_done = bool(meta.get("synthetic_taxonomy_filtered"))
+    if already_done and tax_ready:
+        logger.info(
+            f"{label} synthetic/artificial taxonomy filter already applied "
+            f"({fp.name}); skipping re-scan."
+        )
+        return
+    if not tax_ready:
+        logger.warning(
+            f"{label} taxonomy dumps not ready; synthetic/artificial sequences that lack "
+            "'synthetic' in the header (e.g. EU410304) may remain until taxonomy is built."
+        )
+        return
+
+    before_mtime = fp.stat().st_mtime
+    logger.info(
+        f"Applying {label} synthetic/artificial filter with NCBI taxonomy "
+        "(artificial sequences taxid 81077)..."
+    )
+    _filter_synthetic_sequences(
+        fp, meta_file, force_taxonomy_scan=True, db_label=label
+    )
+    # Rebuild index if FASTA changed (sequences removed).
+    try:
+        after_mtime = fp.stat().st_mtime
+    except OSError:
+        after_mtime = before_mtime
+    if after_mtime != before_mtime or not Path(str(fp) + ".mmi").exists():
+        try:
+            ensure_minimap2_index(fp)
+        except Exception as e:
+            logger.warning(f"Could not rebuild minimap2 index after synthetic filter: {e}")
+
+
+# Backward-compatible alias
+_ensure_rvdb_synthetic_filter_after_taxonomy = _ensure_synthetic_filter_after_taxonomy
 
 
 def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path) -> None:
@@ -4493,7 +4634,12 @@ def _prefer_reference_stat(current: dict, existing: dict) -> dict:
 
 
 def _load_fasta_sequences_for_accessions(database_fasta: Path, accessions: set) -> dict:
-    """Load selected accession sequences from a FASTA (versioned + unversioned keys)."""
+    """
+    Load selected accession sequences from a FASTA (versioned + unversioned keys).
+
+    Uses extract_accession_from_header so RVDB/RefSeq pipe headers
+    (acc|REFSEQ|NC_001477.1|...) are matched correctly — not the raw first token.
+    """
     wanted = set()
     for acc in accessions:
         if not acc:
@@ -4517,7 +4663,10 @@ def _load_fasta_sequences_for_accessions(database_fasta: Path, accessions: set) 
                     out[cur_acc] = seq
                     out[cur_acc.split(".")[0]] = seq
                 header = line[1:].strip()
-                acc = header.split()[0].strip() if header else ""
+                acc = extract_accession_from_header(header) if header else ""
+                if not acc:
+                    # Plain FASTA: first whitespace token
+                    acc = header.split()[0].strip() if header else ""
                 acc_base = acc.split(".")[0] if acc else ""
                 if acc in wanted or acc_base in wanted:
                     cur_acc = acc
@@ -13039,6 +13188,8 @@ Examples
 
     # Build/load taxonomy once in the parent BEFORE parallel workers start.
     # Workers still call ensure_taxonomy_resources (locked); if parent finished, they reuse it.
+    # For RVDB, synthetic/artificial filtering that needs NCBI taxonomy runs here too
+    # (fresh downloads only do a header pass during download_rvdb_database).
     if not getattr(args, "prepare_db", False):
         logger.info("Ensuring taxonomy database is finished before sample processing...")
         for database_fasta_path in database_fasta_paths:
@@ -13056,6 +13207,12 @@ Examples
                     )
             except Exception as e:
                 logger.warning(f"Could not pre-build taxonomy for {database_fasta_path}: {e}")
+            try:
+                _ensure_synthetic_filter_after_taxonomy(Path(database_fasta_path))
+            except Exception as e:
+                logger.warning(
+                    f"Synthetic filter after taxonomy failed for {database_fasta_path}: {e}"
+                )
 
     # Prepare DB only mode: download/unpack/index completed, no sample processing.
     if getattr(args, "prepare_db", False):
@@ -13078,18 +13235,16 @@ Examples
                 raise
             except Exception as e:
                 print(f"    taxonomy: failed ({e})")
-            # After taxonomy dumps exist, drop synthetic/artificial sequences from RVDB
-            # (e.g. EU410304 synthetic Vaccinia — not visible from the FASTA header alone).
-            if "rvdb" in str(fp).lower():
-                try:
-                    meta_file = fp.parent / "database_metadata.json"
-                    logger.info("Re-applying RVDB synthetic/artificial filter with taxonomy...")
-                    _filter_rvdb_synthetic_sequences(fp, meta_file, force_taxonomy_scan=True)
+            # After taxonomy dumps exist, drop synthetic/artificial sequences from
+            # RVDB/RefSeq (e.g. EU410304 — not always visible from the FASTA header).
+            try:
+                _ensure_synthetic_filter_after_taxonomy(fp)
+                if _db_label_from_fasta_path(fp) in ("RVDB", "RefSeq"):
                     idx = ensure_minimap2_index(fp)
                     print(f"    synthetic filter + index: {idx}")
-                except Exception as e:
-                    logger.warning(f"RVDB synthetic filter after taxonomy failed: {e}")
-                    print(f"    synthetic filter: failed ({e})")
+            except Exception as e:
+                logger.warning(f"Synthetic filter after taxonomy failed: {e}")
+                print(f"    synthetic filter: failed ({e})")
         return 0
     
     # Find samples
