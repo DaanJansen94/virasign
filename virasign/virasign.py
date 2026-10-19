@@ -4030,6 +4030,8 @@ def enrich_stats_with_organism(stats_list: list, cache_path: Path = None, databa
         return stats_list
     
     logger.info(f"Fetching ORGANISM names for {len(stats_list)} references...")
+    _genus_index = None  # lazy-loaded NCBI index for viral_genus
+    _genus_cache: Dict[str, str] = {}
     
     # Load database ONCE (SQLite is much faster than JSON for large databases)
     database = {}
@@ -4167,6 +4169,20 @@ def enrich_stats_with_organism(stats_list: list, cache_path: Path = None, databa
                     stat["viral_species"] = ""
             else:
                 stat["viral_species"] = ""
+
+        # Genus (for genus-level Z-score): resolve once per enrichment if taxonomy dumps are available.
+        if not (stat.get("viral_genus") or "").strip():
+            if _genus_index is None and nodes_file and names_file:
+                try:
+                    _genus_index = _load_ncbi_taxonomy_rank_index(nodes_file, names_file)
+                except Exception:
+                    _genus_index = False  # type: ignore
+            if _genus_index and _genus_index is not False:
+                sp_label = (stat.get("viral_species") or organism or "").strip()
+                genus = resolve_genus_from_species_label(sp_label, _genus_index, _genus_cache)
+                stat["viral_genus"] = genus or ""
+            else:
+                stat.setdefault("viral_genus", "")
         
         if (i + 1) % 10 == 0:
             logger.info(f"  Processed {i + 1}/{len(stats_list)} organisms... (database: {database_hits}, cache: {cache_hits}, API: {api_calls})")
@@ -4232,6 +4248,65 @@ def fetch_organism_from_ncbi_with_loaded_data(accession: str, database: dict = N
     
     return ""
 
+def _load_ncbi_taxonomy_rank_index(nodes_file: Path, names_file: Path) -> Optional[dict]:
+    """
+    Load a reusable NCBI taxonomy index from nodes.dmp + names.dmp.
+
+    Returns dict with:
+      - parent: taxid -> parent_taxid
+      - rank: taxid -> rank string
+      - name: taxid -> scientific name
+      - name_to_taxids: lower(scientific name) -> [taxid, ...]
+    """
+    nodes_file = Path(nodes_file) if nodes_file else None
+    names_file = Path(names_file) if names_file else None
+    if not nodes_file or not nodes_file.exists() or not names_file or not names_file.exists():
+        return None
+    parent = {}
+    rank = {}
+    with open(nodes_file, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            parts = [p.strip() for p in line.rstrip("\n\r").rstrip("\t|").split("\t|\t")]
+            if len(parts) >= 3:
+                parent[parts[0]] = parts[1]
+                rank[parts[0]] = parts[2]
+    name = {}
+    name_to_taxids: Dict[str, list] = {}
+    with open(names_file, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            parts = [p.strip() for p in line.rstrip("\n\r").rstrip("\t|").split("\t|\t")]
+            if len(parts) >= 4 and parts[3] == "scientific name":
+                tid, nm = parts[0], parts[1]
+                name[tid] = nm
+                name_to_taxids.setdefault(nm.lower(), []).append(tid)
+    return {
+        "parent": parent,
+        "rank": rank,
+        "name": name,
+        "name_to_taxids": name_to_taxids,
+    }
+
+
+def _walk_rank_name_from_taxid(taxid: str, target_rank: str, index: dict) -> str:
+    """Walk up NCBI taxonomy from taxid until target_rank; return scientific name or ''."""
+    if not taxid or not index:
+        return ""
+    target = (target_rank or "").strip().lower()
+    parent = index.get("parent") or {}
+    rank = index.get("rank") or {}
+    name = index.get("name") or {}
+    current = str(taxid)
+    visited = set()
+    while current and current not in visited:
+        visited.add(current)
+        if (rank.get(current) or "").lower() == target:
+            return (name.get(current) or "").strip()
+        current = parent.get(current)
+        if not current or current == "1":
+            break
+    return ""
+
+
 def get_species_from_taxid(taxid: str, nodes_file: Path = None, names_file: Path = None, taxid_to_species_cache: dict = None) -> str:
     """
     Get species name from taxid using local taxonomy files (offline).
@@ -4253,57 +4328,81 @@ def get_species_from_taxid(taxid: str, nodes_file: Path = None, names_file: Path
     if taxid_to_species_cache is not None and taxid in taxid_to_species_cache:
         return taxid_to_species_cache[taxid]
     
-    if not nodes_file or not nodes_file.exists() or not names_file or not names_file.exists():
+    index = _load_ncbi_taxonomy_rank_index(nodes_file, names_file)
+    species_name = _walk_rank_name_from_taxid(str(taxid), "species", index) if index else ""
+    if species_name and taxid_to_species_cache is not None:
+        taxid_to_species_cache[taxid] = species_name
+    return species_name
+
+
+def resolve_genus_from_species_label(species_label: str, index: Optional[dict], cache: Optional[dict] = None) -> str:
+    """
+    Resolve NCBI genus for a species (or organism) scientific name using a loaded taxonomy index.
+    """
+    label = (species_label or "").strip()
+    if not label or not index:
         return ""
-    
-    # Parse nodes.dmp to build parent mapping: taxid -> parent_taxid, rank
-    taxid_to_parent = {}
-    taxid_to_rank = {}
-    with open(nodes_file, 'r') as f:
-        for line in f:
-            parts = [p.strip() for p in line.rstrip('\n\r').rstrip('\t|').split('\t|\t')]
-            if len(parts) >= 3:
-                child_taxid = parts[0]
-                parent_taxid = parts[1]
-                rank = parts[2]
-                taxid_to_parent[child_taxid] = parent_taxid
-                taxid_to_rank[child_taxid] = rank
-    
-    # Parse names.dmp to get taxid -> name mapping
-    taxid_to_name = {}
-    with open(names_file, 'r') as f:
-        for line in f:
-            parts = [p.strip() for p in line.rstrip('\n\r').rstrip('\t|').split('\t|\t')]
-            if len(parts) >= 4:
-                tid = parts[0]
-                name = parts[1]
-                name_type = parts[3]
-                if name_type == "scientific name":
-                    taxid_to_name[tid] = name
-    
-    # Walk up the tree to find species-level taxid
-    current_taxid = taxid
-    visited = set()
-    
-    while current_taxid and current_taxid not in visited:
-        visited.add(current_taxid)
-        
-        # Check if current taxid is at species rank
-        rank = taxid_to_rank.get(current_taxid, "").lower()
-        if rank == "species":
-            species_name = taxid_to_name.get(current_taxid, "")
-            if species_name:
-                # Update cache if provided
-                if taxid_to_species_cache is not None:
-                    taxid_to_species_cache[taxid] = species_name
-                return species_name
-        
-        # Move to parent
-        current_taxid = taxid_to_parent.get(current_taxid)
-        if not current_taxid or current_taxid == "1":  # Root of tree
+    key = label.lower()
+    if cache is not None and key in cache:
+        return cache[key]
+    taxids = (index.get("name_to_taxids") or {}).get(key) or []
+    rank = index.get("rank") or {}
+    # Prefer an exact species-rank taxid when multiple names collide.
+    ordered = sorted(taxids, key=lambda t: 0 if (rank.get(t) or "").lower() == "species" else 1)
+    genus = ""
+    for tid in ordered:
+        genus = _walk_rank_name_from_taxid(tid, "genus", index)
+        if genus:
             break
-    
-    return ""
+        # Name may already be at genus rank.
+        if (rank.get(tid) or "").lower() == "genus":
+            genus = ((index.get("name") or {}).get(tid) or "").strip()
+            if genus:
+                break
+    if cache is not None:
+        cache[key] = genus
+    return genus
+
+
+def discover_ncbi_taxonomy_dumps(*search_roots) -> Tuple[Optional[Path], Optional[Path]]:
+    """Find nodes.dmp + names.dmp under typical Virasign/Metatropics database layouts."""
+    seen = set()
+    roots = []
+    for root in search_roots:
+        if not root:
+            continue
+        try:
+            p = Path(root).resolve()
+        except Exception:
+            continue
+        for _ in range(7):
+            if p in seen:
+                break
+            seen.add(p)
+            roots.append(p)
+            if p.parent == p:
+                break
+            p = p.parent
+    for root in roots:
+        for rel in (
+            Path("taxonomy") / "ncbi_files",
+            Path("ncbi_files"),
+        ):
+            nodes = root / rel / "nodes.dmp"
+            names = root / rel / "names.dmp"
+            if nodes.exists() and names.exists():
+                return nodes, names
+        # DB trees: <root>/Databases/<DB>/taxonomy/ncbi_files/
+        db_root = root / "Databases"
+        if db_root.is_dir():
+            try:
+                for nodes in db_root.glob("*/taxonomy/ncbi_files/nodes.dmp"):
+                    names = nodes.parent / "names.dmp"
+                    if names.exists():
+                        return nodes, names
+            except Exception:
+                pass
+    return None, None
 
 def fetch_species_from_ncbi(accession: str, database_path: Path = None, cache_path: Path = None, nodes_file: Path = None, names_file: Path = None, max_retries: int = 3) -> str:
     """
@@ -9523,9 +9622,8 @@ def generate_html_visualization(
     def _is_water_sample_name(name: str) -> bool:
         return is_water_sample_name(name)
 
-    def _label_for_zscore(hit: dict) -> str:
-        # Use the same "practical virus label" used throughout outputs when available.
-        # Fallback to organism, then accession.
+    def _species_label_for_zscore(hit: dict) -> str:
+        # Species-level Z-score key (preferred practical virus label).
         if not isinstance(hit, dict):
             return ""
         for k in ("viral_species", "organism", "accession"):
@@ -9533,6 +9631,10 @@ def generate_html_visualization(
             if v:
                 return v
         return ""
+
+    def _label_for_zscore(hit: dict) -> str:
+        # Backward-compatible alias (species key).
+        return _species_label_for_zscore(hit)
 
     def _compute_and_write_zscores(
         *,
@@ -9610,58 +9712,135 @@ def generate_html_visualization(
         if not sample_hits:
             return controls_set, {}
 
+        # Resolve genus labels once (species Z is primary; genus Z uses summed reads).
+        nodes_file, names_file = discover_ncbi_taxonomy_dumps(output_dir)
+        tax_index = None
+        if nodes_file and names_file:
+            try:
+                tax_index = _load_ncbi_taxonomy_rank_index(nodes_file, names_file)
+                if tax_index:
+                    logger.info(
+                        f"Z-score: loaded NCBI taxonomy for genus labels from {nodes_file.parent}"
+                    )
+            except Exception as e:
+                logger.debug(f"Z-score: could not load NCBI taxonomy dumps: {e}")
+                tax_index = None
+        genus_cache: Dict[str, str] = {}
         # Z-scores are computed per database (control background must not mix RVDB/RefSeq).
         dbs = sorted({db for (_, db) in sample_hits.keys()})
         eps = 1e-6
         z_cap = 100.0
 
+        def _genus_label_for_zscore(hit: dict) -> str:
+            if not isinstance(hit, dict):
+                return ""
+            g = (hit.get("viral_genus") or "").strip()
+            if g:
+                return g
+            sp = _species_label_for_zscore(hit)
+            if not sp or not tax_index:
+                return ""
+            g = resolve_genus_from_species_label(sp, tax_index, genus_cache)
+            if g:
+                hit["viral_genus"] = g
+            return g or ""
+
+        def _clip_z(z: float) -> float:
+            if z > z_cap:
+                return z_cap
+            if z < -z_cap:
+                return -z_cap
+            return float(z)
+
+        def _mu_sigma_from_control_logs(vals: List[float]) -> Tuple[float, float]:
+            try:
+                mu = float(mean(vals))
+                sigma = float(stdev(vals)) if len(vals) >= 2 else 0.0
+            except Exception:
+                mu, sigma = 0.0, 0.0
+            return mu, sigma
+
+        def _z_from_count(x: int, mu: float, sigma: float) -> float:
+            y = float(math.log10(max(0, int(x)) + 1))
+            denom = sigma if sigma > 0 else eps
+            return _clip_z((y - mu) / denom)
+
         for db_name in dbs:
             db_keys = [k for k in sample_hits if k[1] == db_name]
-            labels: set = set()
+
+            # Ensure genus labels are populated where possible before aggregation.
             for key in db_keys:
                 for h in sample_hits[key]:
-                    lab = _label_for_zscore(h)
-                    if lab:
-                        labels.add(lab)
-            if not labels:
+                    if isinstance(h, dict):
+                        _genus_label_for_zscore(h)
+
+            species_labels: set = set()
+            genus_labels: set = set()
+            for key in db_keys:
+                for h in sample_hits[key]:
+                    if not isinstance(h, dict):
+                        continue
+                    sl = _species_label_for_zscore(h)
+                    if sl:
+                        species_labels.add(sl)
+                    gl = _genus_label_for_zscore(h)
+                    if gl:
+                        genus_labels.add(gl)
+            if not species_labels and not genus_labels:
                 continue
 
-            control_values: Dict[str, List[float]] = {}
-            for lab in labels:
+            # Species background: one mapped_reads value per species label per control.
+            species_mu_sigma: Dict[str, Tuple[float, float]] = {}
+            for lab in species_labels:
                 vals = []
                 for c in controls:
                     hits = sample_hits.get((c, db_name)) or []
                     x = 0
                     for h in hits:
-                        if _label_for_zscore(h) == lab:
+                        if _species_label_for_zscore(h) == lab:
                             x = int(h.get("mapped_reads", 0) or 0)
                             break
                     vals.append(float(math.log10(x + 1)))
-                control_values[lab] = vals
+                species_mu_sigma[lab] = _mu_sigma_from_control_logs(vals)
 
-            mu_sigma: Dict[str, Tuple[float, float]] = {}
-            for lab, vals in control_values.items():
-                try:
-                    mu = float(mean(vals))
-                    sigma = float(stdev(vals)) if len(vals) >= 2 else 0.0
-                except Exception:
-                    mu, sigma = 0.0, 0.0
-                mu_sigma[lab] = (mu, sigma)
+            # Genus background: sum mapped_reads across all hits of that genus in each control.
+            def _genus_read_sum(hits: List[dict], genus: str) -> int:
+                total = 0
+                for h in hits:
+                    if not isinstance(h, dict):
+                        continue
+                    if _genus_label_for_zscore(h) == genus:
+                        total += int(h.get("mapped_reads", 0) or 0)
+                return total
+
+            genus_mu_sigma: Dict[str, Tuple[float, float]] = {}
+            for lab in genus_labels:
+                vals = []
+                for c in controls:
+                    hits = sample_hits.get((c, db_name)) or []
+                    vals.append(float(math.log10(_genus_read_sum(hits, lab) + 1)))
+                genus_mu_sigma[lab] = _mu_sigma_from_control_logs(vals)
 
             for key in db_keys:
                 sample_name, _db = key
                 hits = sample_hits[key]
                 jf = sample_jf[key]
                 base_dir = jf.parent
+                _z_keys = (
+                    "zscore",
+                    "zscore_species",
+                    "zscore_genus",
+                    "zscore_controls",
+                )
 
                 if sample_name in controls_set:
                     cleared = False
                     for h in hits:
                         if not isinstance(h, dict):
                             continue
-                        if "zscore" in h or "zscore_controls" in h:
-                            h.pop("zscore", None)
-                            h.pop("zscore_controls", None)
+                        if any(k in h for k in _z_keys):
+                            for k in _z_keys:
+                                h.pop(k, None)
                             cleared = True
                     if cleared:
                         try:
@@ -9680,8 +9859,11 @@ def generate_html_visualization(
                                     with open(sidecar, "r") as sf:
                                         payload = json.load(sf)
                                     if isinstance(payload, dict):
-                                        payload.pop("zscore", None)
-                                        payload.pop("zscore_controls", None)
+                                        for k in _z_keys:
+                                            payload.pop(k, None)
+                                        if isinstance(payload.get("hit"), dict):
+                                            for k in _z_keys:
+                                                payload["hit"].pop(k, None)
                                         with open(sidecar, "w") as sf:
                                             json.dump(payload, sf, indent=2)
                                 except Exception:
@@ -9692,23 +9874,28 @@ def generate_html_visualization(
                             )
                     continue
 
+                sample_genus_sums = {
+                    lab: _genus_read_sum(hits, lab) for lab in genus_labels
+                }
+
                 changed = False
                 for h in hits:
                     if not isinstance(h, dict):
                         continue
-                    lab = _label_for_zscore(h)
-                    if not lab:
+                    sp = _species_label_for_zscore(h)
+                    gn = _genus_label_for_zscore(h)
+                    if not sp and not gn:
                         continue
-                    x = int(h.get("mapped_reads", 0) or 0)
-                    y = float(math.log10(x + 1))
-                    mu, sigma = mu_sigma.get(lab, (0.0, 0.0))
-                    denom = sigma if sigma > 0 else eps
-                    z = (y - mu) / denom
-                    if z > z_cap:
-                        z = z_cap
-                    elif z < -z_cap:
-                        z = -z_cap
-                    h["zscore"] = float(z)
+                    if sp:
+                        mu, sigma = species_mu_sigma.get(sp, (0.0, 0.0))
+                        x = int(h.get("mapped_reads", 0) or 0)
+                        z_sp = _z_from_count(x, mu, sigma)
+                        h["zscore_species"] = float(z_sp)
+                        h["zscore"] = float(z_sp)  # backward-compatible alias
+                    if gn:
+                        mu, sigma = genus_mu_sigma.get(gn, (0.0, 0.0))
+                        x = int(sample_genus_sums.get(gn, 0) or 0)
+                        h["zscore_genus"] = float(_z_from_count(x, mu, sigma))
                     h["zscore_controls"] = controls
                     changed = True
 
@@ -9740,7 +9927,17 @@ def generate_html_visualization(
                         if not isinstance(payload, dict):
                             payload = {}
                         payload["zscore"] = h.get("zscore")
+                        payload["zscore_species"] = h.get("zscore_species", h.get("zscore"))
+                        payload["zscore_genus"] = h.get("zscore_genus")
                         payload["zscore_controls"] = controls
+                        if isinstance(payload.get("hit"), dict):
+                            payload["hit"]["zscore"] = h.get("zscore")
+                            payload["hit"]["zscore_species"] = h.get(
+                                "zscore_species", h.get("zscore")
+                            )
+                            payload["hit"]["zscore_genus"] = h.get("zscore_genus")
+                            if h.get("viral_genus"):
+                                payload["hit"]["viral_genus"] = h.get("viral_genus")
                         with open(sidecar, "w") as sf:
                             json.dump(payload, sf, indent=2)
                 except Exception as e:
@@ -9816,12 +10013,15 @@ def generate_html_visualization(
                         "coverage_breadth",
                         "organism",
                         "viral_species",
+                        "viral_genus",
                         "segment",
                         "nextclade_clade",
                         "nextclade_dataset",
                         "database_source",
                         "description",
                         "zscore",
+                        "zscore_species",
+                        "zscore_genus",
                         "zscore_controls",
                     )
                     for item in data:
@@ -9851,9 +10051,16 @@ def generate_html_visualization(
                                 or item.get(k) == ""
                             ):
                                 item[k] = hit.get(k)
-                        # Sidecar top-level zscore (written by Z-score step) if hit lacks it.
+                        # Sidecar top-level zscore fields (written by Z-score step) if hit lacks them.
                         if item.get("zscore") is None and payload.get("zscore") is not None:
                             item["zscore"] = payload.get("zscore")
+                        if item.get("zscore_species") is None:
+                            if payload.get("zscore_species") is not None:
+                                item["zscore_species"] = payload.get("zscore_species")
+                            elif item.get("zscore") is not None:
+                                item["zscore_species"] = item.get("zscore")
+                        if item.get("zscore_genus") is None and payload.get("zscore_genus") is not None:
+                            item["zscore_genus"] = payload.get("zscore_genus")
                         if (
                             not item.get("zscore_controls")
                             and payload.get("zscore_controls") is not None
@@ -10255,9 +10462,22 @@ def generate_html_visualization(
                     for ref in refs:
                         if isinstance(ref, dict):
                             ref.pop("zscore", None)
+                            ref.pop("zscore_species", None)
+                            ref.pop("zscore_genus", None)
                             ref.pop("zscore_controls", None)
 
-        # Prepare data for JavaScript (only this database)
+        # Prepare data for JavaScript (only this database).
+        # Omit genus Z-score fields from the HTML payload (kept in CSV / per-hit JSON).
+        _html_omit_ref_keys = frozenset({"zscore_genus", "viral_genus"})
+
+        def _refs_for_html(refs):
+            out = []
+            for r in refs or []:
+                if not isinstance(r, dict):
+                    continue
+                out.append({k: v for k, v in r.items() if k not in _html_omit_ref_keys})
+            return out
+
         # Include ALL samples, even if they have no viruses detected
         db_samples_json = {}
         db_samples_list = []
@@ -10269,7 +10489,7 @@ def generate_html_visualization(
                     md = run_metadata_by_sample.get(sample_name)
                 db_samples_json[sample_name] = {
                     database_name: {
-                        "references": db_samples_data[sample_name][database_name],
+                        "references": _refs_for_html(db_samples_data[sample_name][database_name]),
                         "metadata": md if md is not None else {
                             "database_source": database_name,
                             "database_used": "",
@@ -10307,7 +10527,12 @@ def generate_html_visualization(
         
         # Generate HTML for this database
         samples_json_str = json_module.dumps(db_samples_json).replace('</', '<\\/')
-        heatmap_data_str = json_module.dumps(heatmap_data).replace('</', '<\\/')
+        heatmap_for_html = {}
+        for sp, by_sample in (heatmap_data or {}).items():
+            heatmap_for_html[sp] = {
+                sname: _refs_for_html(refs) for sname, refs in (by_sample or {}).items()
+            }
+        heatmap_data_str = json_module.dumps(heatmap_for_html).replace('</', '<\\/')
         all_samples_list = sorted(db_samples_list)
 
         any_hits = any(
@@ -10870,16 +11095,16 @@ def generate_html_visualization(
                     <table id="table-{sample_name}" style="table-layout: fixed;">
                         <colgroup>
                             <col style="width: 140px;">
-                            <col style="width: 220px;">
-                            <col style="width: 220px;">
-                            <col style="width: 90px;">
-                            <col style="width: 90px;">
+                            <col style="width: 200px;">
+                            <col style="width: 200px;">
+                            <col style="width: 80px;">
+                            <col style="width: 80px;">
+                            <col style="width: 100px;">
+                            <col style="width: 80px;">
+                            <col style="width: 80px;">
+                            <col style="width: 100px;">
+                            <col style="width: 100px;">
                             <col style="width: 110px;">
-                            <col style="width: 90px;">
-                            <col style="width: 90px;">
-                            <col style="width: 110px;">
-                            <col style="width: 110px;">
-                            <col style="width: 90px;">
                         </colgroup>
                         <thead>
                             <tr class="filter-row" id="filters-{sample_name}">
@@ -10893,7 +11118,7 @@ def generate_html_visualization(
                                 <th><input type="text" placeholder="Min Depth" onkeyup="applyAllFilters('{sample_name}')"></th>
                                 <th><input type="text" placeholder="Min Breadth" onkeyup="applyAllFilters('{sample_name}')"></th>
                                 <th><input type="text" placeholder="Min NOGR" onkeyup="applyAllFilters('{sample_name}')"></th>
-                                <th><input type="text" placeholder="Min Z-score" onkeyup="applyAllFilters('{sample_name}')"></th>
+                                <th><input type="text" placeholder="Min Z-score (species)" onkeyup="applyAllFilters('{sample_name}')"></th>
                             </tr>
                             <tr>
                                 <th>Accession</th>
@@ -10906,7 +11131,7 @@ def generate_html_visualization(
                                 <th class="stats sortable" data-sort="depth">Depth (x)</th>
                                 <th class="stats sortable" data-sort="breadth">Breadth (%)</th>
                                 <th class="stats sortable" data-sort="nogr_regions" title="NOGR regions | % of viral reference length">NOGR (#|%)</th>
-                                <th class="stats sortable" data-sort="zscore">Z-score</th>
+                                <th class="stats sortable" data-sort="zscore_species" title="Z-score vs water controls at viral species level">Z-score (species)</th>
                             </tr>
                         </thead>
                         <tbody id="tbody-{sample_name}">
@@ -11115,7 +11340,9 @@ def generate_html_visualization(
                 const identity = ref.avg_identity || 0;
                 const depth = ref.coverage_depth || 0;
                 const breadth = ref.coverage_breadth || 0;
-                const zscore = (ref.zscore !== undefined && ref.zscore !== null) ? ref.zscore : null;
+                const zSpRaw = (ref.zscore_species !== undefined && ref.zscore_species !== null)
+                    ? ref.zscore_species
+                    : ((ref.zscore !== undefined && ref.zscore !== null) ? ref.zscore : null);
                 const hasCov = !!(ref.coverage_profile && ref.coverage_profile.depths && ref.coverage_profile.depths.length > 0);
                 const covClick = hasCov ? `onclick="openCoverageModal('${{sampleName}}','${{accession}}')"` : '';
                 const covTitle = hasCov ? 'title="Click to view coverage plot"' : '';
@@ -11126,7 +11353,9 @@ def generate_html_visualization(
                         data-segment="${{segmentAttr}}"
                         data-reads="${{reads}}" data-nogr-regions="${{nogrRegions}}" data-nogr-bases="${{nogrBases}}"
                         data-nogr-pct="${{nogrPct === null ? '' : nogrPct.toFixed(1)}}"
-                        data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}" data-zscore="${{zscore === null ? '' : zscore}}"
+                        data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}"
+                        data-zscore="${{zSpRaw === null ? '' : zSpRaw}}"
+                        data-zscore-species="${{zSpRaw === null ? '' : zSpRaw}}"
                         data-has-coverage="${{hasCov}}" ${{covClick}} ${{covTitle}}>
                         <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank" onclick="event.stopPropagation()">${{accession}}</a></td>
                         <td>${{organism}}</td>
@@ -11138,7 +11367,7 @@ def generate_html_visualization(
                         <td class="stats">${{depth.toFixed(2)}}x</td>
                         <td class="stats">${{(breadth * 100).toFixed(1)}}%${{hasCov ? ' <span style="font-size:0.85em;opacity:0.7" title="View coverage plot">📊</span>' : ''}}</td>
                         <td class="stats" title="NOGR regions | % of reference length">${{nogrDisp}}</td>
-                        <td class="stats">${{zscore === null ? '—' : Number(zscore).toFixed(2)}}</td>
+                        <td class="stats" title="Species-level Z-score">${{zSpRaw === null ? '—' : Number(zSpRaw).toFixed(2)}}</td>
                     </tr>
                 `;
             }});
@@ -11172,9 +11401,9 @@ def generate_html_visualization(
                     const filterLower = filterValue.toLowerCase();
                     const filterTrimmed = filterValue;
                     
-                    // Columns 5-10 are numeric-ish (reads, identity, depth, breadth, NOGR, Z-score).
-                    // NOGR is shown as "regions|bases"; for numeric filtering we treat it as NOGR regions.
-                    const isNumericColumn = colIndex >= 5 && colIndex <= 10;
+                    // Columns 5-11 are numeric-ish (reads, identity, depth, breadth, NOGR, Z-sp, Z-gen).
+                    // NOGR is shown as "regions|%"; for numeric filtering we treat it as NOGR regions.
+                    const isNumericColumn = colIndex >= 5 && colIndex <= 11;
                     
                     if (isNumericColumn) {{
                         if (filterTrimmed !== '') {{
@@ -11209,8 +11438,8 @@ def generate_html_visualization(
                                     // NOGR regions
                                     cellValue = parseFloat(row.getAttribute('data-nogr-regions') || 0);
                                 }} else if (colIndex === 10) {{
-                                    // Z-score (missing values treated as 0)
-                                    const zs = row.getAttribute('data-zscore');
+                                    // Z-score species (missing values treated as 0)
+                                    const zs = row.getAttribute('data-zscore-species') || row.getAttribute('data-zscore');
                                     cellValue = (zs === null || zs === '') ? 0 : parseFloat(zs);
                                 }}
                                 if (cellValue === null || isNaN(cellValue) || cellValue < minValue) {{
@@ -11318,9 +11547,9 @@ def generate_html_visualization(
                 }} else if (sortType === 'nogr_regions') {{
                     aVal = parseFloat(a.getAttribute('data-nogr-regions') || 0);
                     bVal = parseFloat(b.getAttribute('data-nogr-regions') || 0);
-                }} else if (sortType === 'zscore') {{
-                    aVal = parseFloat(a.getAttribute('data-zscore') || 0);
-                    bVal = parseFloat(b.getAttribute('data-zscore') || 0);
+                }} else if (sortType === 'zscore' || sortType === 'zscore_species') {{
+                    aVal = parseFloat(a.getAttribute('data-zscore-species') || a.getAttribute('data-zscore') || 0);
+                    bVal = parseFloat(b.getAttribute('data-zscore-species') || b.getAttribute('data-zscore') || 0);
                 }} else if (sortType === 'identity') {{
                     aVal = parseFloat(a.getAttribute('data-identity') || 0);
                     bVal = parseFloat(b.getAttribute('data-identity') || 0);
@@ -11548,7 +11777,7 @@ def generate_html_visualization(
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
-            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads (#),Identity (%),Coverage Depth (x),Coverage Breadth (%),NOGR (#/%),Z-score\\n';
+            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads (#),Identity (%),Coverage Depth (x),Coverage Breadth (%),NOGR (#/%),Z-score (species)\\n';
             const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
             
             rows.forEach(row => {{
@@ -11803,20 +12032,29 @@ def generate_html_visualization(
             
             const filterRow = document.getElementById(`filters-${{sampleName}}`);
             if (filterRow) {{
-                const inputs = filterRow.querySelectorAll('input[type="text"]');
-                if (inputs.length >= 11) {{
-                    filters.filterAccession = inputs[0].value.trim().toLowerCase();
-                    filters.filterOrganism = inputs[1].value.trim().toLowerCase();
-                    filters.filterSpecies = inputs[2].value.trim().toLowerCase();
-                    filters.filterClade = inputs[3].value.trim().toLowerCase();
-                    filters.filterSegment = inputs[4].value.trim().toLowerCase();
-                    filters.minReads = inputs[5].value.trim() ? parseFloat(inputs[5].value.trim()) : null;
-                    filters.minIdentity = inputs[6].value.trim() ? parseFloat(inputs[6].value.trim()) : null;
-                    filters.minDepth = inputs[7].value.trim() ? parseFloat(inputs[7].value.trim()) : null;
-                    filters.minBreadth = inputs[8].value.trim() ? parseFloat(inputs[8].value.trim()) : null;
-                    filters.minNogr = inputs[9].value.trim() ? parseFloat(inputs[9].value.trim()) : null;
-                    filters.minZscore = inputs[10].value.trim() ? parseFloat(inputs[10].value.trim()) : null;
-                }}
+                const byPh = {{}};
+                filterRow.querySelectorAll('th:not([data-col]) input[type="text"]').forEach(inp => {{
+                    byPh[inp.getAttribute('placeholder') || ''] = (inp.value || '').trim();
+                }});
+                const num = (ph) => {{
+                    const raw = byPh[ph] || '';
+                    if (!raw) return null;
+                    const v = parseFloat(raw);
+                    return isNaN(v) ? null : v;
+                }};
+                filters.filterAccession = (byPh['Accession'] || '').toLowerCase();
+                filters.filterOrganism = (byPh['Organism'] || '').toLowerCase();
+                filters.filterSpecies = (byPh['Species'] || '').toLowerCase();
+                filters.filterClade = (byPh['Clade'] || '').toLowerCase();
+                filters.filterSegment = (byPh['Segment'] || '').toLowerCase();
+                filters.minReads = num('Min Reads');
+                filters.minIdentity = num('Min ID');
+                filters.minDepth = num('Min Depth');
+                filters.minBreadth = num('Min Breadth');
+                filters.minNogr = num('Min NOGR');
+                // Prefer new placeholders; fall back to legacy "Min Z-score".
+                filters.minZscore = num('Min Z-score (species)');
+                if (filters.minZscore === null) filters.minZscore = num('Min Z-score');
             }}
             
             return filters;
@@ -11882,7 +12120,10 @@ def generate_html_visualization(
             }}
 
             if (filters.minZscore !== null && !isNaN(filters.minZscore)) {{
-                const z = (ref.zscore !== undefined && ref.zscore !== null) ? parseFloat(ref.zscore) : 0;
+                const zRaw = (ref.zscore_species !== undefined && ref.zscore_species !== null)
+                    ? ref.zscore_species
+                    : ref.zscore;
+                const z = (zRaw !== undefined && zRaw !== null) ? parseFloat(zRaw) : 0;
                 if (z < filters.minZscore) {{
                     return false;
                 }}
@@ -11961,7 +12202,7 @@ def generate_html_visualization(
         }}
         
         function downloadAllSamplesCSV() {{
-            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads (#)','Avg Identity (%)','Coverage Depth (x)','Coverage Breadth (%)','NOGR (#/%)','Z-score']];
+            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads (#)','Avg Identity (%)','Coverage Depth (x)','Coverage Breadth (%)','NOGR (#/%)','Z-score (species)']];
             allSamples.forEach(sname => {{
                 const sdata = samplesData[sname];
                 if (!sdata) {{ rows.push([sname,'','','','','','','','','','','']); return; }}
@@ -11973,6 +12214,9 @@ def generate_html_visualization(
                     const nb = Number(r.nogr_bases||r.non_overlapping_bases||0) || 0;
                     const rl = Number(r.ref_length || (r.coverage_profile && r.coverage_profile.ref_len) || 0) || 0;
                     const pct = rl > 0 ? ((nb / rl) * 100).toFixed(1) : '—';
+                    const zSp = (r.zscore_species !== undefined && r.zscore_species !== null)
+                        ? r.zscore_species
+                        : r.zscore;
                     rows.push([
                         sname,
                         r.accession||'',
@@ -11985,7 +12229,7 @@ def generate_html_visualization(
                         (r.coverage_depth||0).toFixed(2),
                         ((r.coverage_breadth||0)*100).toFixed(1),
                         `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{pct}}%`,
-                        (r.zscore !== undefined && r.zscore !== null) ? Number(r.zscore).toFixed(2) : ''
+                        (zSp !== undefined && zSp !== null) ? Number(zSp).toFixed(2) : ''
                     ]);
                 }});
             }});
@@ -12533,10 +12777,10 @@ def generate_html_visualization(
         csv_buf = io.StringIO()
         writer = csv_module.writer(csv_buf)
         writer.writerow([
-            "Sample", "Accession", "Organism", "Viral Species",
+            "Sample", "Accession", "Organism", "Viral Species", "Viral Genus",
             "Nextclade Clade", "Segment",
             "Mapped Reads (#)", "Avg Identity (%)", "Coverage Depth (x)", "Coverage Breadth (%)",
-            "NOGR (#/%)", "Z-score",
+            "NOGR (#/%)", "Z-score (species)", "Z-score (genus)",
         ])
         for sname in sorted(db_samples_list):
             refs = []
@@ -12545,7 +12789,7 @@ def generate_html_visualization(
             if not refs:
                 # Empty control samples: still mark Z-score as dash (no numeric score).
                 z_empty = "-" if sname in (_controls_used or set()) else ""
-                writer.writerow([sname] + [""] * 10 + [z_empty])
+                writer.writerow([sname] + [""] * 11 + [z_empty, z_empty])
                 continue
             for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
                 nogr_r = int(ref.get("nogr_regions", ref.get("non_overlapping_reads", 0)) or 0)
@@ -12558,17 +12802,24 @@ def generate_html_visualization(
                     nogr_pct = "—"
                 nogr = f"{nogr_r}|{nogr_pct}"
                 # Controls are used only to compute Z-scores for non-control samples.
+                z_sp_raw = ref.get("zscore_species", ref.get("zscore"))
+                z_gen_raw = ref.get("zscore_genus")
                 if sname in (_controls_used or set()):
-                    z_cell = "-"
-                elif ref.get("zscore", None) is None:
-                    z_cell = "-"
+                    z_sp_cell = "-"
+                    z_gen_cell = "-"
                 else:
-                    z_cell = f"{float(ref.get('zscore') or 0.0):.2f}"
+                    z_sp_cell = (
+                        "-" if z_sp_raw is None else f"{float(z_sp_raw or 0.0):.2f}"
+                    )
+                    z_gen_cell = (
+                        "-" if z_gen_raw is None else f"{float(z_gen_raw or 0.0):.2f}"
+                    )
                 writer.writerow([
                     sname,
                     ref.get("accession", ""),
                     ref.get("organism", ""),
                     ref.get("viral_species", ""),
+                    ref.get("viral_genus", ""),
                     ref.get("nextclade_clade", ""),
                     ref.get("segment", ""),
                     ref.get("mapped_reads", 0),
@@ -12576,7 +12827,8 @@ def generate_html_visualization(
                     f"{ref.get('coverage_depth', 0):.2f}",
                     f"{ref.get('coverage_breadth', 0) * 100:.1f}",
                     nogr,
-                    z_cell,
+                    z_sp_cell,
+                    z_gen_cell,
                 ])
         _atomic_write_text(csv_file, csv_buf.getvalue())
         logger.info(f"Generated CSV summary for {database_name}: {csv_file}")
@@ -13403,7 +13655,7 @@ Examples
 
     def _annotate_sample_zscores(sample_name: str) -> None:
         """
-        Write zscore + zscore_controls into:
+        Write zscore_species / zscore_genus (+ legacy zscore) into:
         - <sample>/**/<sample>_final_selected_references.json
         - <sample>/**/<accession>/<accession>.json
 
@@ -13423,7 +13675,7 @@ Examples
         if not sample_final_jsons:
             return
 
-        def _label(hit: dict) -> str:
+        def _species_label(hit: dict) -> str:
             if not isinstance(hit, dict):
                 return ""
             for k in ("viral_species", "organism", "accession"):
@@ -13432,8 +13684,34 @@ Examples
                     return v
             return ""
 
+        nodes_file, names_file = discover_ncbi_taxonomy_dumps(output_dir)
+        tax_index = None
+        if nodes_file and names_file:
+            try:
+                tax_index = _load_ncbi_taxonomy_rank_index(nodes_file, names_file)
+            except Exception:
+                tax_index = None
+        genus_cache: Dict[str, str] = {}
+
+        def _genus_label(hit: dict) -> str:
+            if not isinstance(hit, dict):
+                return ""
+            g = (hit.get("viral_genus") or "").strip()
+            if g:
+                return g
+            sp = _species_label(hit)
+            if not sp or not tax_index:
+                return ""
+            g = resolve_genus_from_species_label(sp, tax_index, genus_cache)
+            if g:
+                hit["viral_genus"] = g
+            return g or ""
+
         eps = 1e-6
         z_cap = 100.0
+
+        def _clip(z: float) -> float:
+            return float(max(-z_cap, min(z_cap, z)))
 
         for jf in sample_final_jsons:
             try:
@@ -13445,45 +13723,78 @@ Examples
                 if not isinstance(hits, list) or not hits:
                     continue
 
-                # Load controls for this same db layout (if present).
-                control_maps: List[Dict[str, int]] = []
+                # Load control hits for this same db layout (if present).
+                control_hits_list: List[List[dict]] = []
                 for c in zscore_control_sample_names:
                     c_dir = output_dir / c
                     if db_name:
                         c_dir = c_dir / db_name
                     c_json = c_dir / f"{c}_final_selected_references.json"
-                    cmap: Dict[str, int] = {}
+                    chits: List[dict] = []
                     if c_json.exists():
                         try:
                             with open(c_json, "r", encoding="utf-8", errors="replace") as cf:
-                                chits = json.load(cf) or []
-                            if isinstance(chits, list):
-                                for h in chits:
-                                    lab = _label(h)
-                                    if not lab:
-                                        continue
-                                    cmap[lab] = int(h.get("mapped_reads", 0) or 0)
+                                loaded = json.load(cf) or []
+                            if isinstance(loaded, list):
+                                for h in loaded:
+                                    if isinstance(h, dict):
+                                        _genus_label(h)
+                                        chits.append(h)
                         except Exception:
                             pass
-                    control_maps.append(cmap)
+                    control_hits_list.append(chits)
+
+                for h in hits:
+                    if isinstance(h, dict):
+                        _genus_label(h)
+
+                def _genus_sum(hs: List[dict], genus: str) -> int:
+                    return sum(
+                        int(h.get("mapped_reads", 0) or 0)
+                        for h in hs
+                        if isinstance(h, dict) and _genus_label(h) == genus
+                    )
+
+                sample_genus_sums = {
+                    g: _genus_sum(hits, g)
+                    for g in {_genus_label(h) for h in hits if isinstance(h, dict)}
+                    if g
+                }
 
                 # Annotate sample hits.
                 for h in hits:
-                    lab = _label(h)
-                    if not lab:
+                    if not isinstance(h, dict):
                         continue
-                    x = int(h.get("mapped_reads", 0) or 0)
-                    y = float(math.log10(x + 1))
-                    y_controls = [float(math.log10(int(cm.get(lab, 0) or 0) + 1)) for cm in control_maps]
-                    mu = float(mean(y_controls)) if y_controls else 0.0
-                    sigma = float(stdev(y_controls)) if len(y_controls) >= 2 else 0.0
-                    denom = sigma if sigma > 0 else eps
-                    z = (y - mu) / denom
-                    if z > z_cap:
-                        z = z_cap
-                    elif z < -z_cap:
-                        z = -z_cap
-                    h["zscore"] = float(z)
+                    sp = _species_label(h)
+                    gn = _genus_label(h)
+                    if sp:
+                        x = int(h.get("mapped_reads", 0) or 0)
+                        y_controls = []
+                        for chits in control_hits_list:
+                            cx = 0
+                            for ch in chits:
+                                if _species_label(ch) == sp:
+                                    cx = int(ch.get("mapped_reads", 0) or 0)
+                                    break
+                            y_controls.append(float(math.log10(cx + 1)))
+                        mu = float(mean(y_controls)) if y_controls else 0.0
+                        sigma = float(stdev(y_controls)) if len(y_controls) >= 2 else 0.0
+                        denom = sigma if sigma > 0 else eps
+                        z_sp = _clip((math.log10(x + 1) - mu) / denom)
+                        h["zscore_species"] = float(z_sp)
+                        h["zscore"] = float(z_sp)
+                    if gn:
+                        xg = int(sample_genus_sums.get(gn, 0) or 0)
+                        y_controls = [
+                            float(math.log10(_genus_sum(chits, gn) + 1))
+                            for chits in control_hits_list
+                        ]
+                        mu = float(mean(y_controls)) if y_controls else 0.0
+                        sigma = float(stdev(y_controls)) if len(y_controls) >= 2 else 0.0
+                        denom = sigma if sigma > 0 else eps
+                        h["zscore_genus"] = float(
+                            _clip((math.log10(xg + 1) - mu) / denom)
+                        )
                     h["zscore_controls"] = list(zscore_control_sample_names)
 
                 with open(jf, "w") as f:
@@ -13505,7 +13816,17 @@ Examples
                     if not isinstance(payload, dict):
                         payload = {}
                     payload["zscore"] = h.get("zscore")
+                    payload["zscore_species"] = h.get("zscore_species", h.get("zscore"))
+                    payload["zscore_genus"] = h.get("zscore_genus")
                     payload["zscore_controls"] = list(zscore_control_sample_names)
+                    if isinstance(payload.get("hit"), dict):
+                        payload["hit"]["zscore"] = h.get("zscore")
+                        payload["hit"]["zscore_species"] = h.get(
+                            "zscore_species", h.get("zscore")
+                        )
+                        payload["hit"]["zscore_genus"] = h.get("zscore_genus")
+                        if h.get("viral_genus"):
+                            payload["hit"]["viral_genus"] = h.get("viral_genus")
                     with open(sidecar, "w") as sf:
                         json.dump(payload, sf, indent=2)
             except Exception as e:

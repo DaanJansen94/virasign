@@ -78,7 +78,10 @@ Z-scores are “standard deviation units” above/below background. Practical in
 ## Where it appears in outputs
 
 - Per-hit fields in `*_final_selected_references.json`:
-  - `zscore`: the computed value
+  - `zscore` / `zscore_species`: species-level Z-score
+  - `zscore_genus`: genus-level Z-score (summed mapped reads)
+  - `viral_genus`: NCBI genus label when resolved
   - `zscore_controls`: list of water samples used for the background model
-- `results_summary_*.html` and `results_summary_*.csv` include a Z-score column.
+- `results_summary_*.html` shows **Z-score (species)** only.
+- `results_summary_*.csv` includes **Viral Genus**, **Z-score (species)**, and **Z-score (genus)** for downstream use.
 
