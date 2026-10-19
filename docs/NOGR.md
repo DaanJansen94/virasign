@@ -22,5 +22,9 @@ This gives two values:
 - **`nogr_regions`**: how many **separate (non-overlapping) genomic regions** are supported
 - **`nogr_bases`**: how many **virus genome bases** are covered by those separate regions (so it can never be larger than the genome length)
 
+In HTML/CSV tables this is shown as **`NOGR (#|%)`**:
+- **#** = `nogr_regions`
+- **%** = `(nogr_bases / viral_reference_length) × 100` (1 decimal)
+
 ----
 

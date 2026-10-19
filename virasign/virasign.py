@@ -10905,7 +10905,7 @@ def generate_html_visualization(
                                 <th class="stats sortable" data-sort="identity">Ident (%)</th>
                                 <th class="stats sortable" data-sort="depth">Depth (x)</th>
                                 <th class="stats sortable" data-sort="breadth">Breadth (%)</th>
-                                <th class="stats sortable" data-sort="nogr_regions">NOGR (#|b)</th>
+                                <th class="stats sortable" data-sort="nogr_regions" title="NOGR regions | % of viral reference length">NOGR (#|%)</th>
                                 <th class="stats sortable" data-sort="zscore">Z-score</th>
                             </tr>
                         </thead>
@@ -11107,7 +11107,11 @@ def generate_html_visualization(
                 const reads = ref.mapped_reads || 0;
                 const nogrRegions = ref.nogr_regions || ref.non_overlapping_reads || 0;
                 const nogrBases = ref.nogr_bases || ref.non_overlapping_bases || 0;
-                const nogrDisp = `${{nogrRegions.toLocaleString()}}|${{nogrBases.toLocaleString()}}`;
+                const refLen = Number(ref.ref_length || (ref.coverage_profile && ref.coverage_profile.ref_len) || 0) || 0;
+                // NOGR % = non-overlapping bases / viral reference length.
+                const nogrPct = (refLen > 0) ? ((Number(nogrBases) || 0) / refLen) * 100 : null;
+                const nogrPctDisp = (nogrPct === null) ? '—' : nogrPct.toFixed(1);
+                const nogrDisp = `${{nogrRegions.toLocaleString()}}|${{nogrPctDisp}}%`;
                 const identity = ref.avg_identity || 0;
                 const depth = ref.coverage_depth || 0;
                 const breadth = ref.coverage_breadth || 0;
@@ -11121,6 +11125,7 @@ def generate_html_visualization(
                         data-clade="${{cladeAttr}}"
                         data-segment="${{segmentAttr}}"
                         data-reads="${{reads}}" data-nogr-regions="${{nogrRegions}}" data-nogr-bases="${{nogrBases}}"
+                        data-nogr-pct="${{nogrPct === null ? '' : nogrPct.toFixed(1)}}"
                         data-identity="${{identity}}" data-depth="${{depth}}" data-breadth="${{breadth}}" data-zscore="${{zscore === null ? '' : zscore}}"
                         data-has-coverage="${{hasCov}}" ${{covClick}} ${{covTitle}}>
                         <td class="accession"><a href="https://www.ncbi.nlm.nih.gov/nuccore/${{accession}}" target="_blank" onclick="event.stopPropagation()">${{accession}}</a></td>
@@ -11132,7 +11137,7 @@ def generate_html_visualization(
                         <td class="stats">${{identity.toFixed(2)}}%</td>
                         <td class="stats">${{depth.toFixed(2)}}x</td>
                         <td class="stats">${{(breadth * 100).toFixed(1)}}%${{hasCov ? ' <span style="font-size:0.85em;opacity:0.7" title="View coverage plot">📊</span>' : ''}}</td>
-                        <td class="stats">${{nogrDisp}}</td>
+                        <td class="stats" title="NOGR regions | % of reference length">${{nogrDisp}}</td>
                         <td class="stats">${{zscore === null ? '—' : Number(zscore).toFixed(2)}}</td>
                     </tr>
                 `;
@@ -11543,7 +11548,7 @@ def generate_html_visualization(
             const tbody = document.getElementById(`tbody-${{sampleName}}`);
             if (!tbody) return;
             
-            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads (#),Identity (%),Coverage Depth (x),Coverage Breadth (%),NOGR (#/bases),Z-score\\n';
+            let csv = 'Accession,Organism,Viral Species,Nextclade Clade,Segment,Mapped Reads (#),Identity (%),Coverage Depth (x),Coverage Breadth (%),NOGR (#/%),Z-score\\n';
             const rows = tbody.querySelectorAll('tr:not([style*="display: none"])');
             
             rows.forEach(row => {{
@@ -11956,7 +11961,7 @@ def generate_html_visualization(
         }}
         
         function downloadAllSamplesCSV() {{
-            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads (#)','Avg Identity (%)','Coverage Depth (x)','Coverage Breadth (%)','NOGR (#/bases)','Z-score']];
+            let rows = [['Sample','Accession','Organism','Viral Species','Nextclade Clade','Segment','Mapped Reads (#)','Avg Identity (%)','Coverage Depth (x)','Coverage Breadth (%)','NOGR (#/%)','Z-score']];
             allSamples.forEach(sname => {{
                 const sdata = samplesData[sname];
                 if (!sdata) {{ rows.push([sname,'','','','','','','','','','','']); return; }}
@@ -11965,6 +11970,9 @@ def generate_html_visualization(
                 if (refs.length === 0) {{ rows.push([sname,'','','','','','','','','','','']); return; }}
                 refs.sort((a,b) => (b.coverage_breadth||0)-(a.coverage_breadth||0));
                 refs.forEach(r => {{
+                    const nb = Number(r.nogr_bases||r.non_overlapping_bases||0) || 0;
+                    const rl = Number(r.ref_length || (r.coverage_profile && r.coverage_profile.ref_len) || 0) || 0;
+                    const pct = rl > 0 ? ((nb / rl) * 100).toFixed(1) : '—';
                     rows.push([
                         sname,
                         r.accession||'',
@@ -11976,7 +11984,7 @@ def generate_html_visualization(
                         (r.avg_identity||0).toFixed(2),
                         (r.coverage_depth||0).toFixed(2),
                         ((r.coverage_breadth||0)*100).toFixed(1),
-                        `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{(r.nogr_bases||r.non_overlapping_bases||0)}}`,
+                        `${{(r.nogr_regions||r.non_overlapping_reads||0)}}|${{pct}}%`,
                         (r.zscore !== undefined && r.zscore !== null) ? Number(r.zscore).toFixed(2) : ''
                     ]);
                 }});
@@ -12528,7 +12536,7 @@ def generate_html_visualization(
             "Sample", "Accession", "Organism", "Viral Species",
             "Nextclade Clade", "Segment",
             "Mapped Reads (#)", "Avg Identity (%)", "Coverage Depth (x)", "Coverage Breadth (%)",
-            "NOGR (#/bases)", "Z-score",
+            "NOGR (#/%)", "Z-score",
         ])
         for sname in sorted(db_samples_list):
             refs = []
@@ -12540,7 +12548,15 @@ def generate_html_visualization(
                 writer.writerow([sname] + [""] * 10 + [z_empty])
                 continue
             for ref in sorted(refs, key=lambda r: r.get("coverage_breadth", 0), reverse=True):
-                nogr = f"{int(ref.get('nogr_regions', ref.get('non_overlapping_reads', 0)) or 0)}|{int(ref.get('nogr_bases', ref.get('non_overlapping_bases', 0)) or 0)}"
+                nogr_r = int(ref.get("nogr_regions", ref.get("non_overlapping_reads", 0)) or 0)
+                nogr_b = int(ref.get("nogr_bases", ref.get("non_overlapping_bases", 0)) or 0)
+                cov = ref.get("coverage_profile") if isinstance(ref.get("coverage_profile"), dict) else {}
+                ref_len = int(ref.get("ref_length") or (cov.get("ref_len") if cov else 0) or 0)
+                if ref_len > 0:
+                    nogr_pct = f"{(100.0 * nogr_b / ref_len):.1f}%"
+                else:
+                    nogr_pct = "—"
+                nogr = f"{nogr_r}|{nogr_pct}"
                 # Controls are used only to compute Z-scores for non-control samples.
                 if sname in (_controls_used or set()):
                     z_cell = "-"
