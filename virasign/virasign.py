@@ -5815,81 +5815,8 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
         }
 
         def _non_overlapping_reads_and_bases_from_bam(bam_path: Path) -> tuple:
-            """
-            Streaming-mode NAR computation (same semantics as per-reference output mode).
-
-            Returns (non_overlapping_reads_count, non_overlapping_bases_sum) where bases is the
-            non-overlapping reference span (CIGAR ref-consuming ops M/=/X/D/N).
-            """
-            bam_path = Path(bam_path)
-            if not bam_path.exists():
-                return 0, 0
-
-            cmd = ["samtools", "view", "-F", "0x904", str(bam_path)]
-            proc2 = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-            selected_reads = 0
-            selected_bases = 0
-            best_end = None
-            best_bases = 0
-
-            try:
-                assert proc2.stdout is not None
-                for l in proc2.stdout:
-                    if not l:
-                        continue
-                    parts = l.rstrip("\n").split("\t")
-                    if len(parts) < 6:
-                        continue
-                    try:
-                        pos_1based = int(parts[3])
-                    except Exception:
-                        continue
-                    cigar = parts[5]
-                    if not cigar or cigar == "*":
-                        continue
-
-                    ref_consumed, aligned_m = cigar_aligned_bases(cigar)
-                    if ref_consumed <= 0:
-                        continue
-                    start = pos_1based - 1
-                    end = start + ref_consumed
-
-                    if best_end is None:
-                        best_end = end
-                        best_bases = ref_consumed
-                        continue
-
-                    if start > best_end:
-                        selected_reads += 1
-                        selected_bases += int(best_bases or 0)
-                        best_end = end
-                        best_bases = ref_consumed
-                    else:
-                        if end < best_end:
-                            best_end = end
-                            best_bases = ref_consumed
-            finally:
-                try:
-                    if proc2.stdout:
-                        proc2.stdout.close()
-                except Exception:
-                    pass
-                stderr2 = ""
-                try:
-                    stderr2 = proc2.stderr.read() if proc2.stderr else ""
-                except Exception:
-                    stderr2 = ""
-                rc2 = proc2.wait()
-                if rc2 != 0:
-                    logger.debug(f"samtools view failed for {bam_path}: {(stderr2 or '').strip()}")
-                    return 0, 0
-
-            if best_end is not None:
-                selected_reads += 1
-                selected_bases += int(best_bases or 0)
-
-            return int(selected_reads), int(selected_bases)
+            """NOGR count/bases/intervals via shared compute_nogr_from_bam()."""
+            return compute_nogr_from_bam(bam_path)
 
         def _start_bam_pipe(accession: str):
             acc_dir = sample_dir / accession
@@ -6053,16 +5980,17 @@ def remap_to_selected_references(sample_fastq: Path, selected_refs_fasta: Path, 
 
             # Attach NOGR metrics to the curated hit rows so final JSON + per-hit JSON include it.
             try:
-                nar_reads, nar_bases = _non_overlapping_reads_and_bases_from_bam(ref_bam)
+                nar_reads, nar_bases, nar_intervals = _non_overlapping_reads_and_bases_from_bam(ref_bam)
             except Exception as e:
                 logger.debug(f"Could not compute non-overlapping reads for {accession}: {e}")
-                nar_reads, nar_bases = 0, 0
+                nar_reads, nar_bases, nar_intervals = 0, 0, []
             d = curated_by_acc.get(accession)
             if d is not None:
                 # Output keys are NOGR (see docs/NOGR.md). We keep the "non_overlapping_*" naming only
                 # as an internal computation detail, not as a public JSON field.
                 d["nogr_regions"] = int(nar_reads)
                 d["nogr_bases"] = int(nar_bases)
+                d["nogr_intervals"] = nar_intervals if isinstance(nar_intervals, list) else []
 
             # Compute binned coverage profile for interactive HTML visualization.
             try:
@@ -6441,100 +6369,8 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
         return total, aligned_m
 
     def _non_overlapping_reads_and_bases_from_bam(bam_path: Path) -> tuple:
-        """
-        Compute non-overlapping read evidence from a per-reference BAM.
-
-        - Interval per read is computed on the reference: [POS-1, POS-1+ref_consumed),
-          where ref_consumed comes from CIGAR ops consuming reference (M/=/X/D/N).
-        - "Non-overlapping reads" is the size of a maximal set of reads whose reference intervals do not overlap.
-          Because the BAM is coordinate-sorted (starts non-decreasing), we can compute an optimal greedy solution
-          in one pass.
-        - "Bases" is the sum of reference bases spanned by the selected reads
-          (CIGAR ops consuming reference: M/=/X/D/N). With non-overlapping intervals this
-          is bounded by the reference length and is easier to interpret as "non-overlapping
-          reference support".
-
-        Returns (non_overlapping_reads_count, non_overlapping_bases_sum).
-        """
-        bam_path = Path(bam_path)
-        if not bam_path.exists():
-            return 0, 0
-
-        # Filter: unmapped + secondary + supplementary (even though per-reference BAM is expected primary-only).
-        # 0x4 + 0x100 + 0x800 = 0x904
-        cmd = ["samtools", "view", "-F", "0x904", str(bam_path)]
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        selected_reads = 0
-        selected_bases = 0
-
-        # Streaming greedy (optimal):
-        # - BAM is coordinate-sorted by start.
-        # - Maintain the currently best candidate interval (smallest end) among all intervals
-        #   that overlap each other. Once we see an interval that starts after best_end,
-        #   we can safely commit the candidate and start a new group.
-        best_end = None
-        best_bases = 0
-
-        try:
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                if not line:
-                    continue
-                parts = line.rstrip("\n").split("\t")
-                if len(parts) < 6:
-                    continue
-                try:
-                    pos_1based = int(parts[3])
-                except Exception:
-                    continue
-                cigar = parts[5]
-                if not cigar or cigar == "*":
-                    continue
-
-                ref_consumed, aligned_m = _cigar_aligned_bases(cigar)
-                if ref_consumed <= 0:
-                    continue
-                start = pos_1based - 1
-                end = start + ref_consumed
-
-                if best_end is None:
-                    best_end = end
-                    best_bases = ref_consumed
-                    continue
-
-                if start > best_end:
-                    # We moved past the candidate's end: commit it, then start a new group.
-                    selected_reads += 1
-                    selected_bases += int(best_bases or 0)
-                    best_end = end
-                    best_bases = ref_consumed
-                else:
-                    # Still overlapping this group; keep the interval with the smallest end.
-                    if end < best_end:
-                        best_end = end
-                        best_bases = ref_consumed
-        finally:
-            try:
-                if proc.stdout:
-                    proc.stdout.close()
-            except Exception:
-                pass
-            stderr = ""
-            try:
-                stderr = proc.stderr.read() if proc.stderr else ""
-            except Exception:
-                stderr = ""
-            rc = proc.wait()
-            if rc != 0:
-                logger.debug(f"samtools view failed for {bam_path}: {(stderr or '').strip()}")
-                return 0, 0
-
-        if best_end is not None:
-            selected_reads += 1
-            selected_bases += int(best_bases or 0)
-
-        return int(selected_reads), int(selected_bases)
+        """NOGR count/bases/intervals via shared compute_nogr_from_bam()."""
+        return compute_nogr_from_bam(bam_path)
 
     with open(remap_sam, "r") as f:
         for line in f:
@@ -6701,12 +6537,13 @@ def create_per_reference_outputs(sample_name: str, curated_descriptions: list, s
 
             # Derived evidence stats from the BAM (primary-only, same thresholds as mapped_reads).
             try:
-                nar_reads, nar_bases = _non_overlapping_reads_and_bases_from_bam(ref_bam)
+                nar_reads, nar_bases, nar_intervals = _non_overlapping_reads_and_bases_from_bam(ref_bam)
             except Exception as e:
                 logger.debug(f"Could not compute non-overlapping reads for {accession}: {e}")
-                nar_reads, nar_bases = 0, 0
+                nar_reads, nar_bases, nar_intervals = 0, 0, []
             stat["nogr_regions"] = int(nar_reads)
             stat["nogr_bases"] = int(nar_bases)
+            stat["nogr_intervals"] = nar_intervals if isinstance(nar_intervals, list) else []
 
             # Compute binned coverage profile for interactive HTML visualization.
             try:
@@ -6843,10 +6680,12 @@ def compute_nogr_from_bam(bam_path: Path) -> tuple:
     Returns:
     - nogr_regions: maximal number of non-overlapping alignment intervals on the reference
     - nogr_bases: sum of non-overlapping reference span (CIGAR ref-consuming ops M/=/X/D/N)
+    - nogr_intervals: list of [start, end] 0-based half-open reference intervals for the
+      greedily selected non-overlapping alignments (same set counted by nogr_regions)
     """
     bam_path = Path(bam_path)
     if not bam_path.exists():
-        return 0, 0
+        return 0, 0, []
 
     def _cigar_ref_consumed(cigar: str) -> int:
         num = ""
@@ -6869,6 +6708,8 @@ def compute_nogr_from_bam(bam_path: Path) -> tuple:
 
     selected_reads = 0
     selected_bases = 0
+    intervals: list = []
+    best_start = None
     best_end = None
     best_bases = 0
 
@@ -6894,6 +6735,7 @@ def compute_nogr_from_bam(bam_path: Path) -> tuple:
             start = pos_1based - 1
             end = start + ref_consumed
             if best_end is None:
+                best_start = start
                 best_end = end
                 best_bases = ref_consumed
                 continue
@@ -6901,10 +6743,13 @@ def compute_nogr_from_bam(bam_path: Path) -> tuple:
             if start > best_end:
                 selected_reads += 1
                 selected_bases += int(best_bases or 0)
+                intervals.append([int(best_start), int(best_end)])
+                best_start = start
                 best_end = end
                 best_bases = ref_consumed
             else:
                 if end < best_end:
+                    best_start = start
                     best_end = end
                     best_bases = ref_consumed
     finally:
@@ -6921,13 +6766,23 @@ def compute_nogr_from_bam(bam_path: Path) -> tuple:
         rc = proc.wait()
         if rc != 0:
             logger.debug(f"samtools view failed for {bam_path}: {(stderr or '').strip()}")
-            return 0, 0
+            return 0, 0, []
 
     if best_end is not None:
         selected_reads += 1
         selected_bases += int(best_bases or 0)
+        intervals.append([int(best_start), int(best_end)])
 
-    return int(selected_reads), int(selected_bases)
+    return int(selected_reads), int(selected_bases), intervals
+
+
+def compute_nogr_intervals_from_bam(bam_path: Path) -> list:
+    """Return only the selected NOGR [start, end] intervals from a BAM (empty list on failure)."""
+    try:
+        _r, _b, intervals = compute_nogr_from_bam(bam_path)
+    except Exception:
+        return []
+    return intervals if isinstance(intervals, list) else []
 
 
 def compute_coverage_profile_from_bam(
@@ -7548,6 +7403,16 @@ def _ensure_per_accession_coverage_profiles_and_pdfs(
                 cov_profile = None
             if cov_profile is not None:
                 row["coverage_profile"] = cov_profile
+
+        # Ensure NOGR locus intervals for the interactive HTML track (sidecar + modal plot).
+        if not isinstance(row.get("nogr_intervals"), list):
+            try:
+                nogr_r, nogr_b, nogr_iv = compute_nogr_from_bam(bam_path)
+                row["nogr_regions"] = int(nogr_r)
+                row["nogr_bases"] = int(nogr_b)
+                row["nogr_intervals"] = nogr_iv if isinstance(nogr_iv, list) else []
+            except Exception as e:
+                logger.debug(f"Could not compute NOGR intervals for {sample_name}:{acc}: {e}")
 
         # If we have a profile now, ensure PDFs (this uses the same profile).
         cov_profile = row.get("coverage_profile")
@@ -9068,12 +8933,13 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                         acc = (d.get("accession") or "").strip()
                         if not acc:
                             continue
-                        if "nogr_regions" in d and "nogr_bases" in d:
+                        if "nogr_regions" in d and "nogr_bases" in d and d.get("nogr_intervals") is not None:
                             continue
                         bam_path = db_dir / acc / f"{acc}.bam"
-                        nogr_r, nogr_b = compute_nogr_from_bam(bam_path)
+                        nogr_r, nogr_b, nogr_iv = compute_nogr_from_bam(bam_path)
                         d["nogr_regions"] = int(nogr_r)
                         d["nogr_bases"] = int(nogr_b)
+                        d["nogr_intervals"] = nogr_iv if isinstance(nogr_iv, list) else []
 
                     # Re-write JSON after per-reference outputs so it includes BAM-derived stats (e.g., NAR).
                     with open(curated_json_file, 'w') as f:
@@ -9226,13 +9092,16 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
             if not acc:
                 continue
             if (
-                ("nogr_regions" in d and "nogr_bases" in d)
+                "nogr_regions" in d
+                and "nogr_bases" in d
+                and isinstance(d.get("nogr_intervals"), list)
             ):
                 continue
             bam_path = sample_dir / acc / f"{acc}.bam"
-            nogr_r, nogr_b = compute_nogr_from_bam(bam_path)
+            nogr_r, nogr_b, nogr_iv = compute_nogr_from_bam(bam_path)
             d["nogr_regions"] = int(nogr_r)
             d["nogr_bases"] = int(nogr_b)
+            d["nogr_intervals"] = nogr_iv if isinstance(nogr_iv, list) else []
 
         # Apply optional NOGR threshold (minimum number of non-overlapping genomic regions).
         if int(min_nogr or 0) > 0:
@@ -9246,14 +9115,14 @@ def save_results(sample_name, best_ref, best_stats, all_stats, filtered_stats, c
                 logger.info(f"NOGR filter removed {dropped} reference(s) with NOGR < {int(min_nogr or 0)}")
 
         # Write curated JSON after per-reference outputs so it includes BAM-derived stats (e.g., NOGR).
-        # Keep this *sample-level* JSON lightweight: omit large per-base / per-bin vectors such as coverage_profile.
+        # Keep this *sample-level* JSON lightweight: omit bulky vectors (coverage_profile, nogr_intervals).
+        _final_json_omit = {"coverage_profile", "nogr_intervals"}
         curated_for_final_json = []
         for d in curated_descriptions:
             if not isinstance(d, dict):
                 continue
-            if "coverage_profile" in d:
-                dd = {k: v for k, v in d.items() if k != "coverage_profile"}
-                curated_for_final_json.append(dd)
+            if any(k in d for k in _final_json_omit):
+                curated_for_final_json.append({k: v for k, v in d.items() if k not in _final_json_omit})
             else:
                 curated_for_final_json.append(d)
         with open(curated_json_file, 'w') as f:
@@ -9971,6 +9840,10 @@ def generate_html_visualization(
                             continue
                         if "coverage_profile" not in item and "coverage_profile" in hit:
                             item["coverage_profile"] = hit.get("coverage_profile")
+                        if not isinstance(item.get("nogr_intervals"), list) and isinstance(
+                            hit.get("nogr_intervals"), list
+                        ):
+                            item["nogr_intervals"] = hit.get("nogr_intervals")
                         for k in _sidecar_scalar_keys:
                             if k in hit and (
                                 k not in item
@@ -9986,6 +9859,19 @@ def generate_html_visualization(
                             and payload.get("zscore_controls") is not None
                         ):
                             item["zscore_controls"] = payload.get("zscore_controls")
+                        # Older sidecars may lack nogr_intervals; recompute from BAM when present.
+                        if not isinstance(item.get("nogr_intervals"), list):
+                            bam_path = base_dir / acc / f"{acc}.bam"
+                            if bam_path.exists():
+                                try:
+                                    nogr_r, nogr_b, nogr_iv = compute_nogr_from_bam(bam_path)
+                                    item["nogr_regions"] = int(nogr_r)
+                                    item["nogr_bases"] = int(nogr_b)
+                                    item["nogr_intervals"] = (
+                                        nogr_iv if isinstance(nogr_iv, list) else []
+                                    )
+                                except Exception:
+                                    pass
             except Exception:
                 pass
             
@@ -10876,7 +10762,24 @@ def generate_html_visualization(
             position: relative;
             width: 100%;
             height: 350px;
-            margin-bottom: 16px;
+            margin-bottom: 8px;
+        }}
+        .nogr-chart-label {{
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #495057;
+            margin: 10px 0 4px;
+        }}
+        .nogr-chart-hint {{
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-bottom: 6px;
+        }}
+        .nogr-chart-wrap {{
+            position: relative;
+            width: 100%;
+            height: 110px;
+            margin-bottom: 12px;
         }}
         .coverage-controls {{
             display: flex;
@@ -11056,6 +10959,13 @@ def generate_html_visualization(
                 <div id="coverageTransformInfo" style="font-size:0.85em;color:#6c757d;margin:6px 0 10px;"></div>
                 <div class="coverage-chart-wrap">
                     <canvas id="coverageCanvas"></canvas>
+                </div>
+                <div class="nogr-chart-label">NOGR loci</div>
+                <div class="nogr-chart-hint" id="nogrChartHint">
+                    Non-overlapping genomic regions (same set as NOGR count / Z-score evidence). Zoom/pan syncs with coverage above.
+                </div>
+                <div class="nogr-chart-wrap">
+                    <canvas id="nogrCanvas"></canvas>
                 </div>
             </div>
         </div>
@@ -12085,7 +11995,51 @@ def generate_html_visualization(
         
         // ── Coverage Visualization Modal ──────────────────────────────
         let coverageChart = null;
+        let nogrChart = null;
         let coverageLogScale = false;
+        let _covZoomSyncing = false;
+
+        function syncCoverageXZoom(sourceChart) {{
+            if (_covZoomSyncing || !sourceChart || !sourceChart.scales || !sourceChart.scales.x) return;
+            const other = (sourceChart === coverageChart) ? nogrChart : coverageChart;
+            if (!other || !other.options || !other.options.scales || !other.options.scales.x) return;
+            _covZoomSyncing = true;
+            try {{
+                const {{min, max}} = sourceChart.scales.x;
+                other.options.scales.x.min = min;
+                other.options.scales.x.max = max;
+                other.update('none');
+            }} finally {{
+                _covZoomSyncing = false;
+            }}
+        }}
+
+        const nogrIntervalPlugin = {{
+            id: 'nogrIntervals',
+            afterDatasetsDraw(chart) {{
+                const intervals = chart.$nogrIntervals || [];
+                if (!intervals.length) return;
+                const x = chart.scales.x;
+                const y = chart.scales.y;
+                if (!x || !y) return;
+                const ctx = chart.ctx;
+                const midY = (y.top + y.bottom) / 2;
+                const h = Math.max(10, (y.bottom - y.top) * 0.55);
+                ctx.save();
+                intervals.forEach(([s, e]) => {{
+                    const x1 = x.getPixelForValue(Number(s) || 0);
+                    const x2 = x.getPixelForValue(Number(e) || 0);
+                    const left = Math.min(x1, x2);
+                    const width = Math.max(2, Math.abs(x2 - x1));
+                    ctx.fillStyle = 'rgba(102, 126, 234, 0.78)';
+                    ctx.fillRect(left, midY - h / 2, width, h);
+                    ctx.strokeStyle = 'rgba(76, 96, 196, 0.95)';
+                    ctx.lineWidth = 1;
+                    ctx.strokeRect(left, midY - h / 2, width, h);
+                }});
+                ctx.restore();
+            }}
+        }};
 
         function findRefData(sampleName, accession) {{
             const sd = samplesData[sampleName];
@@ -12105,6 +12059,7 @@ def generate_html_visualization(
             const depths = profile.depths || [];
             const refLen = profile.ref_len || depths.length;
             const binSize = profile.bin_size || 1;
+            const nogrIntervals = Array.isArray(ref.nogr_intervals) ? ref.nogr_intervals : [];
 
             // Title
             const title = `${{ref.organism || ref.viral_species || accession}} (${{accession}})`;
@@ -12122,19 +12077,28 @@ def generate_html_visualization(
                 : (depths.length ? ((depths.filter(d => d > 0).length / depths.length) * 100) : 0);
             // Match the table’s 1-decimal display.
             const breadthPct = Number(breadthPctRaw.toFixed(1));
+            const nogrCount = ref.nogr_regions || ref.non_overlapping_reads || nogrIntervals.length || 0;
             statsRow.innerHTML = `
                 <div class="coverage-stat-box"><div class="cov-val">${{refLen.toLocaleString()}}</div><div class="cov-lbl">Genome Length (bp)</div></div>
                 <div class="coverage-stat-box"><div class="cov-val">${{(ref.mapped_reads || 0).toLocaleString()}}</div><div class="cov-lbl">Mapped Reads</div></div>
                 <div class="coverage-stat-box"><div class="cov-val">${{meanDepth.toFixed(1)}}x</div><div class="cov-lbl">Mean Depth</div></div>
                 <div class="coverage-stat-box"><div class="cov-val">${{maxDepth.toFixed(1)}}x</div><div class="cov-lbl">Max Depth</div></div>
                 <div class="coverage-stat-box"><div class="cov-val">${{breadthPct.toFixed(1)}}%</div><div class="cov-lbl">Breadth</div></div>
-                <div class="coverage-stat-box"><div class="cov-val">${{ref.nogr_regions || ref.non_overlapping_reads || 0}}</div><div class="cov-lbl">NOGR Regions</div></div>
+                <div class="coverage-stat-box"><div class="cov-val">${{nogrCount}}</div><div class="cov-lbl">NOGR Regions</div></div>
             `;
+
+            const hint = document.getElementById('nogrChartHint');
+            if (hint) {{
+                hint.textContent = nogrIntervals.length
+                    ? `${{nogrIntervals.length}} non-overlapping region(s) shown as blue bars (same set as NOGR count / Z-score evidence). Zoom/pan syncs with coverage above.`
+                    : 'No NOGR locus intervals available for this hit (re-run classification or HTML build after updating Virasign). Zoom/pan still syncs with coverage above.';
+            }}
 
             // Build labels (genomic positions)
             const labels = depths.map((_, i) => Math.round(i * binSize));
             coverageLogScale = false;
             renderCoverageChart(labels, depths, binSize, refLen);
+            renderNogrChart(nogrIntervals, refLen);
 
             document.getElementById('coverageModalOverlay').classList.add('active');
             document.body.style.overflow = 'hidden';
@@ -12208,7 +12172,8 @@ def generate_html_visualization(
                             pan: {{
                                 enabled: true,
                                 mode: 'x',
-                                modifierKey: 'shift'
+                                modifierKey: 'shift',
+                                onPanComplete: ({{chart}}) => syncCoverageXZoom(chart)
                             }},
                             zoom: {{
                                 wheel: {{ enabled: true, speed: 0.1 }},
@@ -12219,7 +12184,8 @@ def generate_html_visualization(
                                     borderColor: '#667eea',
                                     borderWidth: 1
                                 }},
-                                mode: 'x'
+                                mode: 'x',
+                                onZoomComplete: ({{chart}}) => syncCoverageXZoom(chart)
                             }}
                         }}
                     }},
@@ -12257,6 +12223,107 @@ def generate_html_visualization(
             coverageChart._covData = {{ labels, depths, binSize, refLen }};
         }}
 
+        function renderNogrChart(intervals, refLen) {{
+            const canvas = document.getElementById('nogrCanvas');
+            if (!canvas) return;
+            if (nogrChart) {{
+                nogrChart.destroy();
+                nogrChart = null;
+            }}
+            const clean = (Array.isArray(intervals) ? intervals : [])
+                .map(iv => Array.isArray(iv) ? [Number(iv[0]) || 0, Number(iv[1]) || 0] : null)
+                .filter(iv => iv && iv[1] > iv[0]);
+
+            // Invisible scatter at interval midpoints for tooltips; bars drawn by plugin.
+            const tipPoints = clean.map(([s, e], i) => ({{
+                x: (s + e) / 2,
+                y: 0.5,
+                s, e, i
+            }}));
+
+            nogrChart = new Chart(canvas, {{
+                type: 'scatter',
+                data: {{
+                    datasets: [{{
+                        label: 'NOGR',
+                        data: tipPoints.length ? tipPoints : [{{x: 0, y: 0.5}}, {{x: refLen, y: 0.5}}],
+                        pointRadius: tipPoints.length ? 3 : 0,
+                        pointHoverRadius: 6,
+                        backgroundColor: 'rgba(102, 126, 234, 0.9)',
+                        borderColor: 'rgba(76, 96, 196, 1)',
+                        borderWidth: 1
+                    }}]
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: {{ duration: 0 }},
+                    plugins: {{
+                        legend: {{ display: false }},
+                        tooltip: {{
+                            callbacks: {{
+                                title: function(ctx) {{
+                                    const p = ctx[0] && ctx[0].raw;
+                                    if (!p || p.s === undefined) return 'NOGR';
+                                    return `NOGR #${{(p.i || 0) + 1}}`;
+                                }},
+                                label: function(ctx) {{
+                                    const p = ctx.raw || {{}};
+                                    if (p.s === undefined) return '';
+                                    const len = Math.max(0, (p.e || 0) - (p.s || 0));
+                                    return `${{(p.s || 0).toLocaleString()}} – ${{(p.e || 0).toLocaleString()}} bp (${{len.toLocaleString()}} bp)`;
+                                }}
+                            }}
+                        }},
+                        zoom: {{
+                            pan: {{
+                                enabled: true,
+                                mode: 'x',
+                                modifierKey: 'shift',
+                                onPanComplete: ({{chart}}) => syncCoverageXZoom(chart)
+                            }},
+                            zoom: {{
+                                wheel: {{ enabled: true, speed: 0.1 }},
+                                pinch: {{ enabled: true }},
+                                drag: {{
+                                    enabled: true,
+                                    backgroundColor: 'rgba(102,126,234,0.12)',
+                                    borderColor: '#667eea',
+                                    borderWidth: 1
+                                }},
+                                mode: 'x',
+                                onZoomComplete: ({{chart}}) => syncCoverageXZoom(chart)
+                            }}
+                        }}
+                    }},
+                    scales: {{
+                        x: {{
+                            type: 'linear',
+                            min: 0,
+                            max: refLen,
+                            title: {{ display: true, text: 'Genome Position (bp)' }},
+                            ticks: {{
+                                callback: function(v) {{
+                                    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+                                    if (v >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+                                    return v;
+                                }},
+                                maxTicksLimit: 15
+                            }}
+                        }},
+                        y: {{
+                            min: 0,
+                            max: 1,
+                            display: false
+                        }}
+                    }}
+                }},
+                plugins: [nogrIntervalPlugin]
+            }});
+            nogrChart.$nogrIntervals = clean;
+            nogrChart.update('none');
+        }}
+
         function closeCoverageModal() {{
             document.getElementById('coverageModalOverlay').classList.remove('active');
             document.body.style.overflow = '';
@@ -12264,10 +12331,15 @@ def generate_html_visualization(
                 coverageChart.destroy();
                 coverageChart = null;
             }}
+            if (nogrChart) {{
+                nogrChart.destroy();
+                nogrChart = null;
+            }}
         }}
 
         function resetCoverageZoom() {{
             if (coverageChart) coverageChart.resetZoom();
+            if (nogrChart) nogrChart.resetZoom();
         }}
 
         function toggleCoverageLog() {{

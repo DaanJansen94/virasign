@@ -5,17 +5,20 @@ LABEL maintainer="DaanJansen94" \
       version="0.1.0" \
       url="https://github.com/DaanJansen94/virasign"
 
-COPY . /opt/virasign
-
-RUN mamba install -y -c conda-forge -c bioconda \
-        "python>=3.9,<3.14" \
+RUN mamba create -y -n virasign -c conda-forge -c bioconda \
+        "python>=3.10,<3.13" \
         minimap2=2.24 \
         seqtk=1.3 \
         curl \
         "samtools>=1.17" \
         mmseqs2 \
         nextclade \
+        pip \
     && mamba clean -afy
+
+ENV PATH=/opt/conda/envs/virasign/bin:$PATH
+
+COPY . /opt/virasign
 
 RUN pip install --no-deps /opt/virasign
 
