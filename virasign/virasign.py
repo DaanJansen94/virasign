@@ -20,7 +20,13 @@ import xml.etree.ElementTree as ET
 import gzip
 import zipfile
 import sqlite3
+import uuid
 from typing import Optional, Dict, List, Any, Tuple, Iterable
+
+
+def _unique_sidecar_tmp(fasta_path: Path, tag: str) -> Path:
+    """Per-process temp path next to a shared FASTA (safe under parallel Metatropics tasks)."""
+    return fasta_path.parent / f"{fasta_path.name}.{tag}.{os.getpid()}.{uuid.uuid4().hex[:8]}"
 
 def setup_logging(output_dir, verbose=True):
     """Set up logging configuration.
@@ -1339,7 +1345,16 @@ def download_rvdb_database(
                 return True, "HIV/SIV nonfunctional gene fragment"
             return False, ""
 
-        tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_contaminants")
+        # Skip if already applied (avoids parallel-task races on shared Databases/).
+        try:
+            meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+        except Exception:
+            meta = {}
+        if meta.get("contaminants_filtered"):
+            logger.info("Non-viral contaminant filter already applied; skipping.")
+            return
+
+        tmp_out = _unique_sidecar_tmp(fasta_path, "tmp_no_contaminants")
         kept = 0
         removed = 0
         removed_details = {}
@@ -1363,14 +1378,19 @@ def download_rvdb_database(
                     f_out.write(line)
 
         if removed > 0:
-            tmp_out.replace(fasta_path)
+            os.replace(str(tmp_out), str(fasta_path))
             detail_str = ", ".join(f"{k}: {v}" for k, v in sorted(removed_details.items()))
             logger.info(
                 f"Non-viral contaminant filter applied: removed {removed:,} sequence(s) ({detail_str}), kept {kept:,} total."
             )
         else:
-            tmp_out.unlink()
+            tmp_out.unlink(missing_ok=True)
             logger.info("Non-viral contaminant filter: no contaminants found.")
+        try:
+            meta["contaminants_filtered"] = True
+            metadata_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+        except Exception:
+            pass
 
     def _write_database_metadata(metadata_file: Path, meta: dict) -> None:
         """
@@ -2374,7 +2394,7 @@ def _filter_excluded_groups_from_fasta(
         )
     else:
         try:
-            tmp_out.unlink()
+            tmp_out.unlink(missing_ok=True)
         except FileNotFoundError:
             pass
         logger.info(
@@ -2493,7 +2513,7 @@ def _filter_rvdb_short_mag_gene_fragments(
         )
     else:
         try:
-            tmp_out.unlink()
+            tmp_out.unlink(missing_ok=True)
         except FileNotFoundError:
             pass
         logger.info(
@@ -2762,7 +2782,7 @@ def _filter_synthetic_sequences(
         )
     else:
         try:
-            tmp_out.unlink()
+            tmp_out.unlink(missing_ok=True)
         except FileNotFoundError:
             pass
         logger.info(
@@ -2873,6 +2893,14 @@ def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path)
     """
     import re
 
+    try:
+        meta = json.loads(metadata_file.read_text(encoding="utf-8")) if metadata_file.exists() else {}
+    except Exception:
+        meta = {}
+    if meta.get("contaminants_filtered"):
+        logger.info("Non-viral contaminant filter (RefSeq) already applied; skipping.")
+        return
+
     host_pat = re.compile(
         r"\bHomo\s+sapiens\b"
         r"|\bPan\s+troglodytes\b"
@@ -2919,7 +2947,7 @@ def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path)
             return True, "HIV/SIV nonfunctional gene fragment"
         return False, ""
 
-    tmp_out = fasta_path.with_suffix(fasta_path.suffix + ".tmp_no_contaminants")
+    tmp_out = _unique_sidecar_tmp(fasta_path, "tmp_no_contaminants")
     kept = 0
     removed = 0
     removed_details = {}
@@ -2943,14 +2971,19 @@ def _filter_refseq_non_viral_contaminants(fasta_path: Path, metadata_file: Path)
                 f_out.write(line)
 
     if removed > 0:
-        tmp_out.replace(fasta_path)
+        os.replace(str(tmp_out), str(fasta_path))
         detail_str = ", ".join(f"{k}: {v}" for k, v in sorted(removed_details.items()))
         logger.info(
             f"Non-viral contaminant filter applied to RefSeq: removed {removed:,} sequence(s) ({detail_str}), kept {kept:,} total."
         )
     else:
-        tmp_out.unlink()
+        tmp_out.unlink(missing_ok=True)
         logger.info("Non-viral contaminant filter (RefSeq): no contaminants found.")
+    try:
+        meta["contaminants_filtered"] = True
+        metadata_file.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        pass
 
 def download_accession_from_ncbi(accession: str, output_dir: Path = None) -> Path:
     """
@@ -9595,6 +9628,7 @@ def generate_html_visualization(
     zscore_enabled: bool = True,
     zscore_controls: Optional[str] = None,
     sample_fastq_by_name: Optional[Dict[str, str]] = None,
+    db_dir: Optional[Path] = None,
     _retry_depth: int = 0,
 ):
     """
@@ -9713,7 +9747,19 @@ def generate_html_visualization(
             return controls_set, {}
 
         # Resolve genus labels once (species Z is primary; genus Z uses summed reads).
-        nodes_file, names_file = discover_ncbi_taxonomy_dumps(output_dir)
+        # Search output + db_dir + cwd: Metatropics --build-html often has results under
+        # Classification/ while taxonomy dumps live under Databases/.
+        try:
+            _cwd = Path.cwd()
+        except Exception:
+            _cwd = None
+        nodes_file, names_file = discover_ncbi_taxonomy_dumps(
+            output_dir,
+            db_dir,
+            _cwd,
+            (Path(db_dir) / "Databases") if db_dir else None,
+            (_cwd / "Databases") if _cwd else None,
+        )
         tax_index = None
         if nodes_file and names_file:
             try:
@@ -9725,6 +9771,11 @@ def generate_html_visualization(
             except Exception as e:
                 logger.debug(f"Z-score: could not load NCBI taxonomy dumps: {e}")
                 tax_index = None
+        else:
+            logger.info(
+                "Z-score: NCBI taxonomy dumps (nodes.dmp/names.dmp) not found; "
+                "zscore_genus / viral_genus will be left empty. Pass --db-dir pointing at Databases/."
+            )
         genus_cache: Dict[str, str] = {}
         # Z-scores are computed per database (control background must not mix RVDB/RefSeq).
         dbs = sorted({db for (_, db) in sample_hits.keys()})
@@ -9834,15 +9885,20 @@ def generate_html_visualization(
                 )
 
                 if sample_name in controls_set:
-                    cleared = False
+                    # Controls: no numeric Z-scores, but still persist viral_genus for CSV.
+                    changed = False
                     for h in hits:
                         if not isinstance(h, dict):
                             continue
+                        g = _genus_label_for_zscore(h)
+                        if g and (h.get("viral_genus") or "").strip() != g:
+                            h["viral_genus"] = g
+                            changed = True
                         if any(k in h for k in _z_keys):
                             for k in _z_keys:
                                 h.pop(k, None)
-                            cleared = True
-                    if cleared:
+                            changed = True
+                    if changed:
                         try:
                             with open(jf, "w") as f:
                                 json.dump(hits, f, indent=2)
@@ -9861,16 +9917,22 @@ def generate_html_visualization(
                                     if isinstance(payload, dict):
                                         for k in _z_keys:
                                             payload.pop(k, None)
+                                        if h.get("viral_genus"):
+                                            payload["viral_genus"] = h.get("viral_genus")
                                         if isinstance(payload.get("hit"), dict):
                                             for k in _z_keys:
                                                 payload["hit"].pop(k, None)
+                                            if h.get("viral_genus"):
+                                                payload["hit"]["viral_genus"] = h.get(
+                                                    "viral_genus"
+                                                )
                                         with open(sidecar, "w") as sf:
                                             json.dump(payload, sf, indent=2)
                                 except Exception:
                                     pass
                         except Exception as e:
                             logger.debug(
-                                f"Z-score: could not clear control JSON for {sample_name}/{db_name}: {e}"
+                                f"Z-score: could not update control JSON for {sample_name}/{db_name}: {e}"
                             )
                     continue
 
@@ -9983,6 +10045,7 @@ def generate_html_visualization(
             zscore_enabled=zscore_enabled,
             zscore_controls=zscore_controls,
             sample_fastq_by_name=sample_fastq_by_name,
+            db_dir=db_dir,
             _retry_depth=_retry_depth + 1,
         )
         return
@@ -10374,6 +10437,7 @@ def generate_html_visualization(
                 zscore_enabled=zscore_enabled,
                 zscore_controls=zscore_controls,
                 sample_fastq_by_name=sample_fastq_by_name,
+                db_dir=db_dir,
                 _retry_depth=_retry_depth + 1,
             )
             return
@@ -10387,6 +10451,7 @@ def generate_html_visualization(
                 zscore_enabled=zscore_enabled,
                 zscore_controls=zscore_controls,
                 sample_fastq_by_name=sample_fastq_by_name,
+                db_dir=db_dir,
                 _retry_depth=_retry_depth + 1,
             )
             return
@@ -12888,8 +12953,9 @@ def generate_html_visualization(
                     z_sp_cell = (
                         "-" if z_sp_raw is None else f"{float(z_sp_raw or 0.0):.2f}"
                     )
+                    # Missing genus Z (no taxonomy dumps) → blank, not "-" (reserved for controls).
                     z_gen_cell = (
-                        "-" if z_gen_raw is None else f"{float(z_gen_raw or 0.0):.2f}"
+                        "" if z_gen_raw is None else f"{float(z_gen_raw or 0.0):.2f}"
                     )
                 writer.writerow([
                     sname,
@@ -13412,6 +13478,7 @@ Examples
                 zscore_enabled=zscore_enabled,
                 zscore_controls=getattr(args, "zscore_controls", None),
                 sample_fastq_by_name=None,
+                db_dir=getattr(args, "db_dir", None),
             )
             return 0
         logger.info(f"--build-html: using results tree {results_root} ({len(json_glob)} final JSON file(s) found)")
@@ -13422,6 +13489,7 @@ Examples
             zscore_enabled=zscore_enabled,
             zscore_controls=getattr(args, "zscore_controls", None),
             sample_fastq_by_name=None,
+            db_dir=getattr(args, "db_dir", None),
         )
         logger.info("--build-html: finished writing summary HTML/CSV next to sample outputs.")
         return 0
@@ -13761,7 +13829,15 @@ Examples
                     return v
             return ""
 
-        nodes_file, names_file = discover_ncbi_taxonomy_dumps(output_dir)
+        try:
+            _cwd = Path.cwd()
+        except Exception:
+            _cwd = None
+        nodes_file, names_file = discover_ncbi_taxonomy_dumps(
+            output_dir,
+            getattr(args, "db_dir", None),
+            _cwd,
+        )
         tax_index = None
         if nodes_file and names_file:
             try:
@@ -14201,6 +14277,7 @@ Examples
             zscore_enabled=zscore_enabled,
             zscore_controls=getattr(args, "zscore_controls", None),
             sample_fastq_by_name=sample_fastq_by_name,
+            db_dir=getattr(args, "db_dir", None),
         )
     else:
         logger.info("HTML report generation disabled (--no-html)")
