@@ -2,7 +2,7 @@ FROM condaforge/miniforge3:latest
 
 LABEL maintainer="DaanJansen94" \
       description="Virasign: Viral taxonomic classification for nanopore sequencing data" \
-      version="0.1.0" \
+      version="0.1.1" \
       url="https://github.com/DaanJansen94/virasign"
 
 RUN mamba create -y -n virasign -c conda-forge -c bioconda \
