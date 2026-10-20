@@ -11185,7 +11185,7 @@ def generate_html_visualization(
                 <div class="coverage-chart-wrap">
                     <canvas id="coverageCanvas"></canvas>
                 </div>
-                <div class="nogr-chart-label">NOGR loci</div>
+                <div class="nogr-chart-label">NOGR</div>
                 <div class="nogr-chart-hint" id="nogrChartHint">
                     Non-overlapping genomic regions (same set as NOGR count / Z-score evidence). Zoom/pan syncs with coverage above.
                 </div>
