@@ -12251,6 +12251,64 @@ def generate_html_visualization(
         let coverageLogScale = false;
         let _covZoomSyncing = false;
 
+        // Keep coverage + NOGR plot areas horizontally aligned (Y-axis width differs otherwise).
+        const COV_Y_AXIS_WIDTH = 68;
+
+        function sharedCoverageXScale(refLen) {{
+            return {{
+                type: 'linear',
+                min: 0,
+                max: refLen,
+                bounds: 'ticks',
+                title: {{ display: true, text: 'Genome Position (bp)' }},
+                ticks: {{
+                    callback: function(v) {{
+                        if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+                        if (v >= 1e3) return (v / 1e3).toFixed(1) + 'k';
+                        return v;
+                    }},
+                    maxTicksLimit: 15
+                }}
+            }};
+        }}
+
+        function alignCoverageNogrChartAreas() {{
+            if (!coverageChart || !nogrChart) return;
+            if (!coverageChart.chartArea || !nogrChart.chartArea) return;
+            const c = coverageChart.chartArea;
+            const n = nogrChart.chartArea;
+            const covRightPad = coverageChart.width - c.right;
+            const nogrRightPad = nogrChart.width - n.right;
+            const targetLeft = Math.max(c.left, n.left);
+            const targetRightPad = Math.max(covRightPad, nogrRightPad);
+
+            const applyPad = (chart, targetL, targetRPad) => {{
+                const area = chart.chartArea;
+                if (!area) return false;
+                const curRightPad = chart.width - area.right;
+                const dL = targetL - area.left;
+                const dR = targetRPad - curRightPad;
+                if (Math.abs(dL) < 0.5 && Math.abs(dR) < 0.5) return false;
+                const prev = chart.options.layout && chart.options.layout.padding;
+                const pad = (typeof prev === 'number')
+                    ? {{ top: prev, bottom: prev, left: prev, right: prev }}
+                    : Object.assign({{ top: 0, bottom: 0, left: 0, right: 0 }}, prev || {{}});
+                pad.left = Math.max(0, (pad.left || 0) + dL);
+                pad.right = Math.max(0, (pad.right || 0) + dR);
+                chart.options.layout = chart.options.layout || {{}};
+                chart.options.layout.padding = pad;
+                return true;
+            }};
+
+            const changed =
+                applyPad(coverageChart, targetLeft, targetRightPad) ||
+                applyPad(nogrChart, targetLeft, targetRightPad);
+            if (changed) {{
+                coverageChart.update('none');
+                nogrChart.update('none');
+            }}
+        }}
+
         function syncCoverageXZoom(sourceChart) {{
             if (_covZoomSyncing || !sourceChart || !sourceChart.scales || !sourceChart.scales.x) return;
             const other = (sourceChart === coverageChart) ? nogrChart : coverageChart;
@@ -12260,7 +12318,11 @@ def generate_html_visualization(
                 const {{min, max}} = sourceChart.scales.x;
                 other.options.scales.x.min = min;
                 other.options.scales.x.max = max;
+                // Keep source explicit too (plugin zoom can leave options out of sync).
+                sourceChart.options.scales.x.min = min;
+                sourceChart.options.scales.x.max = max;
                 other.update('none');
+                alignCoverageNogrChartAreas();
             }} finally {{
                 _covZoomSyncing = false;
             }}
@@ -12379,13 +12441,15 @@ def generate_html_visualization(
                     : `Y transform: depth (x). Plotted min=${{yMin.toFixed(2)}}x, max=${{yMax.toFixed(2)}}x`;
             }}
 
+            // Explicit {{x,y}} so the linear X axis uses genomic bp (same units as NOGR).
+            const points = labels.map((x, i) => ({{ x: Number(x) || 0, y: yValues[i] }}));
+
             coverageChart = new Chart(canvas, {{
                 type: 'line',
                 data: {{
-                    labels: labels,
                     datasets: [{{
                         label: coverageLogScale ? 'log₁₀(Depth + 1)' : 'Coverage Depth',
-                        data: yValues,
+                        data: points,
                         borderColor: '#667eea',
                         backgroundColor: 'rgba(102,126,234,0.15)',
                         fill: true,
@@ -12400,6 +12464,7 @@ def generate_html_visualization(
                     responsive: true,
                     maintainAspectRatio: false,
                     animation: {{ duration: 0 }},
+                    parsing: false,
                     interaction: {{
                         mode: 'index',
                         intersect: false
@@ -12442,23 +12507,11 @@ def generate_html_visualization(
                         }}
                     }},
                     scales: {{
-                        x: {{
-                            type: 'linear',
-                            title: {{ display: true, text: 'Genome Position (bp)' }},
-                            ticks: {{
-                                callback: function(v) {{
-                                    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
-                                    if (v >= 1e3) return (v / 1e3).toFixed(1) + 'k';
-                                    return v;
-                                }},
-                                maxTicksLimit: 15
-                            }},
-                            min: 0,
-                            max: refLen
-                        }},
+                        x: sharedCoverageXScale(refLen),
                         y: {{
                             beginAtZero: true,
                             min: 0,
+                            afterFit: function(scale) {{ scale.width = COV_Y_AXIS_WIDTH; }},
                             title: {{ display: true, text: coverageLogScale ? 'log₁₀(Depth + 1)' : 'Depth (x)' }},
                             ticks: {{
                                 callback: function(v) {{
@@ -12473,6 +12526,14 @@ def generate_html_visualization(
 
             // Store profile data for toggle/download
             coverageChart._covData = {{ labels, depths, binSize, refLen }};
+            // Preserve current X zoom if NOGR already exists (e.g. log-scale toggle).
+            if (nogrChart && nogrChart.options && nogrChart.options.scales && nogrChart.options.scales.x) {{
+                const nx = nogrChart.options.scales.x;
+                if (nx.min !== undefined) coverageChart.options.scales.x.min = nx.min;
+                if (nx.max !== undefined) coverageChart.options.scales.x.max = nx.max;
+                coverageChart.update('none');
+            }}
+            requestAnimationFrame(alignCoverageNogrChartAreas);
         }}
 
         function renderNogrChart(intervals, refLen) {{
@@ -12510,6 +12571,7 @@ def generate_html_visualization(
                     responsive: true,
                     maintainAspectRatio: false,
                     animation: {{ duration: 0 }},
+                    parsing: false,
                     plugins: {{
                         legend: {{ display: false }},
                         tooltip: {{
@@ -12549,31 +12611,30 @@ def generate_html_visualization(
                         }}
                     }},
                     scales: {{
-                        x: {{
-                            type: 'linear',
-                            min: 0,
-                            max: refLen,
-                            title: {{ display: true, text: 'Genome Position (bp)' }},
-                            ticks: {{
-                                callback: function(v) {{
-                                    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
-                                    if (v >= 1e3) return (v / 1e3).toFixed(1) + 'k';
-                                    return v;
-                                }},
-                                maxTicksLimit: 15
-                            }}
-                        }},
+                        x: sharedCoverageXScale(refLen),
                         y: {{
                             min: 0,
                             max: 1,
-                            display: false
+                            // Reserve the same left gutter as coverage (ticks hidden).
+                            afterFit: function(scale) {{ scale.width = COV_Y_AXIS_WIDTH; }},
+                            ticks: {{ display: false }},
+                            grid: {{ display: false, drawBorder: false }},
+                            border: {{ display: false }},
+                            title: {{ display: false }}
                         }}
                     }}
                 }},
                 plugins: [nogrIntervalPlugin]
             }});
             nogrChart.$nogrIntervals = clean;
+            // Match coverage X zoom if coverage was created first.
+            if (coverageChart && coverageChart.options && coverageChart.options.scales && coverageChart.options.scales.x) {{
+                const cx = coverageChart.options.scales.x;
+                if (cx.min !== undefined) nogrChart.options.scales.x.min = cx.min;
+                if (cx.max !== undefined) nogrChart.options.scales.x.max = cx.max;
+            }}
             nogrChart.update('none');
+            requestAnimationFrame(alignCoverageNogrChartAreas);
         }}
 
         function closeCoverageModal() {{
@@ -12592,6 +12653,21 @@ def generate_html_visualization(
         function resetCoverageZoom() {{
             if (coverageChart) coverageChart.resetZoom();
             if (nogrChart) nogrChart.resetZoom();
+            // Force both back to full genome range and realign gutters.
+            if (coverageChart && coverageChart._covData) {{
+                const refLen = coverageChart._covData.refLen;
+                if (coverageChart.options.scales && coverageChart.options.scales.x) {{
+                    coverageChart.options.scales.x.min = 0;
+                    coverageChart.options.scales.x.max = refLen;
+                }}
+                if (nogrChart && nogrChart.options && nogrChart.options.scales && nogrChart.options.scales.x) {{
+                    nogrChart.options.scales.x.min = 0;
+                    nogrChart.options.scales.x.max = refLen;
+                }}
+                if (coverageChart) coverageChart.update('none');
+                if (nogrChart) nogrChart.update('none');
+            }}
+            requestAnimationFrame(alignCoverageNogrChartAreas);
         }}
 
         function toggleCoverageLog() {{
@@ -12599,6 +12675,7 @@ def generate_html_visualization(
             coverageLogScale = !coverageLogScale;
             const d = coverageChart._covData;
             renderCoverageChart(d.labels, d.depths, d.binSize, d.refLen);
+            requestAnimationFrame(alignCoverageNogrChartAreas);
         }}
 
         function downloadCoveragePNG() {{
