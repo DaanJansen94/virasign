@@ -1,6 +1,6 @@
 """Virasign: Viral Read ASSIGNment from nanopore sequencing."""
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 # Import main function from virasign.py in the same directory
 from .virasign import main

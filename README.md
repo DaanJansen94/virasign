@@ -212,7 +212,7 @@ Also on [Zenodo](https://zenodo.org/records/18387009), [Docker](https://hub.dock
 If you use Virasign in your research, please cite:
 
 ```
-Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification tool designed for nanopore sequencing data (v0.1.1). Zenodo. https://doi.org/10.5281/zenodo.18387008
+Jansen, D., & Vercauteren, K. (2026). Virasign: A viral taxonomic classification tool designed for nanopore sequencing data (v0.1.2). Zenodo. https://doi.org/10.5281/zenodo.18387008
 
 ```
 
