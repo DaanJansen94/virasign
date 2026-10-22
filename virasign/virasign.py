@@ -11087,6 +11087,71 @@ def generate_html_visualization(
             color: #6c757d;
             margin-left: auto;
         }}
+        .cov-nav-wrap {{
+            margin-top: 14px;
+            margin-bottom: 4px;
+        }}
+        .cov-nav-label {{
+            font-size: 0.8em;
+            color: #6c757d;
+            margin-bottom: 6px;
+        }}
+        .cov-nav-track {{
+            position: relative;
+            height: 36px;
+            background: #eef1f6;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            overflow: hidden;
+            cursor: pointer;
+            user-select: none;
+            touch-action: none;
+        }}
+        .cov-nav-track.is-full {{
+            cursor: default;
+        }}
+        .cov-nav-spark {{
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }}
+        .cov-nav-viewport {{
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: rgba(102, 126, 234, 0.22);
+            border: 2px solid #667eea;
+            border-radius: 4px;
+            box-sizing: border-box;
+            cursor: grab;
+            z-index: 2;
+        }}
+        .cov-nav-viewport.is-dragging {{
+            cursor: grabbing;
+            background: rgba(102, 126, 234, 0.32);
+        }}
+        .cov-nav-viewport.is-full {{
+            cursor: default;
+            border-color: #adb5bd;
+            background: rgba(173, 181, 189, 0.12);
+        }}
+        .cov-nav-handle {{
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 10px;
+            background: rgba(102, 126, 234, 0.85);
+            cursor: ew-resize;
+        }}
+        .cov-nav-handle-l {{ left: 0; border-radius: 2px 0 0 2px; }}
+        .cov-nav-handle-r {{ right: 0; border-radius: 0 2px 2px 0; }}
+        .cov-nav-viewport.is-full .cov-nav-handle {{
+            display: none;
+        }}
     </style>
 </head>
 <body>
@@ -11244,7 +11309,7 @@ def generate_html_visualization(
                     <button onclick="toggleCoverageLog()">📊 Toggle Log Scale</button>
                     <button onclick="downloadCoveragePNG()">PNG</button>
                     <button onclick="downloadCoverageSVG()">SVG</button>
-                    <span class="zoom-hint">Scroll to zoom · Drag to select region · Shift+drag to pan</span>
+                    <span class="zoom-hint">Scroll/drag to zoom · Shift+drag to pan · Use bar below to slide when zoomed</span>
                 </div>
                 <div id="coverageTransformInfo" style="font-size:0.85em;color:#6c757d;margin:6px 0 10px;"></div>
                 <div class="coverage-chart-wrap">
@@ -11256,6 +11321,16 @@ def generate_html_visualization(
                 </div>
                 <div class="nogr-chart-wrap">
                     <canvas id="nogrCanvas"></canvas>
+                </div>
+                <div class="cov-nav-wrap" id="covNavWrap">
+                    <div class="cov-nav-label" id="covNavLabel">Genome overview — drag the blue window to move across adjacent regions when zoomed in</div>
+                    <div class="cov-nav-track" id="covNavTrack" title="Drag window to pan · Drag edges to resize · Click track to jump">
+                        <canvas class="cov-nav-spark" id="covNavSpark"></canvas>
+                        <div class="cov-nav-viewport" id="covNavViewport">
+                            <div class="cov-nav-handle cov-nav-handle-l" data-edge="l"></div>
+                            <div class="cov-nav-handle cov-nav-handle-r" data-edge="r"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -12374,6 +12449,191 @@ def generate_html_visualization(
             return 0;
         }}
 
+        // Overview navigator: slide/resize the zoomed X window across the full genome.
+        let _covNavDrag = null;
+        let _covNavSparkData = null;
+
+        function currentCoverageXRange() {{
+            const refLen = coverageRefLenFromCharts();
+            const x = (coverageChart && coverageChart.options && coverageChart.options.scales)
+                ? coverageChart.options.scales.x
+                : null;
+            const min = (x && x.min !== undefined && x.min !== null) ? Number(x.min) : 0;
+            const max = (x && x.max !== undefined && x.max !== null) ? Number(x.max) : refLen;
+            return clampCoverageXRange(min, max, refLen);
+        }}
+
+        function applyCoverageXRange(min, max) {{
+            const refLen = coverageRefLenFromCharts();
+            const clamped = clampCoverageXRange(min, max, refLen);
+            _covZoomSyncing = true;
+            try {{
+                [coverageChart, nogrChart].forEach(ch => {{
+                    if (!ch || !ch.options || !ch.options.scales || !ch.options.scales.x) return;
+                    ch.options.scales.x.min = clamped.min;
+                    ch.options.scales.x.max = clamped.max;
+                    ch.update('none');
+                }});
+                alignCoverageNogrChartAreas();
+                updateCoverageNavigator();
+            }} finally {{
+                _covZoomSyncing = false;
+            }}
+        }}
+
+        function syncCovNavTrackToChartArea() {{
+            const track = document.getElementById('covNavTrack');
+            if (!track || !coverageChart || !coverageChart.chartArea) return;
+            const left = coverageChart.chartArea.left || 0;
+            const rightPad = Math.max(0, coverageChart.width - coverageChart.chartArea.right);
+            track.style.marginLeft = left + 'px';
+            track.style.marginRight = rightPad + 'px';
+        }}
+
+        function paintCovNavSparkline() {{
+            const canvas = document.getElementById('covNavSpark');
+            const track = document.getElementById('covNavTrack');
+            if (!canvas || !track || !_covNavSparkData) return;
+            const depths = _covNavSparkData.depths || [];
+            const w = Math.max(1, track.clientWidth || 1);
+            const h = Math.max(1, track.clientHeight || 1);
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.round(w * dpr);
+            canvas.height = Math.round(h * dpr);
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, w, h);
+            ctx.fillStyle = '#eef1f6';
+            ctx.fillRect(0, 0, w, h);
+            if (!depths.length) return;
+            const maxD = Math.max(...depths.map(d => Number(d) || 0), 1e-9);
+            ctx.beginPath();
+            depths.forEach((d, i) => {{
+                const x = (i / Math.max(1, depths.length - 1)) * w;
+                const y = h - ((Number(d) || 0) / maxD) * (h * 0.85);
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }});
+            ctx.strokeStyle = 'rgba(102, 126, 234, 0.55)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.lineTo(w, h);
+            ctx.lineTo(0, h);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(102, 126, 234, 0.12)';
+            ctx.fill();
+        }}
+
+        function updateCoverageNavigator() {{
+            const track = document.getElementById('covNavTrack');
+            const vp = document.getElementById('covNavViewport');
+            const label = document.getElementById('covNavLabel');
+            if (!track || !vp) return;
+            syncCovNavTrackToChartArea();
+            paintCovNavSparkline();
+            const refLen = coverageRefLenFromCharts();
+            const range = currentCoverageXRange();
+            const span = Math.max(0, range.max - range.min);
+            const isFull = refLen <= 0 || span >= refLen * 0.999;
+            const leftPct = refLen > 0 ? (range.min / refLen) * 100 : 0;
+            const widthPct = refLen > 0 ? (span / refLen) * 100 : 100;
+            vp.style.left = leftPct + '%';
+            vp.style.width = Math.max(0.5, widthPct) + '%';
+            vp.classList.toggle('is-full', isFull);
+            track.classList.toggle('is-full', isFull);
+            if (label) {{
+                label.textContent = isFull
+                    ? 'Genome overview — zoom in (scroll or drag-select) to enable sliding across adjacent regions'
+                    : `Genome overview — window ${{Math.round(range.min).toLocaleString()}}–${{Math.round(range.max).toLocaleString()}} bp · drag to slide · edges to resize`;
+            }}
+        }}
+
+        function covNavPtrToBp(clientX) {{
+            const track = document.getElementById('covNavTrack');
+            const refLen = coverageRefLenFromCharts();
+            if (!track || refLen <= 0) return 0;
+            const rect = track.getBoundingClientRect();
+            const frac = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+            return Math.max(0, Math.min(refLen, frac * refLen));
+        }}
+
+        function onCovNavPointerDown(ev) {{
+            const track = document.getElementById('covNavTrack');
+            const vp = document.getElementById('covNavViewport');
+            if (!track || !vp || !coverageChart) return;
+            const refLen = coverageRefLenFromCharts();
+            if (refLen <= 0) return;
+            const range = currentCoverageXRange();
+            const span = range.max - range.min;
+            if (span >= refLen * 0.999 && !ev.target.classList.contains('cov-nav-handle')) {{
+                // Fully zoomed out: ignore drag; zoom first.
+                return;
+            }}
+            ev.preventDefault();
+            const edge = ev.target && ev.target.dataset ? ev.target.dataset.edge : null;
+            const mode = (edge === 'l' || edge === 'r') ? 'resize-' + edge : 'pan';
+            if (mode === 'pan' && ev.target !== vp && !vp.contains(ev.target)) {{
+                // Click on track outside viewport: center window on click.
+                const center = covNavPtrToBp(ev.clientX);
+                const half = span / 2;
+                applyCoverageXRange(center - half, center + half);
+                return;
+            }}
+            _covNavDrag = {{
+                mode,
+                startX: ev.clientX,
+                origMin: range.min,
+                origMax: range.max,
+                span
+            }};
+            vp.classList.add('is-dragging');
+            vp.setPointerCapture && vp.setPointerCapture(ev.pointerId);
+            window.addEventListener('pointermove', onCovNavPointerMove);
+            window.addEventListener('pointerup', onCovNavPointerUp);
+            window.addEventListener('pointercancel', onCovNavPointerUp);
+        }}
+
+        function onCovNavPointerMove(ev) {{
+            if (!_covNavDrag) return;
+            const track = document.getElementById('covNavTrack');
+            const refLen = coverageRefLenFromCharts();
+            if (!track || refLen <= 0) return;
+            const rect = track.getBoundingClientRect();
+            const dxBp = rect.width > 0 ? ((ev.clientX - _covNavDrag.startX) / rect.width) * refLen : 0;
+            let min = _covNavDrag.origMin;
+            let max = _covNavDrag.origMax;
+            if (_covNavDrag.mode === 'pan') {{
+                min = _covNavDrag.origMin + dxBp;
+                max = _covNavDrag.origMax + dxBp;
+            }} else if (_covNavDrag.mode === 'resize-l') {{
+                min = _covNavDrag.origMin + dxBp;
+                if (max - min < 1) min = max - 1;
+            }} else if (_covNavDrag.mode === 'resize-r') {{
+                max = _covNavDrag.origMax + dxBp;
+                if (max - min < 1) max = min + 1;
+            }}
+            applyCoverageXRange(min, max);
+        }}
+
+        function onCovNavPointerUp() {{
+            const vp = document.getElementById('covNavViewport');
+            if (vp) vp.classList.remove('is-dragging');
+            _covNavDrag = null;
+            window.removeEventListener('pointermove', onCovNavPointerMove);
+            window.removeEventListener('pointerup', onCovNavPointerUp);
+            window.removeEventListener('pointercancel', onCovNavPointerUp);
+        }}
+
+        function initCoverageNavigator() {{
+            const track = document.getElementById('covNavTrack');
+            if (!track || track._covNavReady) return;
+            track._covNavReady = true;
+            track.addEventListener('pointerdown', onCovNavPointerDown);
+        }}
+
         function alignCoverageNogrChartAreas() {{
             if (!coverageChart || !nogrChart) return;
             if (!coverageChart.chartArea || !nogrChart.chartArea) return;
@@ -12409,6 +12669,7 @@ def generate_html_visualization(
                 coverageChart.update('none');
                 nogrChart.update('none');
             }}
+            updateCoverageNavigator();
         }}
 
         function syncCoverageXZoom(sourceChart) {{
@@ -12431,6 +12692,7 @@ def generate_html_visualization(
                 sourceChart.update('none');
                 other.update('none');
                 alignCoverageNogrChartAreas();
+                updateCoverageNavigator();
             }} finally {{
                 _covZoomSyncing = false;
             }}
@@ -12519,8 +12781,11 @@ def generate_html_visualization(
             // Build labels (genomic positions)
             const labels = depths.map((_, i) => Math.round(i * binSize));
             coverageLogScale = false;
+            _covNavSparkData = {{ depths }};
+            initCoverageNavigator();
             renderCoverageChart(labels, depths, binSize, refLen);
             renderNogrChart(nogrIntervals, refLen);
+            requestAnimationFrame(updateCoverageNavigator);
 
             document.getElementById('coverageModalOverlay').classList.add('active');
             document.body.style.overflow = 'hidden';
@@ -12750,6 +13015,8 @@ def generate_html_visualization(
         function closeCoverageModal() {{
             document.getElementById('coverageModalOverlay').classList.remove('active');
             document.body.style.overflow = '';
+            onCovNavPointerUp();
+            _covNavSparkData = null;
             if (coverageChart) {{
                 coverageChart.destroy();
                 coverageChart = null;
@@ -12777,7 +13044,10 @@ def generate_html_visualization(
                 if (coverageChart) coverageChart.update('none');
                 if (nogrChart) nogrChart.update('none');
             }}
-            requestAnimationFrame(alignCoverageNogrChartAreas);
+            requestAnimationFrame(() => {{
+                alignCoverageNogrChartAreas();
+                updateCoverageNavigator();
+            }});
         }}
 
         function toggleCoverageLog() {{
