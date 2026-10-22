@@ -11090,6 +11090,7 @@ def generate_html_visualization(
         .cov-nav-wrap {{
             margin-top: 14px;
             margin-bottom: 4px;
+            padding-bottom: 28px;
         }}
         .cov-nav-label {{
             font-size: 0.8em;
@@ -11102,7 +11103,7 @@ def generate_html_visualization(
             background: #eef1f6;
             border: 1px solid #ced4da;
             border-radius: 6px;
-            overflow: hidden;
+            overflow: visible;
             cursor: pointer;
             user-select: none;
             touch-action: none;
@@ -11116,6 +11117,8 @@ def generate_html_visualization(
             width: 100%;
             height: 100%;
             pointer-events: none;
+            border-radius: 6px;
+            overflow: hidden;
         }}
         .cov-nav-viewport {{
             position: absolute;
@@ -11129,6 +11132,7 @@ def generate_html_visualization(
             box-sizing: border-box;
             cursor: grab;
             z-index: 2;
+            overflow: visible;
         }}
         .cov-nav-viewport.is-dragging {{
             cursor: grabbing;
@@ -11150,6 +11154,43 @@ def generate_html_visualization(
         .cov-nav-handle-l {{ left: 0; border-radius: 2px 0 0 2px; }}
         .cov-nav-handle-r {{ right: 0; border-radius: 0 2px 2px 0; }}
         .cov-nav-viewport.is-full .cov-nav-handle {{
+            display: none;
+        }}
+        /* Always-grabbable pan thumb: stays usable even when the zoom window is a thin sliver. */
+        .cov-nav-thumb {{
+            position: absolute;
+            left: 50%;
+            top: calc(100% + 4px);
+            transform: translateX(-50%);
+            width: 44px;
+            height: 22px;
+            min-width: 44px;
+            background: #667eea;
+            color: #fff;
+            border: none;
+            border-radius: 11px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.18);
+            cursor: grab;
+            z-index: 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            line-height: 1;
+            letter-spacing: 1px;
+            padding: 0;
+            touch-action: none;
+            user-select: none;
+        }}
+        .cov-nav-thumb:hover {{
+            background: #5a6fd6;
+        }}
+        .cov-nav-thumb.is-dragging,
+        .cov-nav-viewport.is-dragging .cov-nav-thumb {{
+            cursor: grabbing;
+            background: #4c5fc4;
+        }}
+        .cov-nav-viewport.is-full .cov-nav-thumb {{
             display: none;
         }}
     </style>
@@ -11324,11 +11365,12 @@ def generate_html_visualization(
                 </div>
                 <div class="cov-nav-wrap" id="covNavWrap">
                     <div class="cov-nav-label" id="covNavLabel">Genome overview — drag the blue window to move across adjacent regions when zoomed in</div>
-                    <div class="cov-nav-track" id="covNavTrack" title="Drag window to pan · Drag edges to resize · Click track to jump">
+                    <div class="cov-nav-track" id="covNavTrack" title="Drag window or ⠿ thumb to pan · Drag edges to resize · Click track to jump">
                         <canvas class="cov-nav-spark" id="covNavSpark"></canvas>
                         <div class="cov-nav-viewport" id="covNavViewport">
                             <div class="cov-nav-handle cov-nav-handle-l" data-edge="l"></div>
                             <div class="cov-nav-handle cov-nav-handle-r" data-edge="r"></div>
+                            <button type="button" class="cov-nav-thumb" id="covNavThumb" data-nav-pan="1" title="Drag to move along the genome" aria-label="Pan zoomed region">⠿</button>
                         </div>
                     </div>
                 </div>
@@ -12547,7 +12589,23 @@ def generate_html_visualization(
             if (label) {{
                 label.textContent = isFull
                     ? 'Genome overview — zoom in (scroll or drag-select) to enable sliding across adjacent regions'
-                    : `Genome overview — window ${{Math.round(range.min).toLocaleString()}}–${{Math.round(range.max).toLocaleString()}} bp · drag to slide · edges to resize`;
+                    : `Genome overview — window ${{Math.round(range.min).toLocaleString()}}–${{Math.round(range.max).toLocaleString()}} bp · drag ⠿ thumb to slide · edges to resize`;
+            }}
+            // Keep the pan thumb centered under the window but always at least ~44px wide to grab.
+            const thumb = document.getElementById('covNavThumb');
+            if (thumb && !isFull) {{
+                const trackW = Math.max(1, track.clientWidth || 1);
+                const vpLeftPx = (range.min / refLen) * trackW;
+                const vpWidthPx = (span / refLen) * trackW;
+                const thumbW = 44;
+                let thumbCenter = vpLeftPx + vpWidthPx / 2;
+                thumbCenter = Math.max(thumbW / 2, Math.min(trackW - thumbW / 2, thumbCenter));
+                // Position relative to viewport: CSS left:50% is viewport-centered; nudge if clamped to track edges.
+                const vpCenter = vpLeftPx + vpWidthPx / 2;
+                const nudge = thumbCenter - vpCenter;
+                thumb.style.transform = `translateX(calc(-50% + ${{nudge.toFixed(1)}}px))`;
+            }} else if (thumb) {{
+                thumb.style.transform = 'translateX(-50%)';
             }}
         }}
 
@@ -12563,20 +12621,25 @@ def generate_html_visualization(
         function onCovNavPointerDown(ev) {{
             const track = document.getElementById('covNavTrack');
             const vp = document.getElementById('covNavViewport');
+            const thumb = document.getElementById('covNavThumb');
             if (!track || !vp || !coverageChart) return;
             const refLen = coverageRefLenFromCharts();
             if (refLen <= 0) return;
             const range = currentCoverageXRange();
             const span = range.max - range.min;
-            if (span >= refLen * 0.999 && !ev.target.classList.contains('cov-nav-handle')) {{
+            const t = ev.target;
+            const isThumb = !!(t && (t === thumb || (t.closest && t.closest('.cov-nav-thumb'))));
+            const isHandle = !!(t && t.classList && t.classList.contains('cov-nav-handle'));
+            if (span >= refLen * 0.999 && !isHandle) {{
                 // Fully zoomed out: ignore drag; zoom first.
                 return;
             }}
             ev.preventDefault();
-            const edge = ev.target && ev.target.dataset ? ev.target.dataset.edge : null;
+            if (t && t.blur) try {{ t.blur(); }} catch (e) {{}}
+            const edge = (t && t.dataset) ? t.dataset.edge : null;
             const mode = (edge === 'l' || edge === 'r') ? 'resize-' + edge : 'pan';
-            if (mode === 'pan' && ev.target !== vp && !vp.contains(ev.target)) {{
-                // Click on track outside viewport: center window on click.
+            // Click on track outside viewport/thumb: center window on click.
+            if (mode === 'pan' && !isThumb && t !== vp && !(vp.contains(t))) {{
                 const center = covNavPtrToBp(ev.clientX);
                 const half = span / 2;
                 applyCoverageXRange(center - half, center + half);
@@ -12590,7 +12653,9 @@ def generate_html_visualization(
                 span
             }};
             vp.classList.add('is-dragging');
-            vp.setPointerCapture && vp.setPointerCapture(ev.pointerId);
+            if (thumb && isThumb) thumb.classList.add('is-dragging');
+            const captureEl = isThumb && thumb ? thumb : vp;
+            if (captureEl.setPointerCapture) captureEl.setPointerCapture(ev.pointerId);
             window.addEventListener('pointermove', onCovNavPointerMove);
             window.addEventListener('pointerup', onCovNavPointerUp);
             window.addEventListener('pointercancel', onCovNavPointerUp);
@@ -12620,7 +12685,9 @@ def generate_html_visualization(
 
         function onCovNavPointerUp() {{
             const vp = document.getElementById('covNavViewport');
+            const thumb = document.getElementById('covNavThumb');
             if (vp) vp.classList.remove('is-dragging');
+            if (thumb) thumb.classList.remove('is-dragging');
             _covNavDrag = null;
             window.removeEventListener('pointermove', onCovNavPointerMove);
             window.removeEventListener('pointerup', onCovNavPointerUp);
