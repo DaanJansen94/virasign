@@ -12324,7 +12324,8 @@ def generate_html_visualization(
                 type: 'linear',
                 min: 0,
                 max: refLen,
-                bounds: 'ticks',
+                // Keep axis locked to the reference; do not expand for "nice" ticks beyond genome length.
+                bounds: 'data',
                 title: {{ display: true, text: 'Genome Position (bp)' }},
                 ticks: {{
                     callback: function(v) {{
@@ -12335,6 +12336,42 @@ def generate_html_visualization(
                     maxTicksLimit: 15
                 }}
             }};
+        }}
+
+        // Zoom/pan must never leave [0, refLen] — wheel zoom-out was previously unbounded.
+        function coverageXZoomLimits(refLen) {{
+            const hi = Math.max(0, Number(refLen) || 0);
+            return {{
+                x: {{
+                    min: 0,
+                    max: hi,
+                    minRange: Math.max(1, Math.min(50, hi || 1))
+                }}
+            }};
+        }}
+
+        function clampCoverageXRange(min, max, refLen) {{
+            const lo = 0;
+            const hi = Math.max(0, Number(refLen) || 0);
+            let a = Number(min);
+            let b = Number(max);
+            if (!Number.isFinite(a) || !Number.isFinite(b)) return {{ min: lo, max: hi }};
+            if (b < a) {{ const t = a; a = b; b = t; }}
+            if (hi <= lo || (b - a) >= hi - lo) return {{ min: lo, max: hi }};
+            if (a < lo) {{ b += (lo - a); a = lo; }}
+            if (b > hi) {{ a -= (b - hi); b = hi; }}
+            return {{ min: Math.max(lo, a), max: Math.min(hi, b) }};
+        }}
+
+        function coverageRefLenFromCharts() {{
+            if (coverageChart && coverageChart._covData && coverageChart._covData.refLen != null) {{
+                return Number(coverageChart._covData.refLen) || 0;
+            }}
+            if (nogrChart && nogrChart.options && nogrChart.options.scales && nogrChart.options.scales.x) {{
+                const mx = Number(nogrChart.options.scales.x.max);
+                if (Number.isFinite(mx)) return mx;
+            }}
+            return 0;
         }}
 
         function alignCoverageNogrChartAreas() {{
@@ -12380,12 +12417,18 @@ def generate_html_visualization(
             if (!other || !other.options || !other.options.scales || !other.options.scales.x) return;
             _covZoomSyncing = true;
             try {{
-                const {{min, max}} = sourceChart.scales.x;
-                other.options.scales.x.min = min;
-                other.options.scales.x.max = max;
+                const refLen = coverageRefLenFromCharts();
+                const clamped = clampCoverageXRange(
+                    sourceChart.scales.x.min,
+                    sourceChart.scales.x.max,
+                    refLen
+                );
+                other.options.scales.x.min = clamped.min;
+                other.options.scales.x.max = clamped.max;
                 // Keep source explicit too (plugin zoom can leave options out of sync).
-                sourceChart.options.scales.x.min = min;
-                sourceChart.options.scales.x.max = max;
+                sourceChart.options.scales.x.min = clamped.min;
+                sourceChart.options.scales.x.max = clamped.max;
+                sourceChart.update('none');
                 other.update('none');
                 alignCoverageNogrChartAreas();
             }} finally {{
@@ -12551,6 +12594,7 @@ def generate_html_visualization(
                             }}
                         }},
                         zoom: {{
+                            limits: coverageXZoomLimits(refLen),
                             pan: {{
                                 enabled: true,
                                 mode: 'x',
@@ -12655,6 +12699,7 @@ def generate_html_visualization(
                             }}
                         }},
                         zoom: {{
+                            limits: coverageXZoomLimits(refLen),
                             pan: {{
                                 enabled: true,
                                 mode: 'x',
